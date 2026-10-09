@@ -1,8 +1,9 @@
 // Offline cache for the app shell. Bump VERSION to ship an update.
-const VERSION = 'stand-v1';
+const VERSION = 'stand-v2';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/main.js', 'js/db.js', 'js/audio.js', 'js/metronome.js', 'js/tuner.js', 'js/recorder.js', 'js/score.js', 'js/stretch-worker.js',
+  'js/temperament.js', 'js/scales.js', 'js/video.js', 'js/imslp.js', 'js/composers.json',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];

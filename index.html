@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Stand</title>
-<meta name="description" content="Practice stand for musicians: scores, metronome, tuner, drone and recorder.">
-<meta name="theme-color" content="#F4F5F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0F1013" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Practice stand for musicians: scores, IMSLP search, metronome, tuner, harmonics, scales, drone and audio/video recorder.">
+<meta name="theme-color" content="#F3F4F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0E16" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -26,11 +26,14 @@
     <symbol id="i-metro" viewBox="0 0 24 24"><path d="M9 3h6l4 18H5L9 3z M7.2 16h9.6 M12 15l5-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-fork" viewBox="0 0 24 24"><path d="M8 3v8a4 4 0 0 0 8 0V3 M12 15v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0 M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 10.5l5-3v9l-5-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-takes" viewBox="0 0 24 24"><path d="M4 12h1.5M7.5 8v8M11 5v14M14.5 9v6M18 7v10M21 11v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-scales" viewBox="0 0 24 24"><path d="M3 20h4v-4h4v-4h4V8h4V4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-harm" viewBox="0 0 24 24"><path d="M4 20V6 M9 20v-9 M14 20v-6 M19 20v-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z M14 7l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-hl" viewBox="0 0 24 24"><path d="M9 14l-3 3v3h3l3-3 M9 14l7-9 4 4-8 8 M6 21h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M8 20h12 M4.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 19H8.5l-4-3.5z M9 11l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
-    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7L4 12l5 5 M4 12h10a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 -3)"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 4L4 9l5 5 M4 9h10a6 6 0 0 1 0 12h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
@@ -42,57 +45,117 @@
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" fill="currentColor"/></symbol>
     <symbol id="i-drone" viewBox="0 0 24 24"><path d="M3 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11 M7.5 10.5L12 15l4.5-4.5 M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 9a8 8 0 0 1 14-3l2 2 M20 4v4h-4 M20 15a8 8 0 0 1-14 3l-2-2 M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-lib" viewBox="0 0 24 24"><path d="M5 4h4v16H5z M11 4h4v16h-4z M16.5 5.2l3.8-1 3.7 15.5-3.8 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" transform="translate(-1 0)"/></symbol>
   </defs>
 </svg>
 
-<!-- ============ LIBRARY ============ -->
+<!-- ======================= HOME ======================= -->
 <main id="library" class="view">
-  <header class="lib-head">
-    <div class="lib-title">
-      <h1>Stand</h1>
-      <p class="lib-today" id="todayStat">No practice logged today</p>
-    </div>
-    <div class="lib-tools">
-      <button class="icon-btn" data-panel="metronome" aria-label="Metronome"><svg><use href="#i-metro"/></svg></button>
-      <button class="icon-btn" data-panel="tuner" aria-label="Tuner and drone"><svg><use href="#i-fork"/></svg></button>
-      <button class="icon-btn" data-panel="takes" aria-label="Recordings"><svg><use href="#i-takes"/></svg></button>
-      <label class="btn primary" for="importInput"><svg><use href="#i-plus"/></svg><span>Import</span></label>
+  <div class="home">
+    <header class="home-head">
+      <div>
+        <h1 class="brand">Stand</h1>
+        <p class="lib-today" id="todayStat">No practice logged today</p>
+      </div>
+      <label class="btn primary" for="importInput"><svg><use href="#i-plus"/></svg><span>Import score</span></label>
       <input id="importInput" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
+    </header>
+
+    <nav class="tiles" aria-label="Practice tools">
+      <button class="tile" data-panel="tuner" data-tab="tune"><svg><use href="#i-fork"/></svg><span>Tuner</span></button>
+      <button class="tile" data-panel="tuner" data-tab="harm"><svg><use href="#i-harm"/></svg><span>Harmonics</span></button>
+      <button class="tile" data-panel="metronome"><svg><use href="#i-metro"/></svg><span>Metronome</span></button>
+      <button class="tile" data-panel="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
+      <button class="tile" data-panel="tuner" data-tab="drone"><svg><use href="#i-drone"/></svg><span>Drone</span></button>
+      <button class="tile rec" data-panel="record"><span class="rec-dot"></span><span>Record</span></button>
+      <button class="tile" data-panel="takes"><svg><use href="#i-takes"/></svg><span>Recordings</span></button>
+    </nav>
+
+    <div class="home-tabs seg" id="homeTabs" role="tablist">
+      <button data-hometab="mine" class="on" role="tab"><svg><use href="#i-lib"/></svg>My scores</button>
+      <button data-hometab="find" role="tab"><svg><use href="#i-search"/></svg>Find on IMSLP</button>
     </div>
-  </header>
-  <div class="lib-bar">
-    <label class="search"><svg><use href="#i-search"/></svg><input id="searchInput" type="search" placeholder="Search title or composer" autocomplete="off"></label>
-    <div class="seg" id="sortSeg" role="tablist">
-      <button data-sort="recent" class="on">Recent</button>
-      <button data-sort="title">Title</button>
-      <button data-sort="composer">Composer</button>
-    </div>
+
+    <section id="tab-mine">
+      <div class="lib-bar">
+        <label class="search"><svg><use href="#i-search"/></svg><input id="searchInput" type="search" placeholder="Search your scores" autocomplete="off"></label>
+        <div class="seg" id="sortSeg">
+          <button data-sort="recent" class="on">Recent</button>
+          <button data-sort="title">Title</button>
+          <button data-sort="composer">Composer</button>
+        </div>
+      </div>
+      <section class="grid" id="grid"></section>
+      <section class="empty" id="emptyLib" hidden>
+        <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <h2>Your stand is empty</h2>
+        <p>Find a piece on IMSLP or import a PDF or photo of your part. Everything stays on this iPad and works offline.</p>
+        <div class="empty-actions">
+          <button class="btn primary" data-goto="find"><svg><use href="#i-search"/></svg><span>Find a piece</span></button>
+          <label class="btn" for="importInput"><svg><use href="#i-plus"/></svg><span>Import a file</span></label>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-find" hidden>
+      <form class="find-form" id="findForm" autocomplete="off">
+        <label class="search big"><svg><use href="#i-search"/></svg><input id="findInput" type="search" placeholder="Composer and piece, e.g. Elgar cello concerto" enterkeyhint="search"></label>
+        <button class="btn primary big-inline" type="submit">Search</button>
+      </form>
+      <div class="find-for">
+        <span>Best version for</span>
+        <div class="select-wrap"><select id="instSel" aria-label="Your instrument"></select></div>
+      </div>
+
+      <div id="findList">
+        <div class="find-intro" id="findIntro">
+          <h3>How it works</h3>
+          <ol>
+            <li>Type a composer and a piece. Stand searches IMSLP, the free library of public-domain scores.</li>
+            <li>Open the piece. Stand ranks every edition by how often musicians downloaded it and marks the best one for your instrument.</li>
+            <li>Tap <b>Download</b>, then accept IMSLP’s terms on their page. Back in Stand, tap <b>Import score</b> and pick the file from Downloads. Title and composer fill in by themselves.</li>
+          </ol>
+          <div class="chips" id="findExamples"></div>
+        </div>
+        <p class="find-status" id="findStatus" hidden></p>
+        <ul class="work-list" id="workList"></ul>
+      </div>
+
+      <div id="workView" hidden>
+        <button class="btn ghost" id="workBack"><svg><use href="#i-back"/></svg><span>Results</span></button>
+        <div class="work-head">
+          <div>
+            <h2 id="workTitle"></h2>
+            <p class="muted" id="workComposer"></p>
+          </div>
+          <a class="btn" id="workOpen" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg><span>IMSLP page</span></a>
+        </div>
+        <p class="find-status" id="workStatus" hidden></p>
+        <div class="picks" id="workPicks"></div>
+        <div id="workGroups"></div>
+      </div>
+    </section>
   </div>
-  <section class="grid" id="grid"></section>
-  <section class="empty" id="emptyLib" hidden>
-    <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-    <h2>Your stand is empty</h2>
-    <p>Import a PDF or a photo of your part. It is stored on this iPad and works offline.</p>
-    <div class="empty-actions">
-      <label class="btn primary" for="importInput"><svg><use href="#i-plus"/></svg><span>Import a score</span></label>
-      <a class="btn" href="https://imslp.org" target="_blank" rel="noopener">Find free scores on IMSLP</a>
-    </div>
-  </section>
 </main>
 
-<!-- ============ SCORE ============ -->
+<!-- ======================= SCORE ======================= -->
 <main id="score" class="view" hidden>
   <div id="stage" class="stage"></div>
   <header class="topbar" id="topbar">
     <button class="icon-btn" id="backBtn" aria-label="Library"><svg><use href="#i-back"/></svg></button>
     <div class="tb-title"><strong id="scoreTitle"></strong><span id="pageLabel" class="num"></span></div>
     <div class="tb-tools">
-      <button class="icon-btn" id="inkBtn" aria-label="Annotate"><svg><use href="#i-pen"/></svg></button>
-      <button class="icon-btn" data-panel="metronome" aria-label="Metronome"><svg><use href="#i-metro"/></svg></button>
-      <button class="icon-btn" data-panel="tuner" aria-label="Tuner and drone"><svg><use href="#i-fork"/></svg></button>
-      <button class="icon-btn" data-panel="takes" aria-label="Recordings"><svg><use href="#i-takes"/></svg></button>
-      <button class="icon-btn rec-btn" id="recBtn" aria-label="Record"><span class="rec-dot"></span></button>
-      <button class="icon-btn" data-panel="settings" aria-label="Score settings"><svg><use href="#i-more"/></svg></button>
+      <button class="tb-btn" id="inkBtn"><svg><use href="#i-pen"/></svg><span>Markings</span></button>
+      <button class="tb-btn" data-panel="metronome"><svg><use href="#i-metro"/></svg><span>Metronome</span></button>
+      <button class="tb-btn" data-panel="tuner"><svg><use href="#i-fork"/></svg><span>Tuner</span></button>
+      <button class="tb-btn" data-panel="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
+      <button class="tb-btn" data-panel="takes"><svg><use href="#i-takes"/></svg><span>Recordings</span></button>
+      <button class="tb-btn rec" id="recBtn"><span class="rec-dot"></span><span id="recBtnLabel">Record</span></button>
+      <button class="tb-btn" data-panel="settings"><svg><use href="#i-more"/></svg><span>More</span></button>
     </div>
   </header>
   <div class="inkbar" id="inkbar" hidden>
@@ -102,21 +165,27 @@
     <span class="sep"></span>
     <button class="swatch on" data-color="#1b1d22" style="--c:#1b1d22" aria-label="Black"></button>
     <button class="swatch" data-color="#d23b3b" style="--c:#d23b3b" aria-label="Red"></button>
-    <button class="swatch" data-color="#2b59c3" style="--c:#2b59c3" aria-label="Blue"></button>
+    <button class="swatch" data-color="#1f3a8f" style="--c:#1f3a8f" aria-label="Blue"></button>
     <button class="swatch" data-color="#2c9a5f" style="--c:#2c9a5f" aria-label="Green"></button>
     <span class="sep"></span>
     <button class="ink-tool" id="inkUndo" aria-label="Undo"><svg><use href="#i-undo"/></svg></button>
-    <button class="btn small" id="inkDone">Done</button>
+    <button class="btn small primary" id="inkDone">Done</button>
   </div>
   <div class="page-scrub" id="pageScrub"><input type="range" id="pageRange" min="1" max="1" value="1" aria-label="Page"></div>
 </main>
 
-<!-- ============ STATUS DOCK (metronome / drone / recording) ============ -->
+<!-- ======================= CAMERA PREVIEW ======================= -->
+<div class="cam" id="cam" hidden>
+  <video id="camVideo" playsinline muted autoplay></video>
+  <span class="cam-badge"><span class="rec-dot live"></span><span id="camTime" class="num">0:00</span></span>
+</div>
+
+<!-- ======================= STATUS DOCK ======================= -->
 <div class="dock" id="dock">
   <div class="pill rec-pill" id="recPill" hidden>
     <span class="rec-dot live"></span>
     <span class="num" id="recTime">0:00</span>
-    <canvas id="recMeter" width="120" height="16"></canvas>
+    <canvas id="recMeter" width="240" height="32"></canvas>
     <span class="muted" id="recNote"></span>
     <button class="btn small danger" id="recStop"><svg><use href="#i-stop"/></svg><span>Stop</span></button>
   </div>
@@ -127,13 +196,17 @@
   </div>
   <div class="pill" id="dronePill" hidden>
     <svg class="pill-ico"><use href="#i-drone"/></svg>
-    <button class="pill-main" data-panel="tuner"><span id="dronePillNote">A</span></button>
+    <button class="pill-main" data-panel="tuner" data-tab="drone"><span id="dronePillNote">A</span></button>
     <button class="icon-btn small" id="dronePillStop" aria-label="Stop drone"><svg><use href="#i-stop"/></svg></button>
+  </div>
+  <div class="pill" id="scalePill" hidden>
+    <svg class="pill-ico"><use href="#i-scales"/></svg>
+    <button class="pill-main" data-panel="scales"><span id="scalePillNote">C</span></button>
+    <button class="icon-btn small" id="scalePillStop" aria-label="Stop scale"><svg><use href="#i-stop"/></svg></button>
   </div>
 </div>
 
-<!-- ============ PANELS ============ -->
-
+<!-- ======================= PANELS ======================= -->
 <aside class="panel" id="panel-metronome" hidden aria-label="Metronome">
   <div class="panel-head"><h2>Metronome</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
@@ -146,54 +219,44 @@
       <button class="round-btn" id="bpmUp" aria-label="Faster"><svg><use href="#i-plus"/></svg></button>
     </div>
     <input type="range" id="bpmRange" min="20" max="280" value="80" aria-label="Tempo">
-    <div class="beats" id="beatDots" aria-label="Beats. Tap to change accent"></div>
-    <p class="hint">Tap a beat to cycle accent, normal and silent.</p>
+    <div class="beats" id="beatDots"></div>
+    <p class="hint center">Tap a beat to make it accented, normal or silent.</p>
     <div class="row-2">
       <button class="btn big primary" id="metroToggle"><svg><use href="#i-play"/></svg><span>Start</span></button>
-      <button class="btn big" id="tapBtn">Tap</button>
+      <button class="btn big" id="tapBtn">Tap tempo</button>
     </div>
-
     <div class="field-grid">
       <label class="field"><span>Meter</span>
         <select id="meterSel">
           <option value="1">1/4</option><option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option><option value="9">9/8</option><option value="12">12/8</option>
         </select></label>
       <label class="field"><span>Subdivision</span>
-        <select id="subSel">
-          <option value="1">♩ None</option><option value="2">♫ Eighths</option><option value="3">3 Triplets</option><option value="4">♬ Sixteenths</option>
-        </select></label>
+        <select id="subSel"><option value="1">None</option><option value="2">Eighths</option><option value="3">Triplets</option><option value="4">Sixteenths</option></select></label>
       <label class="field"><span>Sound</span>
-        <select id="soundSel">
-          <option value="wood">Wood block</option><option value="click">Click</option><option value="beep">Beep</option><option value="soft">Soft</option><option value="cowbell">Bell</option>
-        </select></label>
+        <select id="soundSel"><option value="wood">Wood block</option><option value="soft">Soft</option><option value="click">Click</option><option value="beep">Beep</option><option value="cowbell">Bell</option></select></label>
       <label class="field"><span>Volume</span><input type="range" id="metroVol" min="0" max="1" step="0.01" value="0.8"></label>
     </div>
-
     <section class="sub-card">
       <div class="sub-head">
         <div><h3>Speed trainer</h3><p class="hint" id="rampSummary">Gradually change tempo while you play</p></div>
         <label class="switch"><input type="checkbox" id="rampOn"><span></span></label>
       </div>
       <div class="sub-body" id="rampBody">
-        <div class="seg full" id="rampMode">
-          <button data-mode="smooth" class="on">Smooth</button>
-          <button data-mode="step">In steps</button>
-        </div>
+        <div class="seg full" id="rampMode"><button data-mode="smooth" class="on">Smoothly</button><button data-mode="step">In steps</button></div>
         <div class="field-grid">
-          <label class="field"><span>From</span><input type="number" id="rampFrom" min="20" max="280" value="60" inputmode="numeric"></label>
-          <label class="field"><span>To</span><input type="number" id="rampTo" min="20" max="280" value="100" inputmode="numeric"></label>
+          <label class="field"><span>From BPM</span><input type="number" id="rampFrom" min="20" max="280" value="60" inputmode="numeric"></label>
+          <label class="field"><span>To BPM</span><input type="number" id="rampTo" min="20" max="280" value="100" inputmode="numeric"></label>
           <label class="field smooth-only"><span>Over bars</span><input type="number" id="rampBars" min="1" max="400" value="32" inputmode="numeric"></label>
           <label class="field step-only" hidden><span>Add BPM</span><input type="number" id="rampStep" min="1" max="40" value="4" inputmode="numeric"></label>
           <label class="field step-only" hidden><span>Every bars</span><input type="number" id="rampEvery" min="1" max="64" value="4" inputmode="numeric"></label>
         </div>
-        <label class="check"><input type="checkbox" id="rampRepeat"> Start over when the target is reached</label>
+        <label class="check"><input type="checkbox" id="rampRepeat"> Start again when the goal is reached</label>
         <div class="ramp-graph"><canvas id="rampCanvas" height="70"></canvas></div>
       </div>
     </section>
-
     <section class="sub-card">
       <div class="sub-head">
-        <div><h3>Silent bars</h3><p class="hint">Click drops out so you keep time yourself</p></div>
+        <div><h3>Silent bars</h3><p class="hint">The click drops out so you keep time yourself</p></div>
         <label class="switch"><input type="checkbox" id="gapOn"><span></span></label>
       </div>
       <div class="sub-body" id="gapBody">
@@ -203,48 +266,124 @@
         </div>
       </div>
     </section>
-    <label class="check"><input type="checkbox" id="flashOn"> Flash the screen on the downbeat</label>
+    <label class="check"><input type="checkbox" id="flashOn"> Flash the screen on beat one</label>
   </div>
 </aside>
 
-<aside class="panel" id="panel-tuner" hidden aria-label="Tuner and drone">
+<aside class="panel" id="panel-tuner" hidden aria-label="Tuner">
   <div class="panel-head">
-    <div class="seg" id="tunerTabs"><button data-tab="tune" class="on">Tuner</button><button data-tab="drone">Drone</button></div>
+    <div class="seg" id="tunerTabs"><button data-tab="tune" class="on">Tuner</button><button data-tab="harm">Harmonics</button><button data-tab="drone">Drone</button></div>
     <button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button>
   </div>
+
   <div class="panel-body" id="tab-tune">
-    <div class="tuner-face" id="tunerFace">
+    <div class="tuner-face idle" id="tunerFace">
       <svg class="dial" viewBox="0 0 300 170" aria-hidden="true">
         <g id="dialTicks"></g>
-        <rect class="zone" x="143" y="18" width="14" height="10" rx="3"/>
-        <g id="needle"><line x1="150" y1="98" x2="150" y2="32" /></g>
+        <rect class="zone" x="143" y="20" width="14" height="10" rx="3"/>
+        <g id="needle"><line x1="150" y1="98" x2="150" y2="32"/></g>
       </svg>
       <div class="note-read"><span id="tNote" class="note">–</span><sub id="tOct"></sub></div>
-      <div class="cents num" id="tCents">Play a note</div>
+      <div class="cents num" id="tCents">Tap Start, then play a note</div>
       <div class="hz num" id="tHz">&nbsp;</div>
     </div>
+    <canvas class="trace" id="traceCanvas" height="90" aria-label="Pitch over the last seconds"></canvas>
+    <div class="strings" id="stringRow"></div>
     <button class="btn big primary" id="tunerToggle"><svg><use href="#i-mic"/></svg><span>Start tuner</span></button>
-    <div class="ref-row">
-      <span>Reference A</span>
-      <button class="round-btn small" id="refDown" aria-label="Lower reference"><svg><use href="#i-minus"/></svg></button>
-      <span class="num ref-val" id="refVal">442 Hz</span>
-      <button class="round-btn small" id="refUp" aria-label="Raise reference"><svg><use href="#i-plus"/></svg></button>
+    <div class="field-grid">
+      <label class="field"><span>Instrument</span><select id="tunerInst"></select></label>
+      <div class="field"><span>Reference A</span>
+        <div class="stepper"><button class="round-btn small" id="refDown" aria-label="Lower"><svg><use href="#i-minus"/></svg></button><span class="num" id="refVal">442 Hz</span><button class="round-btn small" id="refUp" aria-label="Higher"><svg><use href="#i-plus"/></svg></button></div>
+      </div>
+      <label class="field"><span>Intonation</span><select id="sysSel"><option value="equal">Equal</option><option value="just">Just (pure)</option><option value="pyth">Pythagorean</option></select></label>
+      <label class="field" id="keyField"><span>Key</span><select id="keySel"></select></label>
     </div>
+    <label class="check" id="fifthsRow"><input type="checkbox" id="pureFifths" checked> Open strings in pure fifths (from A)</label>
     <p class="hint" id="micHint">Uses the microphone. Nothing leaves this device.</p>
   </div>
+
+  <div class="panel-body" id="tab-harm" hidden>
+    <p class="hint">See and hear the overtones inside a note. Play a note with the tuner on, or choose one below.</p>
+    <div class="harm-note">
+      <div><span class="note num" id="hNote">C</span><sub id="hOct">2</sub></div>
+      <div class="harm-src muted" id="hSrc">Chosen note</div>
+    </div>
+    <canvas class="harm-bars" id="harmCanvas" height="200" aria-label="Harmonics"></canvas>
+    <p class="hint center">Tap a bar to hear that harmonic alone.</p>
+    <div class="row-even">
+      <button class="btn big primary" id="hSeries"><svg><use href="#i-play"/></svg><span>Play the series</span></button>
+      <button class="btn big" id="hChord">All together</button>
+    </div>
+    <div class="field-grid">
+      <label class="field"><span>Note</span><select id="hPc"></select></label>
+      <label class="field"><span>Octave</span><select id="hOctSel"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+    </div>
+    <div class="row-even">
+      <button class="btn" id="hListen"><svg><use href="#i-mic"/></svg><span>Use the note I play</span></button>
+      <label class="field inline"><span>Harmonics</span><select id="hCount"><option>6</option><option selected>8</option><option>10</option><option>12</option><option>16</option></select></label>
+    </div>
+    <p class="hint">The numbers show how far each natural harmonic sits from the piano (equal-tempered) note: the 5th harmonic is 14 cents low, the 7th is 31 cents low.</p>
+  </div>
+
   <div class="panel-body" id="tab-drone" hidden>
     <div class="note-grid" id="droneNotes"></div>
     <div class="field-grid">
-      <label class="field"><span>Octave</span>
-        <select id="droneOct"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
-      <label class="field"><span>Sound</span>
-        <select id="droneSound"><option value="cello">Bowed</option><option value="organ">Organ</option><option value="pure">Pure tone</option></select></label>
+      <label class="field"><span>Octave</span><select id="droneOct"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+      <label class="field"><span>Sound</span><select id="droneSound"><option value="cello">Bowed</option><option value="organ">Organ</option><option value="pure">Pure tone</option></select></label>
     </div>
-    <label class="check"><input type="checkbox" id="droneFifth" checked> Add a pure fifth above</label>
+    <div class="seg full" id="droneChord"><button data-chord="root">Root</button><button data-chord="fifth" class="on">+ Fifth</button><button data-chord="major">Major</button><button data-chord="minor">Minor</button></div>
     <label class="check"><input type="checkbox" id="droneOctave"> Add the octave below</label>
     <label class="field"><span>Volume</span><input type="range" id="droneVol" min="0" max="1" step="0.01" value="0.5"></label>
     <button class="btn big primary" id="droneToggle"><svg><use href="#i-play"/></svg><span>Start drone</span></button>
-    <p class="hint">Tuned to the reference A from the tuner. The fifth is a just 3:2, like tuning your strings.</p>
+    <p class="hint">Tuned to your reference A. Fifths and thirds are pure (3:2, 5:4, 6:5), so you can hear when you lock in.</p>
+  </div>
+</aside>
+
+<aside class="panel" id="panel-scales" hidden aria-label="Scales">
+  <div class="panel-head"><h2>Scales</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <div class="scale-now">
+      <div class="scale-title" id="scaleTitle">C major</div>
+      <div class="scale-note"><span class="num" id="scaleNote">–</span><span class="scale-cents num" id="scaleCents"></span></div>
+    </div>
+    <div class="scale-strip" id="scaleStrip"></div>
+    <button class="btn big primary" id="scaleToggle"><svg><use href="#i-play"/></svg><span>Play scale</span></button>
+    <div class="note-grid" id="scaleKeys"></div>
+    <div class="field-grid">
+      <label class="field wide"><span>Scale</span><select id="scaleType"></select></label>
+      <label class="field"><span>Starting octave</span><select id="scaleOct"></select></label>
+      <label class="field"><span>Octaves</span><select id="scaleOcts"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+      <label class="field"><span>Direction</span><select id="scaleDir"><option value="updown">Up and down</option><option value="up">Up</option><option value="down">Down</option></select></label>
+      <label class="field"><span>Intonation</span><select id="scaleSys"><option value="equal">Equal</option><option value="just">Just (pure)</option><option value="pyth">Pythagorean</option></select></label>
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><span>Tempo</span><span class="num" id="scaleBpmVal">60 BPM</span></div>
+      <input type="range" id="scaleBpm" min="30" max="200" value="60">
+    </div>
+    <div class="field-grid">
+      <label class="field"><span>Notes per beat</span><select id="scalePer"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+      <label class="field"><span>Sound</span><select id="scaleSound"><option value="soft">Soft</option><option value="warm">Warm</option><option value="clear">Clear</option></select></label>
+    </div>
+    <label class="field"><span>Volume</span><input type="range" id="scaleVol" min="0" max="1" step="0.01" value="0.6"></label>
+    <label class="check"><input type="checkbox" id="scaleDrone"> Drone on the key note underneath</label>
+    <label class="check"><input type="checkbox" id="scaleClick"> Soft click on the beat</label>
+    <label class="check"><input type="checkbox" id="scaleRepeat"> Repeat</label>
+  </div>
+</aside>
+
+<aside class="panel compact" id="panel-record" hidden aria-label="Record">
+  <div class="panel-head"><h2>Record</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <div class="rec-choices">
+      <button class="rec-choice" id="recAudio"><svg><use href="#i-mic"/></svg><b>Audio</b><span>Best sound quality</span></button>
+      <button class="rec-choice" id="recVideo"><svg><use href="#i-video"/></svg><b>Video</b><span>See your bow arm and posture</span></button>
+    </div>
+    <label class="check"><input type="checkbox" id="countIn" checked> One bar count-in from the metronome</label>
+    <label class="check"><input type="checkbox" id="clickWhileRec"> Keep the click going (use headphones)</label>
+    <div class="field"><span>Camera</span>
+      <div class="seg full" id="camSeg"><button data-cam="user" class="on">Front</button><button data-cam="environment">Back</button></div>
+    </div>
+    <p class="hint">The score stays on screen while you record. Tap Stop in the bar at the bottom when you finish.</p>
   </div>
 </aside>
 
@@ -259,15 +398,16 @@
         <div class="player-name"><input id="takeName" aria-label="Recording name"><span class="muted num" id="takeMeta"></span></div>
         <button class="icon-btn small" id="takeFav" aria-label="Favourite"><svg><use href="#i-star"/></svg></button>
       </div>
-      <div class="wave-wrap">
+      <div class="video-wrap" id="videoWrap" hidden><video id="takeVideo" playsinline muted preload="auto"></video></div>
+      <div class="wave-wrap" id="waveWrap">
         <canvas id="wave"></canvas>
-        <div class="wave-busy" id="waveBusy" hidden>Preparing slower version…</div>
+        <div class="wave-busy" id="waveBusy" hidden>Preparing the slower version…</div>
       </div>
-      <div class="times num"><span id="tPos">0:00.0</span><span class="muted" id="tLoop">Drag on the waveform to loop a passage</span><span id="tDur">0:00.0</span></div>
+      <div class="times num"><span id="tPos">0:00.0</span><span class="muted" id="tLoop">Drag across the waveform to loop a passage</span><span id="tDur">0:00.0</span></div>
       <div class="transport">
-        <button class="icon-btn" id="loopBtn" aria-label="Loop selection"><svg><use href="#i-loop"/></svg></button>
+        <button class="icon-btn" id="loopBtn" aria-label="Loop"><svg><use href="#i-loop"/></svg></button>
         <button class="round-btn play" id="playBtn" aria-label="Play"><svg><use href="#i-play"/></svg></button>
-        <button class="icon-btn" id="shareBtn" aria-label="Export"><svg><use href="#i-share"/></svg></button>
+        <button class="icon-btn" id="shareBtn" aria-label="Share"><svg><use href="#i-share"/></svg></button>
       </div>
       <div class="ctl">
         <div class="ctl-head"><span>Speed</span><span class="num" id="speedVal">100%</span></div>
@@ -275,21 +415,16 @@
           <button data-speed="0.5">50%</button><button data-speed="0.6">60%</button><button data-speed="0.7">70%</button><button data-speed="0.75">75%</button><button data-speed="0.8">80%</button><button data-speed="0.9">90%</button><button data-speed="1" class="on">100%</button>
         </div>
         <input type="range" id="speedRange" min="40" max="125" step="5" value="100" aria-label="Speed">
-        <p class="hint">Pitch stays where you played it.</p>
+        <p class="hint">Slower or faster, the pitch stays where you played it.</p>
       </div>
       <div class="ctl">
-        <div class="ctl-head"><span>Room</span><span class="num" id="revVal">Soft</span></div>
-        <div class="seg full" id="revRoom">
-          <button data-room="dry">Dry</button><button data-room="studio" class="on">Studio</button><button data-room="hall">Hall</button><button data-room="church">Church</button>
-        </div>
+        <div class="ctl-head"><span>Room</span><span class="num" id="revVal">Studio</span></div>
+        <div class="seg full" id="revRoom"><button data-room="dry">Dry</button><button data-room="studio" class="on">Studio</button><button data-room="hall">Hall</button><button data-room="church">Church</button></div>
         <input type="range" id="revAmt" min="0" max="100" value="18" aria-label="Reverb amount">
       </div>
-      <div class="ctl">
-        <div class="ctl-head"><span>Level</span></div>
-        <label class="check"><input type="checkbox" id="autoLevel" checked> Bring quiet takes up to a good level</label>
-      </div>
+      <label class="check"><input type="checkbox" id="autoLevel" checked> Bring quiet recordings up to a good level</label>
       <div class="row-2">
-        <button class="btn" id="exportBtn"><svg><use href="#i-share"/></svg><span>Export as heard</span></button>
+        <button class="btn" id="exportBtn"><svg><use href="#i-share"/></svg><span id="exportLabel">Export as heard</span></button>
         <button class="btn danger-text" id="delTake"><svg><use href="#i-trash"/></svg><span>Delete</span></button>
       </div>
       <div class="confirm" id="delConfirm" hidden>
@@ -299,28 +434,24 @@
       </div>
     </div>
     <ul class="take-list" id="takeList"></ul>
-    <p class="empty-note" id="takesEmpty" hidden>No recordings yet. Tap the red button above the score to record while you read.</p>
+    <p class="empty-note" id="takesEmpty" hidden>No recordings yet. Tap Record to capture yourself while you read the score.</p>
   </div>
 </aside>
 
 <aside class="panel" id="panel-settings" hidden aria-label="Score settings">
-  <div class="panel-head"><h2>Score</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-head"><h2>This score</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
     <label class="field"><span>Title</span><input id="metaTitle" autocomplete="off"></label>
     <label class="field"><span>Composer</span><input id="metaComposer" autocomplete="off"></label>
-    <label class="check"><input type="checkbox" id="twoUp" checked> Two pages side by side in landscape</label>
-    <div class="ctl-head"><span>Page colour</span></div>
-    <div class="seg full" id="paperSeg">
-      <button data-paper="white" class="on">White</button><button data-paper="cream">Warm</button><button data-paper="night">Night</button>
-    </div>
-    <div class="ctl-head"><span>Recording</span></div>
-    <label class="check"><input type="checkbox" id="countIn" checked> One bar count-in from the metronome</label>
-    <label class="check"><input type="checkbox" id="clickWhileRec"> Keep the click going while recording (use headphones)</label>
-    <p class="hint">Page turner pedals that send arrow keys work. Tap the right or left edge to turn, the middle to show or hide the toolbar.</p>
     <div class="stat-row" id="scoreStats"></div>
+    <label class="check"><input type="checkbox" id="twoUp" checked> Two pages side by side in landscape</label>
+    <label class="check"><input type="checkbox" id="halfTurn"> Half-page turns (see the next system early)</label>
+    <div class="ctl-head"><span>Page colour</span></div>
+    <div class="seg full" id="paperSeg"><button data-paper="white" class="on">White</button><button data-paper="cream">Warm</button><button data-paper="night">Night</button></div>
+    <p class="hint">Turn pages by tapping the right or left edge, swiping, or with a Bluetooth page-turner pedal. Tap the middle to show or hide the toolbar.</p>
     <button class="btn danger-text" id="delScore"><svg><use href="#i-trash"/></svg><span>Remove score</span></button>
     <div class="confirm" id="delScoreConfirm" hidden>
-      <span>Remove this score, its markings and recordings?</span>
+      <span>Remove this score with its markings and recordings?</span>
       <button class="btn small" id="delScoreNo">Keep</button>
       <button class="btn small danger" id="delScoreYes">Remove</button>
     </div>

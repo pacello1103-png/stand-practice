@@ -226,8 +226,9 @@ export class Player {
   }
   setAutoLevel(on) { this.autoLevel = on; if (this.out) this.out.gain.setTargetAtTime(this.levelGain(), getCtx().currentTime, 0.03); }
 
-  load(take) {
+  load(take, video) {
     this.stop();
+    this.video = video || null;
     this.take = take; this.pos = 0; this.a = 0; this.b = 0; this.loop = false;
     this.cache.clear();
     this._emit();
@@ -282,15 +283,29 @@ export class Player {
     }
     const when = ctx.currentTime + 0.02;
     src.start(when, from / rate);
+    if (this.video) {
+      const v = this.video;
+      try { v.muted = true; v.playbackRate = rate; v.currentTime = from; const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); } catch {}
+    }
     this.src = src; this.startTime = when; this.startOffset = from / rate;
     this.playing = true;
-    src.onended = () => { if (this.src === src) { this.playing = false; this.pos = this.loop ? this.a : 0; this._emit(); } };
+    src.onended = () => { if (this.src === src) { this.playing = false; this.pos = this.loop ? this.a : 0; this._videoTo(this.pos, true); this._emit(); } };
     this._emit();
   }
   _stopSource() { if (this.src) { const s = this.src; this.src = null; try { s.onended = null; s.stop(); } catch {} } }
-  pause() { if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; this._emit(); }
-  stop() { this._stopSource(); this.playing = false; this._emit(); }
-  async seek(t) { const was = this.playing; this.pause(); this.pos = Math.max(0, Math.min(this.duration, t)); if (was) await this.play(); else this._emit(); }
+  pause() { if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; this._videoTo(this.pos, true); this._emit(); }
+  stop() { this._stopSource(); this.playing = false; if (this.video) try { this.video.pause(); } catch {} this._emit(); }
+  async seek(t) { const was = this.playing; this.pause(); this.pos = Math.max(0, Math.min(this.duration, t)); this._videoTo(this.pos, true); if (was) await this.play(); else this._emit(); }
+  attachVideo(el) { this.video = el; }
+  _videoTo(t, pause) { const v = this.video; if (!v) return; try { if (pause) v.pause(); if (Math.abs(v.currentTime - t) > 0.02) v.currentTime = t; } catch {} }
+  // Keep the picture locked to the (time-stretched) sound. Call every frame while playing.
+  syncVideo() {
+    const v = this.video; if (!v || !this.playing) return;
+    const t = this.currentPos();
+    if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
+    if (Math.abs(v.playbackRate - this.rate) > 1e-3) v.playbackRate = this.rate;
+    if (Math.abs(v.currentTime - t) > 0.12) v.currentTime = t;
+  }
   async setRate(r) {
     if (Math.abs(r - this.rate) < 1e-4) return;
     const was = this.playing; const p = this.currentPos();
