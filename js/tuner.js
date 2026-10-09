@@ -2,6 +2,7 @@
 // harmonic-series playback and an intonation drone.
 import { getCtx, master, acquireMic, releaseMic } from './audio.js';
 import { NOTE_NAMES, centsOffset } from './temperament.js';
+import { playNote, holdNote } from './synth.js';
 export { NOTE_NAMES };
 
 export function freqToNote(f, ref) {
@@ -248,45 +249,22 @@ export class Drone {
   }
   start() {
     const ctx = getCtx();
-    if (this.running) this._stopVoices(0.15);
+    if (this.running) this._stopVoices();
     if (!this.out) { this.out = ctx.createGain(); this.out.connect(master()); }
-    this.out.gain.setTargetAtTime(this.volume * 0.5, ctx.currentTime, 0.05);
-    const pw = this.sound === 'pure' ? null : wave(ctx, this.sound);
-    const now = ctx.currentTime;
-    this.voices = this._freqs().map(([f, a]) => {
-      const o = ctx.createOscillator();
-      if (pw) o.setPeriodicWave(pw); else o.type = 'sine';
-      o.frequency.value = f;
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-      lp.frequency.value = Math.min(9000, f * (this.sound === 'cello' ? 6 : 12)); lp.Q.value = 0.5;
-      const g = ctx.createGain(); g.gain.value = 0;
-      g.gain.setTargetAtTime(a / 1.8, now, 0.15);
-      o.connect(lp).connect(g).connect(this.out);
-      o.start(now);
-      return { o, g };
-    });
+    this.out.gain.setTargetAtTime(this.volume * 0.6, ctx.currentTime, 0.05);
+    const voice = this.sound === 'cello' ? 'strings' : this.sound;
+    this.voices = this._freqs().map(([f, a]) => holdNote(this.out, f, voice, a));
     this.running = true;
   }
-  _stopVoices(t = 0.3) {
-    const ctx = getCtx(), now = ctx.currentTime;
-    for (const v of this.voices) { v.g.gain.cancelScheduledValues(now); v.g.gain.setTargetAtTime(0, now, t / 3); v.o.stop(now + t + 0.2); }
-    this.voices = [];
-  }
+  _stopVoices() { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now); this.voices = []; }
   stop() { if (!this.running) return; this._stopVoices(); this.running = false; }
   refresh() { if (this.running) this.start(); }
-  setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * 0.5, getCtx().currentTime, 0.05); }
+  setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * 0.6, getCtx().currentTime, 0.05); }
 }
 
 // One soft reference tone (for tapping a string in the tuner).
-export function playRefTone(freq, dur = 2.2, volume = 0.45) {
+export function playRefTone(freq, dur = 2.2, volume = 0.6) {
   const ctx = getCtx();
-  const now = ctx.currentTime + 0.02;
-  const o = ctx.createOscillator();
-  o.setPeriodicWave(wave(ctx, 'cello'));
-  o.frequency.value = freq;
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(8000, freq * 6);
-  const g = ctx.createGain(); g.gain.value = 0;
-  g.gain.setTargetAtTime(volume * 0.5, now, 0.06); g.gain.setTargetAtTime(0, now + dur - 0.3, 0.12);
-  o.connect(lp).connect(g).connect(master());
-  o.start(now); o.stop(now + dur + 0.6);
+  const g = ctx.createGain(); g.gain.value = volume; g.connect(master());
+  playNote(g, freq, ctx.currentTime + 0.02, dur, 'strings', 1);
 }

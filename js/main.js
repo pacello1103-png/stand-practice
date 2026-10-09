@@ -6,8 +6,9 @@ import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } fro
 import { ScalePlayer, SCALE_TYPES } from './scales.js';
 import { Recorder, Player, computePeaks, peakOf, ROOMS } from './recorder.js';
 import { VideoRecorder, decodeVideoAudio, videoThumb } from './video.js';
-import { openDocument, makeThumb, InkLayer } from './score.js';
-import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl } from './imslp.js';
+import { openDocument, makeThumb, readScoreInfo, findSplit, PAPERS } from './score.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont } from './ink.js';
+import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -94,6 +95,7 @@ async function refreshLibrary() {
   scores = await db.all('scores').catch(() => []);
   renderGrid();
   renderToday();
+  if (typeof renderGoal === 'function') renderGoal().catch(() => {});
 }
 function renderGrid() {
   const q = $('#searchInput').value.trim().toLowerCase();
@@ -148,7 +150,7 @@ $('#importInput').addEventListener('change', async (e) => {
   if (!files.length) return;
   const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
   const imgs = files.filter((f) => f.type.startsWith('image/'));
-  let added = 0;
+  let added = 0, lastAdded = '';
   toast(files.length > 1 ? `Importing ${files.length} files…` : 'Importing…', 10000);
   for (const f of pdfs) {
     try {
@@ -157,7 +159,11 @@ $('#importInput').addEventListener('change', async (e) => {
       const doc = await openDocument(file);
       const thumb = await makeThumb(doc);
       const meta = await imslpMetaFor(f.name);
-      const score = { id: uid(), fileId: file.id, title: meta ? meta.title : niceTitle(f.name), composer: meta ? meta.composer : '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' };
+      const info = await readScoreInfo(doc, f.name, await loadComposers());
+      const title = (meta && meta.title) || info.title || niceTitle(f.name);
+      const composer = (meta && meta.composer) || info.composer || '';
+      const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' };
+      lastAdded = composer ? `${title} — ${composer}` : title;
       doc.destroy();
       await db.put('files', file); await db.put('scores', score); added++;
     } catch (err) { console.error(err); toast(`Could not open ${f.name}. Is it a PDF?`); }
@@ -168,13 +174,14 @@ $('#importInput').addEventListener('change', async (e) => {
       const doc = await openDocument(file);
       const thumb = await makeThumb(doc);
       const score = { id: uid(), fileId: file.id, title: niceTitle(imgs[0].name), composer: '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb };
+      lastAdded = score.title;
       doc.destroy();
       await db.put('files', file); await db.put('scores', score); added++;
     } catch (err) { console.error(err); toast('Those photos could not be read.'); }
   }
   setHomeTab('mine');
   await refreshLibrary();
-  if (added) toast(added === 1 ? 'Score added to your stand' : `${added} scores added`);
+  if (added) toast(added === 1 ? 'Added: ' + lastAdded : `${added} scores added`, 4000);
 });
 
 // =====================================================================
@@ -349,7 +356,7 @@ function renderWork(data) {
 // =====================================================================
 // Score viewer
 // =====================================================================
-const V = { score: null, doc: null, page: 0, spread: 1, half: false, cache: new Map(), layers: [], inking: false, tool: 'pen', color: '#1b1d22', undo: [] };
+const V = { score: null, doc: null, page: 0, spread: 1, half: false, cache: new Map(), splits: new Map(), layers: [], inking: false, usedJumps: new Set(), undo: [], redo: [] };
 const stage = $('#stage');
 let wakeLock = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
@@ -358,7 +365,7 @@ async function openScore(id) {
   const score = await db.get('scores', id);
   const file = score && await db.get('files', score.fileId);
   if (!file) { toast('This score’s file is missing.'); return; }
-  V.score = score; V.cache.clear(); V.undo = []; V.half = false;
+  V.score = score; V.file = file; V.cache.clear(); V.splits.clear(); V.undo = []; V.redo = []; V.half = false; V.usedJumps = new Set();
   try { V.doc = await openDocument(file); } catch (e) { console.error(e); toast('The score could not be opened.'); return; }
   V.page = clamp(score.lastPage || 0, 0, V.doc.pages - 1);
   score.opened = Date.now(); db.put('scores', score);
@@ -372,7 +379,8 @@ async function openScore(id) {
   await layout();
   keepAwake();
   startPracticeClock();
-  chromeTimer = setTimeout(() => showChrome(false), 2500);
+  if (V.doc.paper) setInking(true);
+  else chromeTimer = setTimeout(() => showChrome(false), 2500);
 }
 async function closeScore() {
   stopPracticeClock();
@@ -425,11 +433,17 @@ async function layout(fade) {
     const [box] = pageBox([V.page]);
     const [cur, next] = await Promise.all([renderPage(V.page, box[0], box[1]), renderPage(V.page + 1, box[0], box[1])]);
     if (token !== layoutToken) return;
+    const key = V.page + ':' + cur.width;
+    if (!V.splits.has(key)) V.splits.set(key, findSplit(cur, next));
+    const split = V.splits.get(key);
     const pg = el('div', 'pg'); pg.style.width = box[0] + 'px'; pg.style.height = box[1] + 'px';
-    cur.className = 'art bottom-half'; next.className = 'art top-half';
-    pg.append(cur, next, el('div', 'half-line'));
+    pg.style.setProperty('--split', (split * 100).toFixed(2) + '%');
+    cur.className = 'art bottom-part'; next.className = 'art top-part';
+    const line = el('div', 'half-line'); line.style.top = (split * 100) + '%';
+    const tag = el('div', 'half-tag', `↑ page ${V.page + 2}   ·   page ${V.page + 1} ↓`); tag.style.top = (split * 100) + '%';
+    pg.append(cur, next, line, tag);
     spread.append(pg);
-    label = `${V.page + 2} top · ${V.page + 1} bottom`;
+    label = `${V.page + 1}½`;
   } else {
     V.half = false;
     const idx = [V.page]; if (V.spread === 2 && V.page + 1 < V.doc.pages) idx.push(V.page + 1);
@@ -438,10 +452,11 @@ async function layout(fade) {
     if (token !== layoutToken) return;
     idx.forEach((i, k) => {
       const pg = el('div', 'pg'); pg.style.width = boxes[k][0] + 'px'; pg.style.height = boxes[k][1] + 'px';
-      const art = canvases[k]; art.className = 'art';
+      const art = canvases[k]; art.className = 'art'; art.style.removeProperty('--split');
       const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
-      pg.append(art, ink); spread.append(pg);
-      const layer = new InkLayer(ink, V.score.id, i); layer.load(); V.layers.push(layer); attachInk(ink, layer);
+      const live = el('canvas', 'ink live'); live.width = art.width; live.height = art.height;
+      pg.append(art, ink, live); spread.append(pg);
+      const layer = new InkLayer(ink, live, V.score.id, i); layer.load(); V.layers.push(layer); attachInk(live, layer);
     });
     label = idx.length > 1 ? `${idx[0] + 1}–${idx[1] + 1}` : `${idx[0] + 1}`;
   }
@@ -459,37 +474,58 @@ async function layout(fade) {
     }
   }, 60);
 }
+function goTo(page, fade = true) {
+  V.page = clamp(page, 0, V.doc.pages - 1); V.half = false; V.score.lastPage = V.page;
+  if (V.page === 0) V.usedJumps.clear();
+  layout(fade);
+}
 function turn(dir) {
   if (!V.doc) return;
-  if (S.halfTurn && V.spread === 1) {
+  if (dir > 0) {
+    // programmed repeats and jumps
+    const last = V.page + (V.spread === 2 ? 1 : 0);
+    const jumps = V.score.jumps || [];
+    const j = jumps.find((x, i) => x.from - 1 >= V.page && x.from - 1 <= last && !(x.once && V.usedJumps.has(i)));
+    if (j && !V.half) {
+      const i = jumps.indexOf(j); if (j.once) V.usedJumps.add(i);
+      toast(`Jump to page ${j.to}`, 1400);
+      goTo(j.to - 1);
+      return;
+    }
+  }
+  if (S.halfTurn && V.spread === 1 && !V.inking) {
     if (dir > 0) {
       if (!V.half && V.page + 1 < V.doc.pages) { V.half = true; layout(true); return; }
-      if (V.half) { V.half = false; V.page++; V.score.lastPage = V.page; layout(true); return; }
+      if (V.half) { goTo(V.page + 1); return; }
       return;
     }
     if (V.half) { V.half = false; layout(true); return; }
   }
   const next = clamp(V.page + dir * V.spread, 0, Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
-  V.page = next; V.half = false; V.score.lastPage = next;
-  layout(true);
+  goTo(next);
 }
 let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (V.doc) { V.cache.clear(); layout(); } }, 150); });
-$('#pageRange').addEventListener('input', (e) => { V.page = clamp(+e.target.value - 1, 0, V.doc.pages - 1); V.half = false; layout(); });
+$('#pageRange').addEventListener('input', (e) => goTo(+e.target.value - 1, false));
 
 let chromeTimer;
 function showChrome(on) { clearTimeout(chromeTimer); $('#score').classList.toggle('chrome-off', !on); }
-let down = null;
-stage.addEventListener('pointerdown', (e) => { if (V.inking && e.target.classList.contains('ink')) return; down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+let down = null, lastPenAt = 0, penIsDown = false;
+stage.addEventListener('pointerdown', (e) => {
+  // While the Pencil writes, a resting palm must not turn pages.
+  if (e.pointerType === 'touch' && (penIsDown || performance.now() - lastPenAt < 350)) { down = null; return; }
+  if (V.inking && e.pointerType !== 'touch') return;
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
+});
 stage.addEventListener('pointerup', (e) => {
-  if (!down) return;
+  if (!down || down.id !== e.pointerId) return;
   const dx = e.clientX - down.x, dy = e.clientY - down.y; const d = down; down = null;
   if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) { turn(dx < 0 ? 1 : -1); return; }
   if (Math.hypot(dx, dy) > 12 || performance.now() - d.t > 600) return;
   const w = window.innerWidth;
   if (e.clientX > w * 0.68) turn(1);
   else if (e.clientX < w * 0.32) turn(-1);
-  else showChrome($('#score').classList.contains('chrome-off'));
+  else if (!V.inking) showChrome($('#score').classList.contains('chrome-off'));
 });
 document.addEventListener('keydown', (e) => {
   if ($('#score').hidden || e.target.matches('input, select, textarea')) return;
@@ -497,66 +533,208 @@ document.addEventListener('keydown', (e) => {
   else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); turn(-1); }
 });
 
-// ---------- ink ----------
-let penSeen = false;
+// ---------- markings ----------
+const INK = {
+  tool: 'pen', finger: false, stamp: 'p',
+  pen: { c: COLORS[0], size: 3, a: 1 },
+  hl: { c: COLORS[4], size: 5, a: 0.4 },
+  stamp: { c: COLORS[0], size: 5, a: 1 },
+};
+const inkSize = (tool, v) => tool === 'pen' ? 0.0011 + v * 0.00055 : tool === 'hl' ? 0.006 + v * 0.0024 : 0.014 + v * 0.0042;
+function persistInk() { S.ink = { tool: INK.tool === 'eraser' ? 'pen' : INK.tool, finger: INK.finger, stamp: INK.stamp, pen: INK.pen, hl: INK.hl, stampStyle: INK.stampStyle }; saveSettings(); }
+INK.stampStyle = { c: COLORS[0], size: 5, a: 1 };
+function styleFor(tool) { return tool === 'stamp' ? INK.stampStyle : INK[tool] || INK.pen; }
+let hintT;
+function inkHint(msg) { const h = $('#inkHint'); h.textContent = msg; h.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => (h.hidden = true), 3200); }
 function setInking(on) {
   if (on && V.half) { V.half = false; layout(); }
   V.inking = on;
   $('#inkbar').hidden = !on; $('#inkBtn').classList.toggle('on', on);
   stage.classList.toggle('inking', on);
-  if (on) { showChrome(true); hidePanel(); }
+  closeInkPops();
+  if (on) {
+    showChrome(true); hidePanel(); loadMusicFont();
+    inkHint(INK.finger ? 'Your finger writes. Use the pedal or the Pencil-free edges to turn.' : 'The Pencil writes. Swipe or tap the edges with a finger to turn pages.');
+  } else $('#inkHint').hidden = true;
 }
+function closeInkPops() { $('#inkPop').hidden = true; $('#stampPop').hidden = true; }
+function syncInkBar() {
+  $$('.ink-tool[data-tool]').forEach((x) => x.classList.toggle('on', x.dataset.tool === INK.tool));
+  const st = styleFor(INK.tool === 'eraser' ? 'pen' : INK.tool);
+  const dot = $('#inkColorDot'); dot.parentElement.style.setProperty('--c', st.c); dot.parentElement.style.setProperty('--a', Math.max(0.35, st.a));
+  $('#fingerBtn').classList.toggle('on', INK.finger);
+  $('#inkColorBtn').disabled = INK.tool === 'eraser';
+}
+function fillInkPop() {
+  const tool = INK.tool === 'eraser' ? 'pen' : INK.tool;
+  const st = styleFor(tool);
+  const sw = $('#swatches'); sw.textContent = '';
+  for (const c of COLORS) {
+    const b = el('button'); b.style.setProperty('--c', c); b.classList.toggle('on', c === st.c); b.setAttribute('aria-label', 'Colour ' + c);
+    b.addEventListener('click', () => { st.c = c; fillInkPop(); syncInkBar(); persistInk(); });
+    sw.append(b);
+  }
+  $('#inkSize').value = st.size; $('#inkSizeVal').textContent = st.size;
+  $('#inkAlpha').value = Math.round(st.a * 100); $('#inkAlphaVal').textContent = Math.round(st.a * 100) + '%';
+  drawInkPreview();
+}
+function drawInkPreview() {
+  const c = $('#inkPreview'); const dpr = devicePixelRatio || 1; const W = c.clientWidth || 300, H = c.clientHeight || 54;
+  c.width = W * dpr; c.height = H * dpr;
+  const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+  const tool = INK.tool === 'eraser' ? 'pen' : INK.tool, st = styleFor(tool);
+  if (tool === 'stamp') { loadMusicFont().then(() => { g.clearRect(0, 0, c.width, c.height); drawItem(g, { t: 'stamp', k: INK.stamp, c: st.c, a: st.a, s: inkSize('stamp', st.size) * (800 / W), x: 0.5, y: 0.5 }, c.width, c.height); }); return; }
+  const pts = []; for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push([0.08 + 0.84 * t, 0.5 + 0.22 * Math.sin(t * Math.PI * 2), tool === 'pen' ? 0.35 + 0.5 * Math.sin(t * Math.PI) : 0.5]); }
+  drawItem(g, { t: tool, c: st.c, a: st.a, s: inkSize(tool, st.size) * (800 / W), p: pts }, c.width, c.height);
+}
+$('#inkSize').addEventListener('input', (e) => { const st = styleFor(INK.tool === 'eraser' ? 'pen' : INK.tool); st.size = +e.target.value; $('#inkSizeVal').textContent = st.size; drawInkPreview(); persistInk(); });
+$('#inkAlpha').addEventListener('input', (e) => { const st = styleFor(INK.tool === 'eraser' ? 'pen' : INK.tool); st.a = +e.target.value / 100; $('#inkAlphaVal').textContent = e.target.value + '%'; drawInkPreview(); syncInkBar(); persistInk(); });
+$('#inkColorBtn').addEventListener('click', () => { const p = $('#inkPop'); $('#stampPop').hidden = true; p.hidden = !p.hidden; if (!p.hidden) fillInkPop(); });
+(function buildStampGrid() {
+  const g = $('#stampGrid');
+  for (const st of STAMPS) {
+    const b = el('button', st.font === 'music' ? '' : st.font, st.k === 'cresc' ? '<' : st.k === 'dim' ? '>' : st.label);
+    b.dataset.k = st.k; b.setAttribute('aria-label', st.k);
+    b.addEventListener('click', () => { INK.stamp = st.k; INK.tool = 'stamp'; $$('#stampGrid button').forEach((x) => x.classList.toggle('on', x === b)); syncInkBar(); persistInk(); closeInkPops(); inkHint('Tap the music to place it. Tap the symbol button to choose another.'); });
+    g.append(b);
+  }
+})();
+$$('.ink-tool[data-tool]').forEach((b) => b.addEventListener('click', () => {
+  const t = b.dataset.tool;
+  if (t === 'stamp') { const p = $('#stampPop'); $('#inkPop').hidden = true; p.hidden = INK.tool === 'stamp' ? !p.hidden : false; $$('#stampGrid button').forEach((x) => x.classList.toggle('on', x.dataset.k === INK.stamp)); loadMusicFont(); }
+  else closeInkPops();
+  INK.tool = t; syncInkBar(); persistInk();
+}));
+$('#fingerBtn').addEventListener('click', () => { INK.finger = !INK.finger; syncInkBar(); persistInk(); inkHint(INK.finger ? 'Finger writing on. Turn pages with the pedal or by turning this off.' : 'Finger writing off. The Pencil writes, your finger turns pages.'); });
 $('#inkBtn').addEventListener('click', () => setInking(!V.inking));
 $('#inkDone').addEventListener('click', () => setInking(false));
-$$('.ink-tool[data-tool]').forEach((b) => b.addEventListener('click', () => { V.tool = b.dataset.tool; $$('.ink-tool[data-tool]').forEach((x) => x.classList.toggle('on', x === b)); }));
-$$('.swatch').forEach((b) => b.addEventListener('click', () => {
-  V.color = b.dataset.color; $$('.swatch').forEach((x) => x.classList.toggle('on', x === b));
-  if (V.tool === 'eraser') $('.ink-tool[data-tool="pen"]').click();
-}));
-$('#inkUndo').addEventListener('click', () => { const u = V.undo.pop(); if (!u) return; u.layer.strokes = u.strokes; u.layer.redraw(); u.layer.save(); });
-function attachInk(canvas, layer) {
-  let stroke = null, erasing = false, snap = null;
-  const pos = (e) => { const r = canvas.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.pointerType === 'pen' ? (e.pressure || 0.5) : 0.5]; };
-  canvas.addEventListener('pointerdown', (e) => {
-    if (!V.inking) return;
-    if (e.pointerType === 'pen') penSeen = true;
-    if (penSeen && e.pointerType === 'touch') return;
+function pushUndo(layer, before) { V.undo.push({ layer, before, after: layer.items.slice() }); if (V.undo.length > 100) V.undo.shift(); V.redo = []; }
+$('#inkUndo').addEventListener('click', () => { const u = V.undo.pop(); if (!u) return; u.layer.setItems(u.before.slice()); V.redo.push(u); });
+$('#inkRedo').addEventListener('click', () => { const u = V.redo.pop(); if (!u) return; u.layer.setItems(u.after.slice()); V.undo.push(u); });
+
+let eraserDot = null;
+function attachInk(live, layer) {
+  let item = null, erasing = false, before = null, rect = null, raf = 0, predicted = null;
+  const pos = (e) => [(e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 0.5];
+  const paint = () => { raf = 0; if (item) layer.drawLive(item, predicted); };
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  const writes = (e) => V.inking && (e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && INK.finger));
+  live.addEventListener('touchstart', (e) => { if (!V.inking) return; const t = e.changedTouches[0]; if ((t && t.touchType === 'stylus') || INK.finger) e.preventDefault(); }, { passive: false });
+  live.addEventListener('touchmove', (e) => { if (!V.inking) return; const t = e.changedTouches[0]; if ((t && t.touchType === 'stylus') || INK.finger) e.preventDefault(); }, { passive: false });
+  live.addEventListener('pointerdown', (e) => {
+    if (!writes(e)) return;               // a finger falls through to page turning
+    if (e.pointerType === 'touch' && penIsDown) return;
     e.preventDefault(); e.stopPropagation();
-    canvas.setPointerCapture(e.pointerId);
-    snap = layer.strokes.slice();
-    if (V.tool === 'eraser') { erasing = true; const p = pos(e); layer.eraseAt(p[0], p[1], 0.02); return; }
-    stroke = { tool: V.tool, color: V.tool === 'hl' ? (V.color === '#1b1d22' ? '#f2c200' : V.color) : V.color, pts: [pos(e)] };
-    layer.drawLive(stroke);
+    if (e.pointerType === 'pen') { penIsDown = true; lastPenAt = performance.now(); }
+    try { live.setPointerCapture(e.pointerId); } catch {}
+    closeInkPops();
+    rect = live.getBoundingClientRect();
+    before = layer.items.slice();
+    const p = pos(e);
+    if (INK.tool === 'eraser') {
+      erasing = true; layer.eraseAt(p[0], p[1], 0.018);
+      if (!eraserDot) { eraserDot = el('div', 'eraser-dot'); document.body.append(eraserDot); }
+      eraserDot.hidden = false; eraserDot.style.left = e.clientX + 'px'; eraserDot.style.top = e.clientY + 'px';
+      return;
+    }
+    if (INK.tool === 'stamp') {
+      const st = INK.stampStyle;
+      layer.commit({ t: 'stamp', k: INK.stamp, c: st.c, a: st.a, s: inkSize('stamp', st.size), x: +p[0].toFixed(4), y: +p[1].toFixed(4) });
+      pushUndo(layer, before);
+      return;
+    }
+    const st = styleFor(INK.tool);
+    item = { t: INK.tool, c: st.c, a: st.a, s: inkSize(INK.tool, st.size), p: [p] };
+    predicted = null; schedule();
   });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!stroke && !erasing) return;
-    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  live.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'pen') lastPenAt = performance.now();
+    if (!item && !erasing) return;
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
     for (const ev of (evs.length ? evs : [e])) {
       const p = pos(ev);
-      if (erasing) { layer.eraseAt(p[0], p[1], 0.02); continue; }
-      const last = stroke.pts[stroke.pts.length - 1];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 0.0012) continue;
-      if (stroke.tool === 'hl') p[1] = stroke.pts[0][1] + (p[1] - stroke.pts[0][1]) * 0.15;
-      stroke.pts.push(p); layer.drawLive(stroke);
+      if (erasing) { layer.eraseAt(p[0], p[1], 0.018); continue; }
+      const last = item.p[item.p.length - 1];
+      if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 0.0004) continue;
+      item.p.push(p);
+    }
+    if (erasing && eraserDot) { eraserDot.style.left = e.clientX + 'px'; eraserDot.style.top = e.clientY + 'px'; }
+    if (item) {
+      const pr = e.getPredictedEvents ? e.getPredictedEvents() : [];
+      predicted = pr.length ? pr.slice(-2).map(pos) : null;
+      schedule();
     }
   });
-  const end = () => {
-    if (erasing) { erasing = false; if (snap.length !== layer.strokes.length) { V.undo.push({ layer, strokes: snap }); layer.save(); } return; }
-    if (!stroke) return;
-    stroke.pts = stroke.pts.map((p) => [+p[0].toFixed(4), +p[1].toFixed(4), +p[2].toFixed(2)]);
-    layer.strokes.push(stroke); stroke = null;
-    V.undo.push({ layer, strokes: snap }); if (V.undo.length > 60) V.undo.shift();
-    layer.redraw(); layer.save();
+  const end = (e) => {
+    if (e && e.pointerType === 'pen') { penIsDown = false; lastPenAt = performance.now(); }
+    if (erasing) { erasing = false; if (eraserDot) eraserDot.hidden = true; if (before.length !== layer.items.length) pushUndo(layer, before); return; }
+    if (!item) return;
+    cancelAnimationFrame(raf); raf = 0;
+    const done = item; item = null; predicted = null;
+    done.p = done.p.map((p) => [+p[0].toFixed(5), +p[1].toFixed(5), +p[2].toFixed(2)]);
+    layer.commit(done);
+    pushUndo(layer, before);
   };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
+  live.addEventListener('pointerup', end);
+  live.addEventListener('pointercancel', end);
 }
+
+// ---------- bookmarks and jumps ----------
+function renderBookmarks() {
+  const ul = $('#bmList'); ul.textContent = '';
+  for (const [i, b] of (V.score.bookmarks || []).entries()) {
+    const li = el('li'); const go = el('button', 'go', b.name);
+    go.addEventListener('click', () => { hidePanel(); goTo(b.page - 1); });
+    const del = el('button', 'icon-btn small'); del.append(icon('i-close')); del.setAttribute('aria-label', 'Remove bookmark');
+    del.addEventListener('click', () => { V.score.bookmarks.splice(i, 1); db.put('scores', V.score); renderBookmarks(); });
+    li.append(go, el('span', 'num', 'p. ' + b.page), del); ul.append(li);
+  }
+}
+$('#bmAdd').addEventListener('click', () => {
+  const n = (V.score.bookmarks || []).length + 1;
+  V.score.bookmarks = [...(V.score.bookmarks || []), { name: 'Bookmark ' + n, page: V.page + 1 }].sort((a, b) => a.page - b.page);
+  db.put('scores', V.score); renderBookmarks();
+  const inputs = $$('#bmList li');
+  // make the new one editable straight away
+  const li = inputs.find((x) => x.querySelector('.go').textContent === 'Bookmark ' + n);
+  if (li) {
+    const go = li.querySelector('.go'); const inp = el('input'); inp.value = go.textContent; inp.className = 'go';
+    go.replaceWith(inp); inp.focus(); inp.select();
+    const save = () => { const bm = V.score.bookmarks.find((b) => b.name === 'Bookmark ' + n); if (bm) bm.name = inp.value.trim() || bm.name; db.put('scores', V.score); renderBookmarks(); };
+    inp.addEventListener('blur', save); inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  }
+});
+function renderJumps() {
+  const ul = $('#jumpList'); ul.textContent = '';
+  for (const [i, j] of (V.score.jumps || []).entries()) {
+    const li = el('li'); li.append(el('span', 'go', `After page ${j.from} → page ${j.to}${j.once ? ' (first time)' : ''}`));
+    const del = el('button', 'icon-btn small'); del.append(icon('i-close')); del.setAttribute('aria-label', 'Remove jump');
+    del.addEventListener('click', () => { V.score.jumps.splice(i, 1); db.put('scores', V.score); renderJumps(); });
+    li.append(del); ul.append(li);
+  }
+  $('#jumpFrom').max = $('#jumpTo').max = V.doc ? V.doc.pages : 999;
+  if (!$('#jumpFrom').value) $('#jumpFrom').value = V.page + 1 + (V.spread === 2 ? 1 : 0);
+}
+$('#jumpAdd').addEventListener('click', () => {
+  const n = V.doc.pages, from = +$('#jumpFrom').value, to = +$('#jumpTo').value;
+  if (!(from >= 1 && from <= n && to >= 1 && to <= n && from !== to)) { toast(`Use page numbers between 1 and ${n}.`); return; }
+  V.score.jumps = [...(V.score.jumps || []), { from, to, once: $('#jumpOnce').checked }];
+  db.put('scores', V.score); V.usedJumps.clear(); $('#jumpTo').value = ''; renderJumps();
+});
+$('#paperAdd').addEventListener('click', async () => {
+  if (!V.file || V.file.kind !== 'paper') return;
+  V.file.pages = (V.file.pages || 1) + 1; V.score.pages = V.file.pages;
+  await db.put('files', V.file); await db.put('scores', V.score);
+  V.doc = await openDocument(V.file); $('#pageRange').max = V.doc.pages; $('#pageScrub').hidden = V.doc.pages < 3;
+  hidePanel(); goTo(V.doc.pages - 1); toast('Page added');
+});
 
 // ---------- score settings ----------
 function fillScoreSettings() {
   if (!V.score) return;
   $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || '';
   $('#twoUp').checked = S.twoUp; $('#halfTurn').checked = S.halfTurn;
+  renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
   $$('#paperSeg button').forEach((b) => b.classList.toggle('on', b.dataset.paper === S.paper));
   db.byIndex('takes', 'score', V.score.id).then((t) => {
     const stats = $('#scoreStats'); stats.textContent = '';
@@ -1122,7 +1300,7 @@ async function startRecording(kind) {
   const ctx = getCtx();
   let meterSrc = null;
   if (kind === 'video') {
-    try { await vrec.open(S.cam); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Allow it in Settings › Safari › Camera and Microphone.' : 'The camera could not start.', 5000); return; }
+    try { await vrec.open(S.cam); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera (or Settings › Safari › Camera).' : 'The camera could not start (' + ((e && (e.name || e.message)) || 'unknown') + '). Close other apps using the camera and try again.', 6000); return; }
     const cam = $('#cam'); cam.hidden = false; cam.classList.toggle('mirror', S.cam === 'user');
     $('#camVideo').srcObject = vrec.stream; $('#camVideo').play().catch(() => {});
     meterSrc = ctx.createMediaStreamSource(vrec.stream);
@@ -1133,7 +1311,11 @@ async function startRecording(kind) {
   recState = { kind, ...ci, page: V.score ? V.page : 0, scoreId: V.score ? V.score.id : null, meterSrc };
   if (kind === 'video') {
     const wait = Math.max(0, (ci.startAt - ctx.currentTime) * 1000);
-    recState.startTimer = setTimeout(() => { if (recState) vrec.start(); }, wait);
+    if (!window.MediaRecorder) { toast('Video recording needs iPadOS 15 or newer.', 6000); vrec.close(); $('#cam').hidden = true; if (recState.metroByUs) stopMetro(); recState = null; return; }
+    recState.startTimer = setTimeout(() => {
+      if (!recState) return;
+      try { vrec.start(); } catch (e) { console.error(e); toast('Video could not start: ' + (e.message || e.name), 6000); stopRecording(); }
+    }, wait);
   } else {
     recorder.start(ci.delayed ? ci.startAt : 0);
   }
@@ -1427,6 +1609,105 @@ wave.addEventListener('pointerup', () => {
 window.addEventListener('resize', () => requestAnimationFrame(() => { drawWave(); drawHarmonics(); drawTrace(); }));
 
 // =====================================================================
+// Manuscript paper
+// =====================================================================
+let paperTpl = 'treble';
+async function buildPaperGrid() {
+  const grid = $('#paperGrid'); if (grid.childElementCount) return;
+  await loadMusicFont();
+  for (const [k, v] of Object.entries(PAPERS)) {
+    const b = el('button'); b.dataset.k = k;
+    const cv = el('canvas'); cv.width = 400; cv.height = 202;
+    const doc = await openDocument({ kind: 'paper', template: k, pages: 1 });
+    const full = document.createElement('canvas'); await doc.render(0, full, 400, 566);
+    cv.getContext('2d').drawImage(full, 0, 70, 400, 202, 0, 0, 400, 202);
+    b.append(cv, document.createTextNode(v.label));
+    b.addEventListener('click', () => { paperTpl = k; $$('#paperGrid button').forEach((x) => x.classList.toggle('on', x === b)); });
+    grid.append(b);
+  }
+  $$('#paperGrid button').forEach((x) => x.classList.toggle('on', x.dataset.k === paperTpl));
+}
+document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="newpaper"]')) buildPaperGrid(); });
+$('#paperCreate').addEventListener('click', async () => {
+  const file = { id: uid(), kind: 'paper', template: paperTpl, pages: +$('#paperPages').value };
+  const doc = await openDocument(file);
+  const thumb = await makeThumb(doc);
+  const name = $('#paperName').value.trim() || PAPERS[paperTpl].label + ' notebook';
+  const score = { id: uid(), fileId: file.id, title: name, composer: 'Manuscript', pages: file.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, kind: 'paper' };
+  await db.put('files', file); await db.put('scores', score);
+  $('#paperName').value = '';
+  hidePanel(); await refreshLibrary(); openScore(score.id);
+});
+
+// =====================================================================
+// Daily goal and streak
+// =====================================================================
+async function practiceLog() { return (await getSetting('log', {})) || {}; }
+function streakOf(log) {
+  let n = 0; const d = new Date();
+  if ((log[dayKey(d)] || 0) < 300) d.setDate(d.getDate() - 1); // today not done yet does not break it
+  while ((log[dayKey(d)] || 0) >= 300) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+async function renderGoal() {
+  const log = await practiceLog();
+  const goal = (S.goal || 30) * 60, today = log[dayKey()] || 0;
+  const f = Math.min(1, today / goal);
+  $('#goalArc').style.strokeDashoffset = (125.66 * (1 - f)).toFixed(1);
+  $('#goalPct').textContent = Math.round(today / 60);
+  $('#goalBtn').classList.toggle('done', f >= 1);
+  $('#goalBtn').setAttribute('aria-label', `Practised ${Math.round(today / 60)} of ${S.goal || 30} minutes today`);
+  if (openPanel === 'goal') renderGoalPanel(log);
+}
+function renderGoalPanel(log) {
+  const goal = S.goal || 30, today = Math.round((log[dayKey()] || 0) / 60);
+  let week = 0; const d = new Date(); for (let i = 0; i < 7; i++) { week += log[dayKey(d)] || 0; d.setDate(d.getDate() - 1); }
+  const stats = $('#goalStats'); stats.textContent = '';
+  for (const [v, l] of [[today + ' / ' + goal, 'minutes today'], [streakOf(log), 'day streak'], [fmtMinutes(week), 'last 7 days']]) {
+    const x = el('div', 'stat'); x.append(el('b', '', String(v)), el('span', '', l)); stats.append(x);
+  }
+  $('#goalSel').value = goal;
+  const c = $('#weekChart'); const dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr; const g = c.getContext('2d'); g.scale(dpr, dpr);
+  const days = []; const dd = new Date(); dd.setDate(dd.getDate() - 13);
+  for (let i = 0; i < 14; i++) { days.push({ m: (log[dayKey(dd)] || 0) / 60, label: dd.toLocaleDateString(undefined, { weekday: 'narrow' }) }); dd.setDate(dd.getDate() + 1); }
+  const max = Math.max(goal * 1.2, ...days.map((x) => x.m));
+  const bw = (W - 8) / 14, base = H - 18;
+  const Y = (m) => base - (m / max) * (base - 8);
+  g.strokeStyle = css('--good'); g.setLineDash([4, 4]); g.lineWidth = 1; g.beginPath(); g.moveTo(0, Y(goal)); g.lineTo(W, Y(goal)); g.stroke(); g.setLineDash([]);
+  days.forEach((x, i) => {
+    const h = Math.max(2, base - Y(x.m));
+    g.fillStyle = x.m >= goal ? css('--good') : css('--accent-text'); g.globalAlpha = i === 13 ? 1 : 0.75;
+    g.beginPath(); (g.roundRect ? g.roundRect(4 + i * bw + 3, base - h, bw - 6, h, 3) : g.rect(4 + i * bw + 3, base - h, bw - 6, h)); g.fill();
+    g.globalAlpha = 1; g.fillStyle = css('--muted'); g.font = '600 10px -apple-system, sans-serif'; g.textAlign = 'center';
+    g.fillText(x.label, 4 + i * bw + bw / 2, H - 4);
+  });
+}
+document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="goal"]')) practiceLog().then(renderGoalPanel); });
+$('#goalSel').addEventListener('change', (e) => { S.goal = +e.target.value; saveSettings(); renderGoal(); });
+
+// =====================================================================
+// Repetitions
+// =====================================================================
+const R = { goal: 5, now: 0, tries: 0, sets: 0 };
+function renderReps(celebrate) {
+  const dots = $('#repsDots'); dots.textContent = '';
+  for (let i = 0; i < R.goal; i++) { const d = el('span'); if (i < R.now) d.className = 'on'; dots.append(d); }
+  dots.classList.toggle('done', !!celebrate);
+  $('#repsNow').textContent = R.now; $('#repsGoalVal').textContent = R.goal;
+  $('#repsStats').textContent = R.tries ? `${R.tries} tries · ${R.sets} time${R.sets === 1 ? '' : 's'} reached the goal` : '';
+}
+$('#repsOk').addEventListener('click', () => {
+  R.tries++; R.now++;
+  if (R.now >= R.goal) { R.sets++; renderReps(true); toast(`${R.goal} clean in a row. Well played!`); R.now = 0; setTimeout(() => renderReps(), 900); return; }
+  renderReps();
+});
+$('#repsMiss').addEventListener('click', () => { R.tries++; R.now = 0; renderReps(); });
+$('#repsReset').addEventListener('click', () => { R.now = 0; R.tries = 0; R.sets = 0; renderReps(); });
+$('#repsGoal').addEventListener('change', (e) => { R.goal = +e.target.value; R.now = Math.min(R.now, R.goal - 1); renderReps(); });
+renderReps();
+
+// =====================================================================
 // Boot
 // =====================================================================
 (async function boot() {
@@ -1435,7 +1716,10 @@ window.addEventListener('resize', () => requestAnimationFrame(() => { drawWave()
   player.room = S.room; player.wet = S.wet; player.autoLevel = S.autoLevel;
   applyMetroSettings(S.metro || { bpm: 80, meter: '4' });
   if (S.drone) Object.assign(drone, S.drone);
-  if (S.scale) Object.assign(scale, S.scale); else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
+  if (drone.sound === 'cello') drone.sound = 'strings';
+  if (S.ink) { INK.finger = !!S.ink.finger; INK.stamp = S.ink.stamp || 'p'; INK.tool = S.ink.tool || 'pen'; Object.assign(INK.pen, S.ink.pen || {}); Object.assign(INK.hl, S.ink.hl || {}); Object.assign(INK.stampStyle, S.ink.stampStyle || {}); }
+  syncInkBar();
+  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'soft', 'strings'].includes(scale.sound)) scale.sound = 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;
   $('#countIn').checked = S.countIn; $('#clickWhileRec').checked = S.clickWhileRec;
@@ -1445,6 +1729,7 @@ window.addEventListener('resize', () => requestAnimationFrame(() => { drawWave()
   renderExamples();
   $$('#sortSeg button').forEach((b) => b.classList.toggle('on', b.dataset.sort === S.sort));
   await refreshLibrary();
+  renderGoal();
   setHomeTab(scores.length ? (S.hometab || 'mine') : 'mine');
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -21,19 +21,14 @@ let seed = 12345;
 const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x3fffffff - 1; };
 
 const VOICES = {
-  wood: (ctx, f) => synth(ctx, 0.09, (t) =>
-    (Math.sin(TAU * f * t) * Math.exp(-t * 55) + 0.45 * Math.sin(TAU * f * 2.71 * t) * Math.exp(-t * 90) + 0.25 * noise() * Math.exp(-t * 400))),
-  click: (ctx, f) => synth(ctx, 0.03, (t) =>
-    (Math.sin(TAU * f * 2.2 * t) * Math.exp(-t * 260) + 0.6 * noise() * Math.exp(-t * 900))),
-  beep: (ctx, f) => synth(ctx, 0.07, (t) => Math.sin(TAU * f * t) * Math.min(1, t / 0.002) * Math.exp(-t * 30)),
-  soft: (ctx, f) => synth(ctx, 0.12, (t) =>
-    (Math.sin(TAU * f * 0.5 * t) + 0.2 * Math.sin(TAU * f * t)) * Math.min(1, t / 0.004) * Math.exp(-t * 32)),
-  cowbell: (ctx, f) => synth(ctx, 0.18, (t) => {
-    const a = Math.sign(Math.sin(TAU * f * 0.62 * t)) + Math.sign(Math.sin(TAU * f * 0.93 * t));
-    return a * 0.5 * Math.exp(-t * (t < 0.02 ? 30 : 22));
-  }),
+  // Classic electronic metronome tick
+  click: (ctx, f) => synth(ctx, 0.03, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 320) + 0.35 * noise() * Math.exp(-t * 1400)),
+  // Woodblock: two resonant modes and a short knock
+  wood: (ctx, f) => synth(ctx, 0.07, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 70) + 0.5 * Math.sin(TAU * f * 2.42 * t) * Math.exp(-t * 120) + 0.15 * noise() * Math.exp(-t * 900)),
+  // Plain beep
+  beep: (ctx, f) => synth(ctx, 0.06, (t) => Math.sin(TAU * f * t) * Math.min(1, t / 0.0015) * Math.exp(-t * 45)),
 };
-const PITCH = { wood: [1650, 1180, 1180], click: [1900, 1300, 1300], beep: [1320, 880, 880], soft: [880, 660, 660], cowbell: [1000, 800, 800] };
+const PITCH = { click: [3100, 2200, 2200], wood: [1180, 860, 860], beep: [1500, 1000, 1000] };
 const GAINS = [1, 0.62, 0.32]; // accent, beat, subdivision
 
 // ---------- tempo names, as printed in scores ----------
@@ -57,7 +52,7 @@ export class Metronome {
     this.beats = 4;
     this.accents = [2, 1, 1, 1];
     this.subdiv = 1;
-    this.sound = 'wood';
+    this.sound = 'click';
     this.volume = 0.8;
     this.ramp = { on: false, mode: 'smooth', from: 60, to: 100, bars: 32, step: 4, every: 4, repeat: false };
     this.gap = { on: false, play: 2, mute: 2 };
@@ -72,6 +67,7 @@ export class Metronome {
     const ctx = getCtx();
     const key = this.sound + ctx.sampleRate;
     if (this._bufKey === key) return;
+    if (!VOICES[this.sound]) this.sound = 'click';
     const p = PITCH[this.sound];
     this._buffers = p.map((f) => VOICES[this.sound](ctx, f));
     this._bufKey = key;

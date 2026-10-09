@@ -50,6 +50,11 @@
     <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-lib" viewBox="0 0 24 24"><path d="M5 4h4v16H5z M11 4h4v16h-4z M16.5 5.2l3.8-1 3.7 15.5-3.8 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" transform="translate(-1 0)"/></symbol>
+    <symbol id="i-finger" viewBox="0 0 24 24"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V10 M12 9.5a1.5 1.5 0 0 1 3 0V11 M15 10.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L4.3 15.6a1.5 1.5 0 0 1 2.3-1.9L9 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-jump" viewBox="0 0 24 24"><path d="M5 18V9a4 4 0 0 1 4-4h8 M14 2l3 3-3 3 M5 18h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-reps" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3 M20 4v4h-4 M20 12a8 8 0 0 1-14 5.3 M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M15 3v4h4 M8.5 10h8 M8.5 12h8 M8.5 14h8 M8.5 16h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
 
@@ -57,11 +62,20 @@
 <main id="library" class="view">
   <div class="home">
     <header class="home-head">
-      <div>
-        <h1 class="brand">Stand</h1>
-        <p class="lib-today" id="todayStat">No practice logged today</p>
+      <div class="head-left">
+        <button class="goal" id="goalBtn" data-panel="goal" aria-label="Daily practice goal">
+          <svg viewBox="0 0 48 48" class="goal-ring"><circle cx="24" cy="24" r="20" class="g-bg"/><circle cx="24" cy="24" r="20" class="g-fg" id="goalArc"/></svg>
+          <span class="goal-mid num" id="goalPct">0</span>
+        </button>
+        <div>
+          <h1 class="brand">Stand</h1>
+          <p class="lib-today" id="todayStat">No practice logged today</p>
+        </div>
       </div>
-      <label class="btn primary" for="importInput"><svg><use href="#i-plus"/></svg><span>Import score</span></label>
+      <div class="head-actions">
+        <button class="btn" data-panel="newpaper"><svg><use href="#i-paper"/></svg><span>New manuscript</span></button>
+        <label class="btn primary" for="importInput"><svg><use href="#i-plus"/></svg><span>Import score</span></label>
+      </div>
       <input id="importInput" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
     </header>
 
@@ -73,6 +87,7 @@
       <button class="tile" data-panel="tuner" data-tab="drone"><svg><use href="#i-drone"/></svg><span>Drone</span></button>
       <button class="tile rec" data-panel="record"><span class="rec-dot"></span><span>Record</span></button>
       <button class="tile" data-panel="takes"><svg><use href="#i-takes"/></svg><span>Recordings</span></button>
+      <button class="tile" data-panel="reps"><svg><use href="#i-reps"/></svg><span>Repetitions</span></button>
     </nav>
 
     <div class="home-tabs seg" id="homeTabs" role="tablist">
@@ -154,6 +169,7 @@
       <button class="tb-btn" data-panel="tuner"><svg><use href="#i-fork"/></svg><span>Tuner</span></button>
       <button class="tb-btn" data-panel="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
       <button class="tb-btn" data-panel="takes"><svg><use href="#i-takes"/></svg><span>Recordings</span></button>
+      <button class="tb-btn" data-panel="reps"><svg><use href="#i-reps"/></svg><span>Reps</span></button>
       <button class="tb-btn rec" id="recBtn"><span class="rec-dot"></span><span id="recBtnLabel">Record</span></button>
       <button class="tb-btn" data-panel="settings"><svg><use href="#i-more"/></svg><span>More</span></button>
     </div>
@@ -161,16 +177,27 @@
   <div class="inkbar" id="inkbar" hidden>
     <button class="ink-tool on" data-tool="pen" aria-label="Pen"><svg><use href="#i-pen"/></svg></button>
     <button class="ink-tool" data-tool="hl" aria-label="Highlighter"><svg><use href="#i-hl"/></svg></button>
+    <button class="ink-tool" data-tool="stamp" aria-label="Symbols"><span class="stamp-ico">&#xE522;</span></button>
     <button class="ink-tool" data-tool="eraser" aria-label="Eraser"><svg><use href="#i-eraser"/></svg></button>
     <span class="sep"></span>
-    <button class="swatch on" data-color="#1b1d22" style="--c:#1b1d22" aria-label="Black"></button>
-    <button class="swatch" data-color="#d23b3b" style="--c:#d23b3b" aria-label="Red"></button>
-    <button class="swatch" data-color="#1f3a8f" style="--c:#1f3a8f" aria-label="Blue"></button>
-    <button class="swatch" data-color="#2c9a5f" style="--c:#2c9a5f" aria-label="Green"></button>
+    <button class="ink-color" id="inkColorBtn" aria-label="Colour, thickness and opacity"><span id="inkColorDot"></span></button>
+    <button class="ink-tool" id="fingerBtn" aria-label="Write with finger"><svg><use href="#i-finger"/></svg></button>
     <span class="sep"></span>
     <button class="ink-tool" id="inkUndo" aria-label="Undo"><svg><use href="#i-undo"/></svg></button>
+    <button class="ink-tool" id="inkRedo" aria-label="Redo"><svg class="flipx"><use href="#i-undo"/></svg></button>
     <button class="btn small primary" id="inkDone">Done</button>
   </div>
+  <div class="ink-pop" id="inkPop" hidden>
+    <div class="swatches" id="swatches"></div>
+    <div class="ctl"><div class="ctl-head"><span>Thickness</span><span class="num" id="inkSizeVal"></span></div><input type="range" id="inkSize" min="1" max="10" step="1"></div>
+    <div class="ctl"><div class="ctl-head"><span>Opacity</span><span class="num" id="inkAlphaVal"></span></div><input type="range" id="inkAlpha" min="10" max="100" step="5"></div>
+    <canvas class="ink-preview" id="inkPreview" height="54"></canvas>
+  </div>
+  <div class="ink-pop stamps-pop" id="stampPop" hidden>
+    <p class="hint">Choose a symbol, then tap the music to place it.</p>
+    <div class="stamp-grid" id="stampGrid"></div>
+  </div>
+  <div class="ink-hint" id="inkHint" hidden></div>
   <div class="page-scrub" id="pageScrub"><input type="range" id="pageRange" min="1" max="1" value="1" aria-label="Page"></div>
 </main>
 
@@ -233,7 +260,7 @@
       <label class="field"><span>Subdivision</span>
         <select id="subSel"><option value="1">None</option><option value="2">Eighths</option><option value="3">Triplets</option><option value="4">Sixteenths</option></select></label>
       <label class="field"><span>Sound</span>
-        <select id="soundSel"><option value="wood">Wood block</option><option value="soft">Soft</option><option value="click">Click</option><option value="beep">Beep</option><option value="cowbell">Bell</option></select></label>
+        <select id="soundSel"><option value="click">Click</option><option value="wood">Woodblock</option><option value="beep">Beep</option></select></label>
       <label class="field"><span>Volume</span><input type="range" id="metroVol" min="0" max="1" step="0.01" value="0.8"></label>
     </div>
     <section class="sub-card">
@@ -331,7 +358,7 @@
     <div class="note-grid" id="droneNotes"></div>
     <div class="field-grid">
       <label class="field"><span>Octave</span><select id="droneOct"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
-      <label class="field"><span>Sound</span><select id="droneSound"><option value="cello">Bowed</option><option value="organ">Organ</option><option value="pure">Pure tone</option></select></label>
+      <label class="field"><span>Sound</span><select id="droneSound"><option value="strings">Strings</option><option value="organ">Organ</option><option value="pure">Pure tone</option></select></label>
     </div>
     <div class="seg full" id="droneChord"><button data-chord="root">Root</button><button data-chord="fifth" class="on">+ Fifth</button><button data-chord="major">Major</button><button data-chord="minor">Minor</button></div>
     <label class="check"><input type="checkbox" id="droneOctave"> Add the octave below</label>
@@ -364,7 +391,7 @@
     </div>
     <div class="field-grid">
       <label class="field"><span>Notes per beat</span><select id="scalePer"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
-      <label class="field"><span>Sound</span><select id="scaleSound"><option value="soft">Soft</option><option value="warm">Warm</option><option value="clear">Clear</option></select></label>
+      <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="soft">Soft</option><option value="strings">Strings</option></select></label>
     </div>
     <label class="field"><span>Volume</span><input type="range" id="scaleVol" min="0" max="1" step="0.01" value="0.6"></label>
     <label class="check"><input type="checkbox" id="scaleDrone"> Drone on the key note underneath</label>
@@ -440,6 +467,44 @@
   </div>
 </aside>
 
+<aside class="panel compact" id="panel-reps" hidden aria-label="Repetitions">
+  <div class="panel-head"><h2>Repetitions</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <p class="hint">Play a passage until it is clean several times in a row. A mistake starts the count again.</p>
+    <div class="reps-dots" id="repsDots"></div>
+    <div class="reps-count"><span class="num" id="repsNow">0</span><span class="muted"> of </span><span class="num" id="repsGoalVal">5</span><span class="muted"> in a row</span></div>
+    <div class="row-even">
+      <button class="btn big reps-miss" id="repsMiss"><svg><use href="#i-close"/></svg><span>Mistake</span></button>
+      <button class="btn big primary" id="repsOk"><svg><use href="#i-check"/></svg><span>Clean</span></button>
+    </div>
+    <div class="row-even">
+      <label class="field inline"><span>Goal</span><select id="repsGoal"><option>3</option><option selected>5</option><option>7</option><option>10</option></select></label>
+      <button class="btn" id="repsReset">Start over</button>
+    </div>
+    <p class="hint" id="repsStats"></p>
+  </div>
+</aside>
+
+<aside class="panel compact" id="panel-newpaper" hidden aria-label="New manuscript">
+  <div class="panel-head"><h2>New manuscript</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <label class="field"><span>Name</span><input id="paperName" placeholder="Sketches, exercises, dictation…" autocomplete="off"></label>
+    <div class="paper-grid" id="paperGrid"></div>
+    <label class="field"><span>Pages</span><select id="paperPages"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></label>
+    <button class="btn big primary" id="paperCreate">Create and open</button>
+  </div>
+</aside>
+
+<aside class="panel" id="panel-goal" hidden aria-label="Practice goal">
+  <div class="panel-head"><h2>Practice</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <div class="stat-row" id="goalStats"></div>
+    <canvas class="week-chart" id="weekChart" height="140" aria-label="Minutes practised in the last 14 days"></canvas>
+    <label class="field"><span>Daily goal</span><select id="goalSel"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1 h 30</option><option value="120">2 hours</option><option value="180">3 hours</option></select></label>
+    <p class="hint">Time counts while a score is open on screen. Rest days break the streak.</p>
+  </div>
+</aside>
+
 <aside class="panel" id="panel-settings" hidden aria-label="Score settings">
   <div class="panel-head"><h2>This score</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
@@ -448,6 +513,24 @@
     <div class="stat-row" id="scoreStats"></div>
     <label class="check"><input type="checkbox" id="twoUp" checked> Two pages side by side in landscape</label>
     <label class="check"><input type="checkbox" id="halfTurn"> Half-page turns (see the next system early)</label>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Bookmarks</h3><p class="hint">Name a page (a movement, a passage) to jump to it.</p></div></div>
+      <ul class="mini-list" id="bmList"></ul>
+      <button class="btn small" id="bmAdd"><svg><use href="#i-bookmark"/></svg><span>Bookmark this page</span></button>
+    </section>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Repeats and jumps</h3><p class="hint">For D.C., repeats and codas: when you turn forward from one page, the pedal goes to another page.</p></div></div>
+      <ul class="mini-list" id="jumpList"></ul>
+      <div class="jump-form">
+        <span>After page</span><input type="number" id="jumpFrom" min="1" inputmode="numeric">
+        <span>go to page</span><input type="number" id="jumpTo" min="1" inputmode="numeric">
+        <button class="btn small primary" id="jumpAdd">Add</button>
+      </div>
+      <label class="check"><input type="checkbox" id="jumpOnce" checked> Only the first time (like a repeat)</label>
+    </section>
+    <div id="paperTools" hidden>
+      <button class="btn" id="paperAdd"><svg><use href="#i-plus"/></svg><span>Add a page</span></button>
+    </div>
     <div class="ctl-head"><span>Page colour</span></div>
     <div class="seg full" id="paperSeg"><button data-paper="white" class="on">White</button><button data-paper="cream">Warm</button><button data-paper="night">Night</button></div>
     <p class="hint">Turn pages by tapping the right or left edge, swiping, or with a Bluetooth page-turner pedal. Tap the middle to show or hide the toolbar.</p>

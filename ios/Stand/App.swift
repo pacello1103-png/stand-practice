@@ -100,10 +100,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Ask for the microphone up front so the tuner and recorder work on first tap.
+        // Ask for the microphone and camera before the page starts, so the tuner,
+        // recorder and video recorder work on the first tap.
         AVAudioSession.sharedInstance().requestRecordPermission { _ in
-            DispatchQueue.main.async {
-                self.webView.load(URLRequest(url: URL(string: "stand://app/index.html")!))
+            AVCaptureDevice.requestAccess(for: .video) { _ in
+                DispatchQueue.main.async {
+                    self.webView.load(URLRequest(url: URL(string: "stand://app/index.html")!))
+                }
             }
         }
     }
@@ -116,12 +119,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        if type == .microphone {
-            decisionHandler(.grant)
-            return
-        }
-        AVCaptureDevice.requestAccess(for: .video) { ok in
-            DispatchQueue.main.async { decisionHandler(ok ? .grant : .deny) }
+        let mic = AVAudioSession.sharedInstance().recordPermission == .granted
+        let cam = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+        switch type {
+        case .microphone: decisionHandler(mic ? .grant : .prompt)
+        case .camera: decisionHandler(cam ? .grant : .prompt)
+        default: decisionHandler(mic && cam ? .grant : .prompt)
         }
     }
 
