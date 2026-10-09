@@ -76,12 +76,12 @@ export class ScalePlayer {
     o.connect(g).connect(master()); o.start(t); o.stop(t + 0.05);
   }
 
-  start() {
+  start(at = 0) {
     const ctx = getCtx();
     this.stop(true);
     this._nodes = [];
     this._list = this.notes();
-    this._i = 0; this._next = ctx.currentTime + 0.12; this._queue = [];
+    this._i = 0; this._next = at && at > ctx.currentTime ? at : ctx.currentTime + 0.12; this._queue = [];
     this.playing = true;
     if (this.drone) this._startDrone();
     this._tick();
@@ -112,7 +112,6 @@ export class ScalePlayer {
       const last = this._i === this._list.length - 1;
       const d = last ? dur * Math.max(2, this.perBeat) : dur;
       this._voice(this.freqOf(m), this._next, d, 1);
-      if (this.click && this._i % this.perBeat === 0) this._click(this._next, this._i % (this.perBeat * 4) === 0);
       this._queue.push({ time: this._next, midi: m, index: this._i });
       this._next += d;
       this._i++;

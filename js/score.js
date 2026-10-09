@@ -22,6 +22,11 @@ export const PAPERS = {
   duo: { label: 'Two staves (duet)', staves: [['g', 'f']], systems: 6, bracket: true },
   blank: { label: 'Blank staves', staves: [[null]], systems: 12 },
   wide: { label: 'Large staves (teaching)', staves: [[null]], systems: 8, space: 10 },
+  tab: { label: 'Guitar tab', staves: [['tab']], systems: 10, lines: 6, space: 8 },
+  lined: { label: 'Lined', kind: 'lined' },
+  dots: { label: 'Dot grid', kind: 'dots' },
+  grid: { label: 'Squared', kind: 'grid' },
+  plain: { label: 'Plain', kind: 'plain' },
 };
 const PAPER_W = 595, PAPER_H = 842;
 const CLEF = { g: ['', 3], f: ['', 1], alto: ['', 2], tenor: ['', 1] }; // glyph, line index from top (0..4)
@@ -32,11 +37,30 @@ function drawPaper(ctx, tpl, pageIndex, w, h) {
   ctx.save();
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
   ctx.scale(k, k);
+  if (def.kind) {
+    const step = 22, x0 = 40, x1 = PAPER_W - 40, y0 = 60, y1 = PAPER_H - 40;
+    if (def.kind === 'lined') {
+      ctx.strokeStyle = '#b9c3d6'; ctx.lineWidth = 0.6; ctx.beginPath();
+      for (let y = y0 + step; y <= y1; y += step) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+      ctx.stroke();
+      ctx.strokeStyle = '#e7a3a3'; ctx.beginPath(); ctx.moveTo(x0 + 34, y0); ctx.lineTo(x0 + 34, y1); ctx.stroke();
+    } else if (def.kind === 'grid') {
+      ctx.strokeStyle = '#d3d9e6'; ctx.lineWidth = 0.5; ctx.beginPath();
+      for (let y = y0; y <= y1 + 0.1; y += step / 1.5) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+      for (let x = x0; x <= x1 + 0.1; x += step / 1.5) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
+      ctx.stroke();
+    } else if (def.kind === 'dots') {
+      ctx.fillStyle = '#9aa5ba';
+      for (let y = y0; y <= y1 + 0.1; y += step / 1.5) for (let x = x0; x <= x1 + 0.1; x += step / 1.5) { ctx.beginPath(); ctx.arc(x, y, 0.8, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.restore();
+    return;
+  }
   const sp = def.space || 7.2;               // staff space in points
   const left = 54, right = PAPER_W - 46;
   const top = pageIndex === 0 ? 120 : 58, bottom = PAPER_H - 50;
   const nStaff = def.staves[0].length;
-  const staffH = sp * 4;
+  const staffH = sp * ((def.lines || 5) - 1);
   const innerGap = sp * 5.2;                 // between staves of one system
   const sysH = nStaff * staffH + (nStaff - 1) * innerGap;
   const minGap = nStaff > 1 ? sp * 7 : sp * 4.5;
@@ -50,9 +74,13 @@ function drawPaper(ctx, tpl, pageIndex, w, h) {
     def.staves[0].forEach((clef, j) => {
       const sy = y0 + j * (staffH + innerGap);
       ctx.beginPath();
-      for (let l = 0; l < 5; l++) { ctx.moveTo(left, sy + l * sp); ctx.lineTo(right, sy + l * sp); }
+      const nl = def.lines || 5;
+      for (let l = 0; l < nl; l++) { ctx.moveTo(left, sy + l * sp); ctx.lineTo(right, sy + l * sp); }
       ctx.stroke();
-      if (clef && CLEF[clef]) {
+      if (clef === 'tab') {
+        ctx.save(); ctx.font = `700 ${sp * 1.25}px "Helvetica Neue", Arial, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ['T', 'A', 'B'].forEach((ch, q) => ctx.fillText(ch, left + sp * 0.7, sy + sp * (1 + q * 1.5))); ctx.restore();
+      } else if (clef && CLEF[clef]) {
         const [g, line] = CLEF[clef];
         ctx.font = `${sp * 4}px Bravura`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
         ctx.fillText(g, left + sp * 0.9, sy + line * sp);
@@ -232,4 +260,47 @@ export function findSplit(curCanvas, nextCanvas) {
     }
     return best ? best.mid / rows : 0.5;
   } catch { return 0.5; }
+}
+
+// ---------- page order (deleted pages are hidden, never destroyed) ----------
+export function mapDoc(doc, map) {
+  if (!map) return { ...doc, orig: (i) => i };
+  const valid = map.filter((i) => i >= 0 && i < doc.pages);
+  return {
+    ...doc,
+    pages: valid.length,
+    sizes: valid.map((i) => doc.sizes[i]),
+    render: (i, canvas, w, h) => doc.render(valid[i], canvas, w, h),
+    orig: (i) => valid[i],
+    destroy: () => doc.destroy(),
+    base: doc,
+  };
+}
+
+// ---------- trim white margins ----------
+// Returns the box (0..1) that holds the printed content, with a little air around it.
+export function contentBox(canvas) {
+  const w = 220, h = Math.max(1, Math.round((220 * canvas.height) / canvas.width));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(canvas, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  const rowInk = new Uint16Array(h), colInk = new Uint16Array(w);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (d[i] + d[i + 1] + d[i + 2] < 600) { rowInk[y]++; colInk[x]++; }
+  }
+  // ignore specks: a row/column counts only with a few dark pixels
+  const firstRow = rowInk.findIndex((v) => v > 1), lastRow = h - 1 - [...rowInk].reverse().findIndex((v) => v > 1);
+  const firstCol = colInk.findIndex((v) => v > 1), lastCol = w - 1 - [...colInk].reverse().findIndex((v) => v > 1);
+  if (firstRow < 0 || firstCol < 0) return { x: 0, y: 0, w: 1, h: 1 };
+  const pad = 0.018;
+  const x0 = Math.max(0, firstCol / w - pad), x1 = Math.min(1, (lastCol + 1) / w + pad);
+  const y0 = Math.max(0, firstRow / h - pad), y1 = Math.min(1, (lastRow + 1) / h + pad);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+export function unionBox(a, b) {
+  if (!a) return b; if (!b) return a;
+  const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), x1 = Math.max(a.x + a.w, b.x + b.w), y1 = Math.max(a.y + a.h, b.y + b.h);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }

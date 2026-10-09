@@ -2,7 +2,7 @@
 // harmonic-series playback and an intonation drone.
 import { getCtx, master, acquireMic, releaseMic } from './audio.js';
 import { NOTE_NAMES, centsOffset } from './temperament.js';
-import { playNote, holdNote } from './synth.js';
+import { playNote, holdNote, pluckTanpura } from './synth.js';
 export { NOTE_NAMES };
 
 export function freqToNote(f, ref) {
@@ -78,7 +78,7 @@ export function detectPitch(buf, sr) {
   const a = nsdf[tau - 1], b = nsdf[tau], c = nsdf[tau + 1];
   const den = a - 2 * b + c;
   const shift = den !== 0 ? Math.max(-1, Math.min(1, (0.5 * (a - c)) / den)) : 0;
-  if (b < 0.8) return null;
+  if (b < 0.5) return null;
   let period = tau + shift;
   // Precision: measure across several periods (the k-th repetition) when it is clear enough.
   const interp = (t) => { const p = nsdf[t - 1], q = nsdf[t], r = nsdf[t + 1]; const d = p - 2 * q + r; return d !== 0 ? t + Math.max(-1, Math.min(1, (0.5 * (p - r)) / d)) : t; };
@@ -113,6 +113,46 @@ export function harmonicProfile(buf, sr, f0, n = 12) {
   return out.map((m) => (m > 0 ? Math.max(-60, 20 * Math.log10(m / max)) : -60));
 }
 
+// Turns raw per-frame pitch estimates into a steady reading: an adaptive noise gate,
+// hysteresis on clarity, median smoothing, protection against octave jumps, and a short hold
+// after the sound stops so the display does not flicker.
+export class PitchTracker {
+  constructor() { this.floor = 0.002; this.reset(); }
+  reset() { this.cur = 0; this.hist = []; this.cand = null; this.lastHeard = 0; }
+  feed(r, rms, now) {
+    const gate = Math.max(0.0035, this.floor * 2.8);
+    const valid = r && r.rms > gate && r.clarity >= (this.cur ? 0.7 : 0.85);
+    if (!valid) {
+      this.floor = 0.97 * this.floor + 0.03 * Math.max(0.0008, Math.min(0.05, rms));
+      if (this.cur && now - this.lastHeard < 1100) return { f: this.cur, held: true, clarity: 0 };
+      if (this.cur) this.reset();
+      this.cand = null;
+      return null;
+    }
+    const f = r.freq;
+    this.lastHeard = now;
+    if (this.cur) {
+      const d = 1200 * Math.log2(f / this.cur);
+      if (Math.abs(d) < 60) {
+        this.cand = null;
+        this.hist.push(f); if (this.hist.length > 5) this.hist.shift();
+        const med = [...this.hist].sort((a, b) => a - b)[this.hist.length >> 1];
+        this.cur += 0.35 * (med - this.cur);
+        return { f: this.cur, held: false, clarity: r.clarity };
+      }
+      // a jump: only believe it when it repeats (octave jumps need more proof)
+      const octave = Math.abs(Math.abs(d) - 1200) < 70 || Math.abs(Math.abs(d) - 1902) < 70;
+      const need = octave && r.clarity < 0.95 ? 6 : 3;
+      if (this.cand && Math.abs(1200 * Math.log2(f / this.cand.f)) < 45) this.cand.n++; else this.cand = { f, n: 1 };
+      if (this.cand.n >= need) { this.cur = this.cand.f; this.hist = [this.cand.f]; this.cand = null; return { f: this.cur, held: false, clarity: r.clarity }; }
+      return { f: this.cur, held: false, clarity: r.clarity };
+    }
+    if (this.cand && Math.abs(1200 * Math.log2(f / this.cand.f)) < 45) this.cand.n++; else this.cand = { f, n: 1 };
+    if (this.cand.n >= 2) { this.cur = this.cand.f; this.hist = [this.cur]; this.cand = null; return { f: this.cur, held: false, clarity: r.clarity }; }
+    return null;
+  }
+}
+
 export class Tuner {
   constructor() {
     this.ref = 442; this.key = 0; this.system = 'equal';
@@ -121,6 +161,7 @@ export class Tuner {
     this.onReading = null;
     this.trace = []; // {t, cents, name}
     this.lastBuf = null; this.lastF0 = 0;
+    this.tracker = new PitchTracker();
   }
   async start() {
     if (this.running) return;
@@ -129,14 +170,13 @@ export class Tuner {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 4096;
     this.analyser.smoothingTimeConstant = 0;
-    this.hp = ctx.createBiquadFilter(); this.hp.type = 'highpass'; this.hp.frequency.value = 32; this.hp.Q.value = 0.6;
+    this.hp = ctx.createBiquadFilter(); this.hp.type = 'highpass'; this.hp.frequency.value = 30; this.hp.Q.value = 0.6;
     src.connect(this.hp).connect(this.analyser);
     this.buf = new Float32Array(this.analyser.fftSize);
-    this.hist = []; this.smooth = null; this.lastHeard = 0; this.running = true;
-    let frame = 0;
+    this.tracker.reset(); this.running = true; this.wasNull = true;
     const loop = () => {
       if (!this.running) return;
-      if ((frame++ & 1) === 0) this._analyse(ctx.sampleRate);
+      this._analyse(ctx.sampleRate);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -149,29 +189,25 @@ export class Tuner {
       if (Math.abs(c) < 45) return { ...n, cents: c, target: s.freq, string: s.label };
     }
     const off = centsOffset(n.pc, this.key, this.system);
-    let cents = n.cents - off;
+    const cents = n.cents - off;
     return { ...n, cents, target: noteFreq(n.midi, this.ref) * Math.pow(2, off / 1200), offset: off };
   }
   _analyse(sr) {
     this.analyser.getFloatTimeDomainData(this.buf);
-    const r = detectPitch(this.buf, sr);
+    let ms = 0; for (let i = 0; i < this.buf.length; i++) ms += this.buf[i] * this.buf[i];
+    const rms = Math.sqrt(ms / this.buf.length);
+    const r = rms > 0.0012 ? detectPitch(this.buf, sr) : null;
     const now = performance.now();
-    if (!r) {
-      if (now - this.lastHeard > 500) { this.hist = []; this.smooth = null; this.onReading && this.onReading(null); }
-      return;
+    const out = this.tracker.feed(r, rms, now);
+    if (!out) { if (!this.wasNull) { this.wasNull = true; this.onReading && this.onReading(null); } return; }
+    this.wasNull = false;
+    const t = this._target(out.f);
+    if (!out.held) {
+      this.lastBuf = this.buf.slice(); this.lastF0 = out.f; this.lastSr = sr;
+      this.trace.push({ t: now, cents: t.cents, name: t.name });
+      while (this.trace.length && now - this.trace[0].t > 10000) this.trace.shift();
     }
-    this.lastHeard = now;
-    this.hist.push(r.freq);
-    if (this.hist.length > 5) this.hist.shift();
-    const sorted = [...this.hist].sort((a, b) => a - b);
-    const med = sorted[sorted.length >> 1];
-    if (!this.smooth || Math.abs(1200 * Math.log2(med / this.smooth)) > 50) { this.smooth = med; this.hist = [r.freq]; }
-    else this.smooth += 0.3 * (med - this.smooth);
-    const t = this._target(this.smooth);
-    this.lastBuf = this.buf.slice(); this.lastF0 = this.smooth; this.lastSr = sr;
-    this.trace.push({ t: now, cents: t.cents, name: t.name });
-    while (this.trace.length && now - this.trace[0].t > 10000) this.trace.shift();
-    this.onReading && this.onReading({ freq: this.smooth, ...t });
+    this.onReading && this.onReading({ freq: out.f, held: out.held, ...t });
   }
   harmonics(n = 10) { return this.lastBuf ? harmonicProfile(this.lastBuf, this.lastSr, this.lastF0, n) : null; }
   stop() {
@@ -181,6 +217,35 @@ export class Tuner {
     try { this.hp.disconnect(); this.analyser.disconnect(); } catch {}
     releaseMic();
   }
+}
+
+// ---------- natural harmonics on open strings ----------
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const INTERVALS = { 0: 'unison', 1: 'semitone', 2: 'whole tone', 3: 'minor third', 4: 'major third', 5: 'fourth', 6: 'tritone', 7: 'fifth', 8: 'minor sixth', 9: 'major sixth', 10: 'minor seventh', 11: 'major seventh', 12: 'octave' };
+export function intervalName(semis) {
+  const r = Math.round(semis);
+  if (r <= 12) return INTERVALS[r];
+  if (r % 12 === 0) return r === 24 ? 'two octaves' : `${r / 12} octaves`;
+  return (r < 24 ? 'octave + ' : 'two octaves + ') + INTERVALS[r % 12];
+}
+// Which natural harmonic(s) on the open strings sound at this frequency?
+export function naturalHarmonics(freq, strings, maxN = 10) {
+  const out = [];
+  for (const s of strings) {
+    const n = Math.round(freq / s.freq);
+    if (n < 2 || n > maxN) continue;
+    const cents = 1200 * Math.log2(freq / (n * s.freq));
+    if (Math.abs(cents) > 30) continue;
+    const touches = [];
+    for (let k = 1; k < n && touches.length < 2; k++) {
+      if (gcd(k, n) !== 1) continue;
+      const semis = 12 * Math.log2(1 / (1 - k / n));
+      touches.push({ k, semis, midi: s.midi + Math.round(semis), off: Math.round((semis - Math.round(semis)) * 100), name: intervalName(semis) });
+    }
+    out.push({ string: s, n, cents, touches, f: n * s.freq });
+  }
+  out.sort((a, b) => a.n - b.n);
+  return out;
 }
 
 // ---------- hearing the harmonic series ----------
@@ -218,46 +283,64 @@ export function playHarmonics(f0, { mode = 'series', h = 1, count = 8, volume = 
 }
 
 // ---------------- Drone ----------------
-function wave(ctx, kind) {
-  const n = 24;
-  const re = new Float32Array(n), im = new Float32Array(n);
-  for (let k = 1; k < n; k++) {
-    let a = 0;
-    if (kind === 'cello') a = Math.pow(k, -1.2) * (k === 2 ? 0.8 : 1) * (k % 5 === 0 ? 0.6 : 1);
-    else if (kind === 'organ') a = ({ 1: 1, 2: 0.55, 3: 0.35, 4: 0.28, 6: 0.14, 8: 0.1 })[k] || 0;
-    else a = k === 1 ? 1 : 0;
-    im[k] = a;
-  }
-  return ctx.createPeriodicWave(re, im);
-}
-
+export const DRONE_VOICES = { strings: 'Strings', organ: 'Organ', choir: 'Voices', tanpura: 'Tanpura', pure: 'Pure tone' };
+export const DRONE_CHORDS = {
+  root: { label: 'Root', r: [1] }, fifth: { label: '+ Fifth', r: [1, 3 / 2] }, octave: { label: '+ Octave', r: [1, 2] },
+  open: { label: 'Fifth + octave', r: [1, 3 / 2, 2] }, major: { label: 'Major', r: [1, 5 / 4, 3 / 2] }, minor: { label: 'Minor', r: [1, 6 / 5, 3 / 2] },
+};
+const TANPURA = { slow: 5.2, medium: 4, fast: 2.8 };
 export class Drone {
   constructor() {
-    this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'cello';
-    this.fifth = true; this.lowOct = false; this.third = false; this.minor = false; this.volume = 0.5;
+    this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'strings'; this.chord = 'fifth';
+    this.lowOct = false; this.volume = 0.5; this.speed = 'medium';
     this.running = false; this.voices = [];
   }
   get midi() { return 12 * (this.octave + 1) + this.pc; }
-  label() { return NOTE_NAMES[this.pc] + this.octave + (this.third ? (this.minor ? ' minor' : ' major') : this.fifth ? ' + 5th' : ''); }
-  _freqs() {
-    const f = noteFreq(this.midi, this.ref);
-    const out = [[f, 1]];
-    if (this.fifth || this.third) out.push([f * 1.5, 0.55]);
-    if (this.third) out.push([f * (this.minor ? 6 / 5 : 5 / 4), 0.45]);
-    if (this.lowOct) out.push([f / 2, 0.7]);
-    return out;
-  }
-  start() {
+  label() { return NOTE_NAMES[this.pc] + this.octave + (this.sound === 'tanpura' ? ' tanpura' : this.chord === 'root' ? '' : ' ' + DRONE_CHORDS[this.chord].label.replace('+ ', '+')); }
+  ratios() { const r = (DRONE_CHORDS[this.chord] || DRONE_CHORDS.root).r; return this.lowOct ? [0.5, ...r] : r; }
+  _out() {
     const ctx = getCtx();
-    if (this.running) this._stopVoices();
     if (!this.out) { this.out = ctx.createGain(); this.out.connect(master()); }
     this.out.gain.setTargetAtTime(this.volume * 0.6, ctx.currentTime, 0.05);
-    const voice = this.sound === 'cello' ? 'strings' : this.sound;
-    this.voices = this._freqs().map(([f, a]) => holdNote(this.out, f, voice, a));
+    return this.out;
+  }
+  start() {
+    if (this.running) this._stopVoices();
+    const f0 = noteFreq(this.midi, this.ref), out = this._out();
+    if (this.sound === 'tanpura') this._tanpura(f0, out);
+    else this.voices = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62));
     this.running = true;
   }
+  _tanpura(sa, out) {
+    const ctx = getCtx();
+    const cycle = TANPURA[this.speed] || 4;
+    const pattern = [[0, 3 / 4], [0.3, 1], [0.48, 1], [0.66, 1 / 2]]; // Pa, Sa, Sa, low Sa
+    let next = ctx.currentTime + 0.05, step = 0;
+    const tick = () => {
+      while (next < getCtx().currentTime + 0.3) {
+        const [pos, ratio] = pattern[step % 4];
+        const base = Math.floor(step / 4) * cycle;
+        pluckTanpura(out, sa * ratio, this._t0 + base + pos * cycle, ratio === 1 / 2 ? 1.1 : 1);
+        step++;
+        const [np] = pattern[step % 4];
+        next = this._t0 + Math.floor(step / 4) * cycle + np * cycle;
+      }
+    };
+    this._t0 = next;
+    tick();
+    const timer = setInterval(tick, 60);
+    this.voices = [{ stop: () => clearInterval(timer) }];
+  }
   _stopVoices() { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now); this.voices = []; }
-  stop() { if (!this.running) return; this._stopVoices(); this.running = false; }
+  stop() {
+    if (!this.running) return;
+    this._stopVoices(); this.running = false;
+    if (this.sound === 'tanpura' && this.out) {
+      // let the ringing strings fade instead of cutting them
+      const g = this.out, ctx = getCtx(); g.gain.setTargetAtTime(0, ctx.currentTime, 0.35);
+      this.out = null; setTimeout(() => { try { g.disconnect(); } catch {} }, 2500);
+    }
+  }
   refresh() { if (this.running) this.start(); }
   setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * 0.6, getCtx().currentTime, 0.05); }
 }

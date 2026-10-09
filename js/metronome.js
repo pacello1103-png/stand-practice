@@ -124,7 +124,7 @@ export class Metronome {
     this._countIn = opts.countInBars ? opts.countInBars * this.beats : 0;
     this._onCountIn = opts.onCountInDone || null;
     this._stopAfterCountIn = !!opts.stopAfterCountIn;
-    this._next = ctx.currentTime + 0.06;
+    this._next = opts.at && opts.at > ctx.currentTime + 0.02 ? opts.at : ctx.currentTime + 0.08;
     this._queue = [];
     this._tick();
     this._timer = setInterval(() => this._tick(), TICK_MS);
