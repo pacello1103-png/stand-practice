@@ -209,7 +209,7 @@ svg { width: 22px; height: 22px; flex: none; }
 .tb-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 600 17px var(--font-serif); }
 .tb-title span { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .tb-tools { display: flex; gap: 2px; }
-.tb-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 66px; height: 50px; padding: 0 4px; border-radius: 11px; font-size: 11px; font-weight: 600; color: var(--ink); }
+.tb-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 60px; height: 50px; padding: 0 4px; border-radius: 11px; font-size: 11px; font-weight: 600; color: var(--ink); }
 .tb-btn svg { width: 22px; height: 22px; }
 .tb-btn:hover { background: var(--accent-soft); }
 .tb-btn.on { background: var(--accent); color: var(--accent-ink); }
@@ -314,13 +314,21 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .flash.on { opacity: .2; transition: none; }
 
 /* tuner */
-.tuner-face { position: relative; text-align: center; padding: 6px 0 4px; border-radius: 20px; background: var(--sunk); transition: background .2s; }
-.tuner-face.intune { background: color-mix(in srgb, var(--good) 16%, var(--sunk)); }
+.tuner-face { position: relative; text-align: center; padding: 6px 0 4px; border-radius: 20px; background: var(--sunk); overflow: hidden; isolation: isolate; }
+.tuner-face::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(120% 90% at 50% 18%, color-mix(in srgb, var(--good) 30%, transparent), transparent 62%); opacity: 0; transition: opacity .35s ease; }
+.tuner-face.intune::before { opacity: 1; }
 .dial { width: 100%; height: auto; display: block; }
 .dial line.tk { stroke: var(--muted); stroke-width: 1.5; opacity: .55; }
 .dial line.tk.major { stroke-width: 2.5; opacity: .9; }
 .dial text { fill: var(--muted); font: 600 11px var(--font-num); }
-.dial .zone { fill: var(--good); opacity: .9; }
+.dial .zone-arc { fill: none; stroke: var(--good); stroke-width: 9; stroke-linecap: round; opacity: .28; transition: opacity .25s; }
+.dial .zone-dot { fill: var(--sunk); stroke: var(--good); stroke-width: 2.5; transition: fill .2s, r .2s; }
+.dial .zone-glow { fill: var(--good); opacity: 0; transform-origin: 150px 24px; transform: scale(.5); transition: opacity .3s, transform .3s; }
+.tuner-face.intune .zone-arc { opacity: .75; }
+.tuner-face.intune .zone-dot { fill: var(--good); }
+.tuner-face.intune .zone-glow { opacity: .22; transform: scale(1); animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .12; transform: scale(1.25); } }
+.tuner-face.intune .note-read .note { color: var(--good); }
 #needle { transform-origin: 150px 160px; transition: transform .1s ease-out; }
 #needle line { stroke: var(--ink); stroke-width: 3.5; stroke-linecap: round; }
 .tuner-face.intune #needle line { stroke: var(--good); }
@@ -328,7 +336,8 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .note-read { margin-top: -70px; font-family: var(--font-num); line-height: 1; }
 .note-read .note { font-size: 68px; font-weight: 600; }
 .note-read sub, .harm-note sub { font-size: 22px; color: var(--muted); font-weight: 600; vertical-align: baseline; }
-.cents { font-size: 16px; font-weight: 600; margin-top: 4px; color: var(--muted); }
+.cents { font-size: 16px; font-weight: 600; margin-top: 4px; color: var(--muted); transition: color .2s; }
+.note-read .note { transition: color .25s; }
 .tuner-face.intune .cents { color: var(--good); }
 .hz { font-size: 13px; color: var(--muted); padding-bottom: 8px; }
 .trace { width: 100%; height: 90px; display: block; border-radius: 14px; background: var(--sunk); }
@@ -405,7 +414,7 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 
 .toast { position: fixed; z-index: 60; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 74px); background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }
 
-@media (max-width: 900px) {
+@media (max-width: 700px) {
   .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .tb-btn { min-width: 48px; }
   .tb-btn span:not(.rec-dot) { display: none; }

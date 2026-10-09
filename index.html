@@ -280,7 +280,9 @@
     <div class="tuner-face idle" id="tunerFace">
       <svg class="dial" viewBox="0 0 300 170" aria-hidden="true">
         <g id="dialTicks"></g>
-        <rect class="zone" x="143" y="20" width="14" height="10" rx="3"/>
+        <path class="zone-arc" d="M137.0 24.6 A136 136 0 0 1 163.0 24.6"/>
+        <circle class="zone-glow" cx="150" cy="24" r="14"/>
+        <circle class="zone-dot" cx="150" cy="24" r="6"/>
         <g id="needle"><line x1="150" y1="98" x2="150" y2="32"/></g>
       </svg>
       <div class="note-read"><span id="tNote" class="note">–</span><sub id="tOct"></sub></div>

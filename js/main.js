@@ -831,7 +831,7 @@ tuner.onReading = (r) => {
   face.classList.remove('idle');
   const c = r.cents;
   $('#tNote').textContent = r.name; $('#tOct').textContent = r.octave;
-  $('#tCents').textContent = Math.abs(c) < 2 ? 'In tune' : (c > 0 ? '+' : '−') + Math.abs(c).toFixed(0) + ' cents ' + (c > 0 ? 'sharp' : 'flat');
+  $('#tCents').textContent = Math.abs(c) < 3 ? '✓ In tune' : (c > 0 ? '+' : '−') + Math.abs(c).toFixed(0) + ' cents ' + (c > 0 ? 'sharp' : 'flat');
   let sub = r.freq.toFixed(1) + ' Hz';
   if (r.string) sub += ` · ${r.string} string${S.pureFifths && INSTRUMENTS[S.instrument].fifths ? ', pure fifths' : ''}`;
   else if (S.system !== 'equal' && Math.abs(r.offset) > 0.5) sub += ` · ${SYSTEMS[S.system].label} ${r.offset > 0 ? '+' : '−'}${Math.abs(r.offset).toFixed(0)}¢ in ${NOTE_NAMES[S.key]}`;
@@ -1341,7 +1341,14 @@ $('#delYes').addEventListener('click', async () => {
   await deleteTakeData(currentTake.id);
   currentTake = null; $('#player').hidden = true; refreshTakes(); toast('Recording deleted');
 });
+const nativeShare = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standShare;
 async function shareBlob(blob, name) {
+  if (nativeShare) {
+    const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+    $('#toast').hidden = true;
+    nativeShare.postMessage({ name, data: b64 });
+    return;
+  }
   const file = new File([blob], name, { type: blob.type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     $('#toast').hidden = true;
