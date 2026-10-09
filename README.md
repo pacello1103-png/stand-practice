@@ -14,6 +14,15 @@ A practice app for musicians that runs on iPad (and any modern browser) and work
 Everything is stored on the device. Nothing is uploaded.
 
 ## Install on iPad
-1. Open https://pacello1103-png.github.io/stand-practice/ in **Safari**.
-2. Tap Share › **Add to Home Screen**.
-3. Open Stand from the Home Screen. Allow the microphone (and camera for video) the first time.
+
+**As an app (cable, Sideloadly)**
+1. Download `Stand.ipa` from the latest release: https://github.com/pacello1103-png/stand-practice/releases/latest
+2. Connect the iPad to your computer, open Sideloadly, drop in `Stand.ipa`, enter your Apple ID and press Start.
+3. On the iPad: Settings › General › VPN & Device Management › trust your Apple ID. With a free Apple ID, re-sign every 7 days (your scores and recordings stay).
+4. iOS 16+: turn on Settings › Privacy & Security › Developer Mode once.
+
+**As a web app (no computer)**
+1. Open https://pacello1103-png.github.io/stand-practice/ in Safari.
+2. Share › Add to Home Screen.
+
+A new `Stand.ipa` is built automatically on every change.
