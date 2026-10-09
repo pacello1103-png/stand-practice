@@ -924,7 +924,7 @@ function drawHarmonics() {
   const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, Hh);
   const accent = css('--accent'), accentT = css('--accent-text'), muted = css('--muted'), ink = css('--ink'), good = css('--good'), warn = css('--warn');
   const n = H.count, pad = 8, gap = 4, bw = (W - pad * 2 - gap * (n - 1)) / n;
-  const top = 10, base = Hh - 50;
+  const top = H.profile ? 10 : 24, base = Hh - 50;
   harmGeom = { pad, gap, bw, n };
   for (let k = 1; k <= n; k++) {
     const x = pad + (k - 1) * (bw + gap);
