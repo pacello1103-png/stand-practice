@@ -163,10 +163,18 @@ export class Tuner {
     this.lastBuf = null; this.lastF0 = 0;
     this.tracker = new PitchTracker();
   }
-  async start() {
-    if (this.running) return;
+  start() {
+    if (this.running) return Promise.resolve();
+    if (!this._starting) {
+      this._cancel = false;
+      this._starting = this._start().finally(() => { this._starting = null; });
+    }
+    return this._starting;
+  }
+  async _start() {
     const ctx = getCtx();
     const src = await acquireMic();
+    if (this._cancel) { releaseMic(); return; }   // stopped while the microphone was opening
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 4096;
     this.analyser.smoothingTimeConstant = 0;
@@ -211,6 +219,7 @@ export class Tuner {
   }
   harmonics(n = 10) { return this.lastBuf ? harmonicProfile(this.lastBuf, this.lastSr, this.lastF0, n) : null; }
   stop() {
+    if (this._starting) this._cancel = true;
     if (!this.running) return;
     this.running = false;
     cancelAnimationFrame(this.raf);
@@ -283,7 +292,7 @@ export function playHarmonics(f0, { mode = 'series', h = 1, count = 8, volume = 
 }
 
 // ---------------- Drone ----------------
-export const DRONE_VOICES = { strings: 'Strings', organ: 'Organ', choir: 'Voices', tanpura: 'Tanpura', pure: 'Pure tone' };
+export const DRONE_VOICES = { pure: 'Soft', warm: 'Warm', organ: 'Organ' };
 export const DRONE_CHORDS = {
   root: { label: 'Root', r: [1] }, fifth: { label: '+ Fifth', r: [1, 3 / 2] }, octave: { label: '+ Octave', r: [1, 2] },
   open: { label: 'Fifth + octave', r: [1, 3 / 2, 2] }, major: { label: 'Major', r: [1, 5 / 4, 3 / 2] }, minor: { label: 'Minor', r: [1, 6 / 5, 3 / 2] },
@@ -291,7 +300,7 @@ export const DRONE_CHORDS = {
 const TANPURA = { slow: 5.2, medium: 4, fast: 2.8 };
 export class Drone {
   constructor() {
-    this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'strings'; this.chord = 'fifth';
+    this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'pure'; this.chord = 'fifth';
     this.lowOct = false; this.volume = 0.5; this.speed = 'medium';
     this.running = false; this.voices = [];
   }

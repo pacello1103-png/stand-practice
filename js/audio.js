@@ -3,6 +3,8 @@ let ctx = null;
 let masterGain = null;
 
 function setSession(type) {
+  // In the iPad app the native side keeps one play-and-record session for everything.
+  if (window.standCaps && window.standCaps.native) return;
   try { if (navigator.audioSession) navigator.audioSession.type = type; } catch { /* not supported */ }
 }
 

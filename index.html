@@ -30,6 +30,10 @@
     <symbol id="i-takes" viewBox="0 0 24 24"><path d="M4 12h1.5M7.5 8v8M11 5v14M14.5 9v6M18 7v10M21 11v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-scales" viewBox="0 0 24 24"><path d="M3 20h4v-4h4v-4h4V8h4V4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-harm" viewBox="0 0 24 24"><path d="M4 20V6 M9 20v-9 M14 20v-6 M19 20v-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-svc-yt" viewBox="0 0 24 24"><rect x="2.5" y="5.5" width="19" height="13" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/></symbol>
+    <symbol id="i-svc-sp" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7.3 9.6c3.2-1 6.8-.7 9.6.9M7.9 12.6c2.6-.7 5.4-.5 7.7.8M8.6 15.4c2-.5 4-.3 5.7.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-svc-am" viewBox="0 0 24 24"><path d="M9.5 17.5V6.8l9-1.8v10.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="7.4" cy="17.5" r="2.2" fill="currentColor"/><circle cx="16.4" cy="15.4" r="2.2" fill="currentColor"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z M14 7l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-hl" viewBox="0 0 24 24"><path d="M9 14l-3 3v3h3l3-3 M9 14l7-9 4 4-8 8 M6 21h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M8 20h12 M4.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L11 19H8.5l-4-3.5z M9 11l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
@@ -117,8 +121,14 @@
           <button data-sort="title">Title</button>
           <button data-sort="composer">Composer</button>
         </div>
+        <button class="btn small" id="libEdit">Select</button>
       </div>
       <section class="grid" id="grid"></section>
+      <div class="lib-actions" id="libActions" hidden>
+        <span id="libCount">Tap scores to select</span>
+        <button class="btn small" id="libCancel">Cancel</button>
+        <button class="btn small danger" id="libDelete" disabled><svg><use href="#i-trash"/></svg><span>Delete</span></button>
+      </div>
       <section class="empty" id="emptyLib" hidden>
         <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
         <h2>Your stand is empty</h2>
@@ -190,6 +200,7 @@
     <button class="ink-tool on" data-tool="pen" aria-label="Pen"><svg><use href="#i-pen"/></svg></button>
     <button class="ink-tool" data-tool="hl" aria-label="Highlighter"><svg><use href="#i-hl"/></svg><span class="hl-dot" id="hlDot"></span></button>
     <button class="ink-tool" data-tool="stamp" aria-label="Symbols"><span class="stamp-ico">&#xE522;</span></button>
+    <button class="ink-tool" data-tool="text" aria-label="Text"><svg><use href="#i-text"/></svg></button>
     <button class="ink-tool" data-tool="eraser" aria-label="Eraser for your markings"><svg><use href="#i-eraser"/></svg></button>
     <button class="ink-tool" data-tool="print" aria-label="Eraser for the printed score"><svg><use href="#i-whiteout"/></svg></button>
     <button class="ink-tool" data-tool="select" aria-label="Select, move and resize"><svg><use href="#i-lasso"/></svg></button>
@@ -347,6 +358,10 @@
     <canvas class="trace" id="traceCanvas" height="90" aria-label="Pitch over the last seconds"></canvas>
     <div class="strings" id="stringRow"></div>
     <button class="btn big primary" id="tunerToggle"><svg><use href="#i-mic"/></svg><span>Start tuner</span></button>
+    <section class="sub-card into-card">
+      <div class="sub-head"><div><h3>Your intonation</h3><p class="hint" id="intoSummary">Play scales or a passage with the tuner on. Stand learns which notes you tend to play sharp or flat.</p></div><button class="btn small" id="intoReset" hidden>Start over</button></div>
+      <div class="into-map" id="intoMap"></div>
+    </section>
     <div class="field-grid">
       <label class="field"><span>Instrument</span><select id="tunerInst"></select></label>
       <div class="field"><span>Reference A</span>
@@ -386,13 +401,13 @@
 
   <div class="panel-body" id="tab-drone" hidden>
     <div class="note-grid" id="droneNotes"></div>
+    <div class="seg full" id="droneSoundSeg"></div>
+    <select id="droneSound" hidden></select>
     <div class="field-grid">
-      <label class="field"><span>Sound</span><select id="droneSound"></select></label>
       <label class="field"><span>Octave</span><select id="droneOct"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
       <label class="field" id="droneChordRow"><span>Notes</span><select id="droneChord"></select></label>
       <label class="field"><span>Change key</span><select id="droneWalk"><option value="stay">Stay on this note</option><option value="fifths">Circle of fifths</option><option value="chromatic">Up by semitones</option></select></label>
     </div>
-    <div class="field" id="droneSpeedRow"><span>Tanpura speed</span><div class="seg full" id="droneSpeed"><button data-speed="slow">Slow</button><button data-speed="medium" class="on">Medium</button><button data-speed="fast">Fast</button></div></div>
     <label class="field" id="droneWalkBarsRow" hidden><span>Every</span><select id="droneWalkBars"><option value="2">2 bars</option><option value="4">4 bars</option><option value="8" selected>8 bars</option><option value="16">16 bars</option></select></label>
     <label class="check"><input type="checkbox" id="droneOctave"> Add the octave below</label>
     <label class="field"><span>Volume</span><input type="range" id="droneVol" min="0" max="1" step="0.01" value="0.5"></label>
@@ -401,7 +416,7 @@
       <div class="stepper"><button class="round-btn small ml-down" aria-label="Slower"><svg><use href="#i-minus"/></svg></button><span class="num"><span class="ml-bpm">80</span> BPM</span><button class="round-btn small ml-up" aria-label="Faster"><svg><use href="#i-plus"/></svg></button></div>
     </div>
     <button class="btn big primary" id="droneToggle"><svg><use href="#i-play"/></svg><span>Start drone</span></button>
-    <p class="hint">Tuned to your reference A. Fifths and thirds are pure (3:2, 5:4, 6:5), so you hear when you lock in. Organ and Pure tone never waver; Tanpura plucks the classic Pa–Sa–Sa–Sa cycle.</p>
+    <p class="hint">Tuned to your reference A. Fifths and thirds are pure (3:2, 5:4, 6:5), so you hear when you lock in. The sound never wavers, so every beat you hear is your own intonation.</p>
   </div>
 </aside>
 
@@ -581,7 +596,7 @@
       </div>
       <input type="file" id="backupInput" hidden>
     </section>
-    <p class="hint center">Stand 1.4 · everything stays on this iPad</p>
+    <p class="hint center">Stand 1.5 · everything stays on this iPad</p>
   </div>
 </aside>
 
@@ -622,8 +637,13 @@
 <aside class="panel wide" id="panel-pages" hidden aria-label="Pages">
   <div class="panel-head"><h2>Pages</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
-    <p class="hint">Delete pages you never play (blank pages, the piano part, a cover). Deleted pages can be restored any time.</p>
+    <p class="hint">Tap the pages you don’t need, then Delete. Nothing is lost: you can put them back any time.</p>
     <div class="page-grid" id="pageGrid"></div>
+    <button class="btn danger full" id="pgDelete" disabled><svg><use href="#i-trash"/></svg><span>Select pages to delete</span></button>
+    <section class="sub-card" id="pgTrash" hidden>
+      <div class="sub-head"><div><h3 id="pgTrashTitle">Deleted pages</h3><p class="hint">Tap a page to put it back.</p></div><button class="btn small" id="pgRestoreAll">Put all back</button></div>
+      <div class="page-grid small" id="pgTrashGrid"></div>
+    </section>
   </div>
 </aside>
 

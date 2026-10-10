@@ -25,11 +25,13 @@ jobs:
           cd ios && xcodegen generate
 
       - name: Build (unsigned)
+        shell: bash
         run: |
+          set -o pipefail
           cd ios
           xcodebuild -project Stand.xcodeproj -target Stand -configuration Release -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=1.${{ github.run_number }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build | tail -n 40
 
       - name: Package IPA

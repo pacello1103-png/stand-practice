@@ -134,18 +134,29 @@ export async function openDocument(file) {
       destroy() { pdf.destroy(); },
     };
   }
-  const bitmaps = [];
-  for (const blob of file.data) bitmaps.push(await createImageBitmap(blob));
+  // Photos and scans: decode only the pages being shown (a few at a time), so a long scan
+  // never holds every full-size photo in memory.
+  const sizes = [];
+  for (const blob of file.data) { const b = await createImageBitmap(blob); sizes.push([b.width, b.height]); if (b.close) b.close(); }
+  const lru = new Map();
+  const bitmap = (i) => {
+    if (lru.has(i)) { const v = lru.get(i); lru.delete(i); lru.set(i, v); return v; }
+    const v = createImageBitmap(file.data[i]);
+    lru.set(i, v);
+    while (lru.size > 3) { const [k, old] = lru.entries().next().value; lru.delete(k); old.then((b) => b.close && b.close(), () => {}); }
+    return v;
+  };
   return {
-    pages: bitmaps.length, sizes: bitmaps.map((b) => [b.width, b.height]),
+    pages: sizes.length, sizes,
     async render(i, canvas, w, h) {
+      const bmp = await bitmap(i);
       canvas.width = Math.round(w); canvas.height = Math.round(h);
       const c = canvas.getContext('2d', { alpha: false });
       c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
       c.imageSmoothingQuality = 'high';
-      c.drawImage(bitmaps[i], 0, 0, w, h);
+      c.drawImage(bmp, 0, 0, w, h);
     },
-    destroy() { bitmaps.forEach((b) => b.close && b.close()); },
+    destroy() { for (const v of lru.values()) v.then((b) => b.close && b.close(), () => {}); lru.clear(); },
   };
 }
 

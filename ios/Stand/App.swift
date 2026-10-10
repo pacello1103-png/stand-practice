@@ -28,7 +28,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.rootViewController = WebViewController()
         window.makeKeyAndVisible()
         self.window = window
-        if let url = launchOptions?[.url] as? URL { (window.rootViewController as? WebViewController)?.receive(fileAt: url) }
         return true
     }
 
@@ -62,6 +61,7 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "heic": "image/heic", "svg": "image/svg+xml", "pdf": "application/pdf",
         "bcmap": "application/octet-stream", "pfb": "application/octet-stream", "ttf": "font/ttf", "otf": "font/otf",
         "woff2": "font/woff2", "wasm": "application/wasm",
+        "mov": "video/quicktime", "mp4": "video/mp4", "m4a": "audio/mp4",
     ]
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
@@ -76,7 +76,9 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
             base = root; rel = String(path.dropFirst())
         }
         let file = base.appendingPathComponent(rel).standardizedFileURL
-        guard file.path.hasPrefix(base.standardizedFileURL.path), let data = try? Data(contentsOf: file) else {
+        guard file.path.hasPrefix(base.standardizedFileURL.path),
+              let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber,
+              let handle = try? FileHandle(forReadingFrom: file) else {
             let notFound = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/plain"])!
             task.didReceive(notFound)
             task.didReceive(Data())
@@ -86,23 +88,30 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         let mime = Self.types[file.pathExtension.lowercased()] ?? "application/octet-stream"
         let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [
             "Content-Type": mime,
-            "Content-Length": String(data.count),
+            "Content-Length": size.stringValue,
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-cache",
         ])!
         task.didReceive(response)
-        task.didReceive(data)
+        // in pieces, so a long video never has to fit in memory at once
+        while true {
+            let chunk = autoreleasepool { handle.readData(ofLength: 1 << 20) }
+            if chunk.isEmpty { break }
+            task.didReceive(chunk)
+        }
+        try? handle.close()
         task.didFinish()
     }
 
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
-final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, VNDocumentCameraViewControllerDelegate {
+final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, VNDocumentCameraViewControllerDelegate, UIPencilInteractionDelegate {
     private var webView: WKWebView!
     private var pageReady = false
     private var pending: [[String: Any]] = []
     private let face = FaceTurner()
+    private let video = NativeVideo()
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -110,10 +119,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standScan"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standScan", "standVideo"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), scan: \(VNDocumentCameraViewController.isSupported) };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -129,6 +138,28 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         view = webView
 
         face.onEvent = { [weak self] event in self?.send("standFaceEvent", event) }
+        video.onEvent = { [weak self] event in self?.send("standVideoEvent", event) }
+        // Apple Pencil double-tap (and squeeze on Pencil Pro) switches to the eraser and back.
+        let pencil = UIPencilInteraction()
+        pencil.delegate = self
+        webView.addInteraction(pencil)
+    }
+
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil)
+    }
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) {
+        webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil)
+    }
+    @available(iOS 17.5, *)
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        if squeeze.phase == .ended { webView.evaluateJavaScript("window.standPencilTap && window.standPencilTap()", completionHandler: nil) }
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { _ in self.video.orientationChanged() }
     }
 
     override func viewDidLoad() {
@@ -219,9 +250,21 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             if body["on"] as? Bool == true { face.start() } else { face.stop() }
         case "standScan":
             guard VNDocumentCameraViewController.isSupported else { return }
+            face.stop()   // the scanner needs the camera
             let scanner = VNDocumentCameraViewController()
             scanner.delegate = self
+            scanner.modalPresentationStyle = .fullScreen   // Cancel and Save always visible
             present(scanner, animated: true)
+        case "standVideo":
+            switch body["cmd"] as? String {
+            case "open":
+                face.stop()
+                video.open(front: body["front"] as? Bool ?? true, in: view)
+            case "record": video.record()
+            case "stop": video.stop()
+            case "close": video.close()
+            default: break
+            }
         default: break
         }
     }
@@ -240,8 +283,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             if !paths.isEmpty { self.deliver(["paths": paths, "name": "Scan " + f.string(from: Date()) + ".jpg"]) }
         }
     }
-    func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) { controller.dismiss(animated: true) }
-    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) { controller.dismiss(animated: true) }
+    func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
+        controller.dismiss(animated: true) { self.send("standScanEnded", [:]) }
+    }
+    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
+        controller.dismiss(animated: true) { self.send("standScanEnded", ["error": error.localizedDescription]) }
+    }
     static func downscale(_ image: UIImage, maxSide: CGFloat) -> UIImage {
         let size = image.size
         let k = min(1, maxSide / max(size.width, size.height))
@@ -448,6 +495,186 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         running = false
         emit(["type": "unsupported"])
     }
+    private func emit(_ message: [String: Any]) {
+        DispatchQueue.main.async { self.onEvent?(message) }
+    }
+}
+
+// MARK: - Video recording
+// Records camera and microphone natively (H.264 + AAC), so it works on every iPad, while the
+// score stays on screen. A small preview floats over the page and can be dragged anywhere.
+final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
+    var onEvent: (([String: Any]) -> Void)?
+    private let session = AVCaptureSession()
+    private let output = AVCaptureMovieFileOutput()
+    private let queue = DispatchQueue(label: "stand.video")
+    private var preview: PreviewView?
+    private var levelTimer: Timer?
+    private var front = true
+    private weak var host: UIView?
+
+    final class PreviewView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    }
+
+    func open(front: Bool, in host: UIView) {
+        self.front = front
+        self.host = host
+        AVCaptureDevice.requestAccess(for: .video) { video in
+            AVCaptureDevice.requestAccess(for: .audio) { audio in
+                guard video && audio else { self.emit(["type": "error", "reason": "permission"]); return }
+                self.queue.async { self.configure() }
+            }
+        }
+    }
+
+    private func configure() {
+        // one session that plays (metronome, count-in) and records at the same time
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default,
+                                                         options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        session.beginConfiguration()
+        session.automaticallyConfiguresApplicationAudioSession = false   // keep the app's audio (metronome) playing
+        if #available(iOS 16.0, *), session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }
+        if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 } else { session.sessionPreset = .high }
+        for input in session.inputs { session.removeInput(input) }
+        let position: AVCaptureDevice.Position = front ? .front : .back
+        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) ?? AVCaptureDevice.default(for: .video),
+              let videoIn = try? AVCaptureDeviceInput(device: camera), session.canAddInput(videoIn) else {
+            session.commitConfiguration()
+            emit(["type": "error", "reason": "camera"])
+            return
+        }
+        session.addInput(videoIn)
+        if let mic = AVCaptureDevice.default(for: .audio), let audioIn = try? AVCaptureDeviceInput(device: mic), session.canAddInput(audioIn) {
+            session.addInput(audioIn)
+        }
+        if !session.outputs.contains(output) && session.canAddOutput(output) { session.addOutput(output) }
+        if let c = output.connection(with: .video) {
+            if c.isVideoMirroringSupported { c.automaticallyAdjustsVideoMirroring = false; c.isVideoMirrored = false }
+            if c.isVideoStabilizationSupported { c.preferredVideoStabilizationMode = .auto }
+        }
+        session.commitConfiguration()
+        if !session.isRunning { session.startRunning() }
+        DispatchQueue.main.async {
+            self.showPreview()
+            self.orientationChanged()
+            self.startLevels()
+            self.emit(["type": "ready"])
+        }
+    }
+
+    func record() {
+        queue.async {
+            guard self.session.isRunning, !self.output.isRecording else {
+                self.emit(["type": "error", "reason": "record", "message": "The camera is not ready."]); return
+            }
+            let url = incomingDir.appendingPathComponent("rec-" + UUID().uuidString + ".mov")
+            self.output.startRecording(to: url, recordingDelegate: self)
+        }
+    }
+
+    func stop() {
+        queue.async {
+            if self.output.isRecording { self.output.stopRecording() }
+            else { DispatchQueue.main.async { self.close() }; self.emit(["type": "done"]) }
+        }
+    }
+
+    func close() {
+        levelTimer?.invalidate(); levelTimer = nil
+        preview?.removeFromSuperview(); preview = nil
+        queue.async {
+            if self.output.isRecording { return }   // finishing; closes when the file is written
+            if self.session.isRunning { self.session.stopRunning() }
+        }
+    }
+
+    func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
+        emit(["type": "recording"])
+        DispatchQueue.main.async { self.preview?.layer.borderColor = UIColor.systemRed.cgColor }
+    }
+
+    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo url: URL, from connections: [AVCaptureConnection], error: Error?) {
+        var ok = error == nil
+        if let e = error as NSError?, let finished = e.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool { ok = finished }
+        queue.async { if self.session.isRunning { self.session.stopRunning() } }
+        DispatchQueue.main.async { self.close() }
+        guard ok else { emit(["type": "error", "reason": "record", "message": error?.localizedDescription ?? ""]); return }
+        emit(["type": "saving"])
+        let videoPath = "/__incoming/" + url.lastPathComponent
+        let mirror = front
+        // The sound as its own file, so the page can draw the waveform and slow it down.
+        let audioURL = url.deletingPathExtension().appendingPathExtension("m4a")
+        let asset = AVURLAsset(url: url)
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            emit(["type": "done", "video": videoPath, "mirror": mirror]); return
+        }
+        export.outputURL = audioURL
+        export.outputFileType = .m4a
+        export.exportAsynchronously {
+            var msg: [String: Any] = ["type": "done", "video": videoPath, "mirror": mirror]
+            if export.status == .completed { msg["audio"] = "/__incoming/" + audioURL.lastPathComponent }
+            self.emit(msg)
+        }
+    }
+
+    // MARK: preview and level
+    private func showPreview() {
+        guard let host = host else { return }
+        preview?.removeFromSuperview()
+        let landscape = host.bounds.width > host.bounds.height
+        let w: CGFloat = landscape ? 220 : 168, h: CGFloat = landscape ? 165 : 224
+        let v = PreviewView(frame: CGRect(x: host.bounds.width - w - 20, y: host.bounds.height - h - 110, width: w, height: h))
+        v.previewLayer.session = session
+        v.previewLayer.videoGravity = .resizeAspectFill
+        v.layer.cornerRadius = 16
+        v.layer.masksToBounds = true
+        v.layer.borderWidth = 2
+        v.layer.borderColor = UIColor.white.withAlphaComponent(0.8).cgColor
+        v.autoresizingMask = [.flexibleLeftMargin, .flexibleTopMargin]
+        v.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(drag(_:))))
+        host.addSubview(v)
+        preview = v
+    }
+
+    @objc private func drag(_ g: UIPanGestureRecognizer) {
+        guard let v = g.view, let host = host else { return }
+        let t = g.translation(in: host)
+        var c = CGPoint(x: v.center.x + t.x, y: v.center.y + t.y)
+        c.x = min(max(c.x, v.bounds.width / 2 + 8), host.bounds.width - v.bounds.width / 2 - 8)
+        c.y = min(max(c.y, v.bounds.height / 2 + 8), host.bounds.height - v.bounds.height / 2 - 8)
+        v.center = c
+        g.setTranslation(.zero, in: host)
+    }
+
+    private var currentOrientation: AVCaptureVideoOrientation {
+        switch host?.window?.windowScene?.interfaceOrientation {
+        case .landscapeLeft?: return .landscapeLeft
+        case .landscapeRight?: return .landscapeRight
+        case .portraitUpsideDown?: return .portraitUpsideDown
+        default: return .portrait
+        }
+    }
+
+    func orientationChanged() {
+        let o = currentOrientation
+        if let c = preview?.previewLayer.connection, c.isVideoOrientationSupported { c.videoOrientation = o }
+        queue.async {
+            guard !self.output.isRecording, let c = self.output.connection(with: .video), c.isVideoOrientationSupported else { return }
+            c.videoOrientation = o
+        }
+    }
+
+    private func startLevels() {
+        levelTimer?.invalidate()
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self, let c = self.output.connection(with: .audio), let ch = c.audioChannels.first else { return }
+            self.onEvent?(["type": "level", "db": Double(ch.peakHoldLevel)])
+        }
+    }
+
     private func emit(_ message: [String: Any]) {
         DispatchQueue.main.async { self.onEvent?(message) }
     }

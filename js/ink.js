@@ -125,12 +125,15 @@ export function drawItem(ctx, s, W, H, live) {
 }
 
 function drawStamp(ctx, s, W, H) {
-  const def = STAMP_BY_KEY[s.k] || { label: s.k, font: 'finger' };
+  const def = s.k === 'txt' ? { label: s.txt || '', font: 'words' } : STAMP_BY_KEY[s.k] || { label: s.k, font: 'finger' };
   const size = s.s * W;
   const x = s.x * W, y = s.y * H;
   ctx.fillStyle = s.c; ctx.strokeStyle = s.c; ctx.globalAlpha = s.a ?? 1;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (def.font === 'music') {
+  if (def.font === 'words') {
+    ctx.font = textFont(size);
+    ctx.fillText(def.label, x, y);
+  } else if (def.font === 'music') {
     ctx.font = `${size * 1.6}px Bravura`;
     ctx.textBaseline = 'alphabetic';
     const m = ctx.measureText(def.label);
@@ -161,8 +164,18 @@ function drawStamp(ctx, s, W, H) {
   }
 }
 
+// Words typed with the text tool: the italic serif used for expression marks in printed music.
+export const textFont = (size) => `italic 500 ${size * 0.78}px "Times New Roman", Georgia, serif`;
+let measureCtx = null;
+function textHalfWidth(s) {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+  measureCtx.font = textFont(100);
+  return (measureCtx.measureText(s.txt || '').width / 100) * s.s / 2;
+}
+
 // ---------- geometry helpers (selection, eraser) ----------
 export function itemBounds(s) {
+  if (s.t === 'stamp' && s.k === 'txt') { const hw = textHalfWidth(s) + s.s * 0.15, hh = s.s * 0.55; return { x0: s.x - hw, y0: s.y - hh, x1: s.x + hw, y1: s.y + hh }; }
   if (s.t === 'stamp') { const r = s.s * 1.2; return { x0: s.x - r, y0: s.y - r * 0.8, x1: s.x + r, y1: s.y + r * 0.8 }; }
   if (s.t === 'mask') return { x0: s.x, y0: s.y, x1: s.x + s.w, y1: s.y + s.h };
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
@@ -198,6 +211,7 @@ export function transformItem(s, dx, dy, k, ox, oy) {
 }
 
 export function itemHit(s, x, y, r, W, H) {
+  if (s.t === 'stamp' && s.k === 'txt') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
   if (s.t === 'stamp') { const d = Math.hypot((s.x - x) * W, (s.y - y) * H); return d < Math.max(r * W, s.s * W); }
   if (s.t === 'mask') return x >= s.x - r && x <= s.x + s.w + r && y >= s.y - r && y <= s.y + s.h + r;
   const rr = r + (s.s || 0) / 2;
@@ -281,14 +295,20 @@ export class InkLayer {
   }
   async load() {
     const rec = await db.get('ink', this.key).catch(() => null);
-    this.items = rec ? (rec.items || rec.strokes || []).map(normalise) : [];
+    const stored = rec ? (rec.items || rec.strokes || []).map(normalise) : [];
+    // anything added while loading is kept on top of what was stored
+    this.items = this.touched ? [...stored, ...this.items] : stored;
     if (this.items.some((s) => s.t === 'stamp')) await loadMusicFont();
+    this.ready = true;
     this.redraw();
   }
   save() {
+    this.touched = true;
     clearTimeout(this._saveT);
-    const items = this.items;
-    this._saveT = setTimeout(() => db.put('ink', { key: this.key, items }).catch(() => {}), 300);
+    this._saveT = setTimeout(() => {
+      if (!this.ready) { this.loaded.then(() => this.save()); return; }   // never overwrite markings not yet loaded
+      db.put('ink', { key: this.key, items: this.items }).catch(() => {});
+    }, 300);
   }
   redraw(hide) {
     const c = this.canvas, ctx = c.getContext('2d');
@@ -301,14 +321,42 @@ export class InkLayer {
     drawItem(this.canvas.getContext('2d'), item, this.canvas.width, this.canvas.height, false);
     this.save();
   }
+  // Erases like a real eraser: the part of a pen or highlighter stroke under the eraser goes,
+  // the rest of the stroke stays. Symbols, words and whiteouts go as a whole.
   eraseAt(x, y, r) {
     const W = this.canvas.width, H = this.canvas.height;
-    const before = this.items.length;
-    const keep = this.items.filter((s) => !itemHit(s, x, y, r, W, H));
-    if (keep.length !== before) { this.items = keep; this.redraw(); this.save(); return true; }
-    return false;
+    let changed = false;
+    const out = [];
+    for (const s of this.items) {
+      if (!itemHit(s, x, y, r, W, H)) { out.push(s); continue; }
+      changed = true;
+      if (!s.p || s.p.length < 2) continue;
+      for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * 0.35, W, H)) out.push({ ...s, p: part });
+    }
+    if (changed) { this.items = out; this.redraw(); this.save(); }
+    return changed;
   }
   setItems(items) { this.items = items; this.redraw(); this.save(); }
+}
+
+// Remove the part of a stroke inside a circle; returns the pieces that remain.
+function cutStroke(pts, x, y, r, W, H) {
+  // add points along long segments so a quick stroke can be cut in its middle
+  const dense = [pts[0]];
+  const step = Math.max(r * 0.4, 0.001);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const n = Math.ceil(Math.hypot((b[0] - a[0]) * W, (b[1] - a[1]) * H) / (step * W));
+    for (let k = 1; k < n; k++) { const t = k / n; dense.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); }
+    dense.push(b);
+  }
+  const parts = []; let cur = [];
+  for (const p of dense) {
+    if (Math.hypot((p[0] - x) * W, (p[1] - y) * H) < r * W) { if (cur.length > 1) parts.push(cur); cur = []; }
+    else cur.push([+p[0].toFixed(5), +p[1].toFixed(5), p[2]]);
+  }
+  if (cur.length > 1) parts.push(cur);
+  return parts;
 }
 
 export async function loadItems(key) {
