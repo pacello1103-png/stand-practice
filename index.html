@@ -60,6 +60,7 @@
     <symbol id="i-reps" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3 M20 4v4h-4 M20 12a8 8 0 0 1-14 5.3 M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M15 3v4h4 M8.5 10h8 M8.5 12h8 M8.5 14h8 M8.5 16h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
     <symbol id="i-whiteout" viewBox="0 0 24 24"><path d="M14.5 4.5l5 5-8.5 8.5H6v-5z M12 7l5 5 M4 21h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/><path d="M19 2.5v3 M17.5 4h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-passage" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.2"/><path d="M7 14l3-3 2.5 2 2.5-4 2 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-lasso" viewBox="0 0 24 24"><path d="M12 4c5 0 8.5 2.4 8.5 5.5S17 15 12 15s-8.5-2.4-8.5-5.5S7 4 12 4z M6.5 13.6c-1 1.4-.6 3.3 1 4.2 1.4.8 2 2.2 1.5 3.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.4" stroke-linecap="round"/></symbol>
     <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1.4 0 2-1 2-2 0-1.4-1.2-1.6-1.2-2.8 0-1 .8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.5" cy="11" r="1.3" fill="currentColor"/><circle cx="10" cy="7" r="1.3" fill="currentColor"/><circle cx="14.5" cy="7" r="1.3" fill="currentColor"/></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.8v2.4 M12 18.8v2.4 M2.8 12h2.4 M18.8 12h2.4 M5.5 5.5l1.7 1.7 M16.8 16.8l1.7 1.7 M5.5 18.5l1.7-1.7 M16.8 7.2l1.7-1.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
@@ -148,6 +149,7 @@
       <div class="find-for">
         <span>Best version for</span>
         <div class="select-wrap"><select id="instSel" aria-label="Your instrument"></select></div>
+        <input class="other-input" id="instOtherFind" placeholder="Name your instrument" aria-label="Name of your instrument" maxlength="30" hidden>
       </div>
       <div id="findList">
         <div class="find-intro" id="findIntro">
@@ -190,6 +192,7 @@
       <button class="tb-btn" data-panel="tuner"><svg><use href="#i-fork"/></svg><span>Tuner</span></button>
       <button class="tb-btn" data-panel="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
       <button class="tb-btn" data-panel="takes"><svg><use href="#i-takes"/></svg><span>Recordings</span></button>
+      <button class="tb-btn" data-panel="passages"><svg><use href="#i-passage"/></svg><span>Passages</span></button>
       <button class="tb-btn" data-panel="listen"><svg><use href="#i-headphones"/></svg><span>Listen</span></button>
       <button class="tb-btn" data-panel="reps"><svg><use href="#i-reps"/></svg><span>Reps</span></button>
       <button class="tb-btn rec" id="recBtn"><span class="rec-dot"></span><span id="recBtnLabel">Record</span></button>
@@ -365,7 +368,8 @@
       <div class="into-map" id="intoMap"></div>
     </section>
     <div class="field-grid">
-      <label class="field"><span>Instrument</span><select id="tunerInst"></select></label>
+      <label class="field"><span>Instrument</span><select id="tunerInst"></select>
+        <input class="other-input" id="instOtherTuner" placeholder="Name your instrument" aria-label="Name of your instrument" maxlength="30" hidden></label>
       <div class="field"><span>Reference A</span>
         <div class="stepper"><button class="round-btn small" id="refDown" aria-label="Lower"><svg><use href="#i-minus"/></svg></button><span class="num" id="refVal">442 Hz</span><button class="round-btn small" id="refUp" aria-label="Higher"><svg><use href="#i-plus"/></svg></button></div>
       </div>
@@ -548,6 +552,30 @@
   </div>
 </aside>
 
+<aside class="panel wide" id="panel-passages" hidden aria-label="Passages">
+  <div class="panel-head"><h2>Passages</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <section class="pass-missed-box" id="passMissed"></section>
+    <ul class="pass-list" id="passList"></ul>
+    <p class="hint center" id="passEmpty">Passages are parts of this piece you want to track, such as a shift or a fast technical run. Choose the Select tool in Markings, draw around the passage, then tap Mark passage.</p>
+  </div>
+</aside>
+
+<aside class="panel" id="panel-passsheet" hidden aria-label="Passage">
+  <div class="panel-head"><h2 id="passSheetTitle">New passage</h2><button class="icon-btn small" id="passClose" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <label class="field"><span>Name</span><input id="passName" maxlength="28" autocomplete="off"></label>
+    <div class="ctl-head"><span>Type</span></div>
+    <div class="seg full pass-kinds" id="passKinds"></div>
+    <p class="hint" id="passKindHint"></p>
+    <div class="field-grid">
+      <label class="field"><span>Start tempo</span><input id="passStart" type="number" inputmode="numeric" min="20" max="300"></label>
+      <label class="field"><span>Target tempo</span><input id="passTarget" type="number" inputmode="numeric" min="20" max="300"></label>
+    </div>
+    <div class="row-even"><button class="btn" id="passCancel">Cancel</button><button class="btn primary" id="passSave">Save passage</button></div>
+  </div>
+</aside>
+
 <aside class="panel wide" id="panel-goal" hidden aria-label="Practice">
   <div class="panel-head"><h2>Practice</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
@@ -575,7 +603,8 @@
     <div class="seg full" id="accentSeg"><button data-accent="blue" class="on"><span class="acc-dot blue"></span>Blue</button><button data-accent="black"><span class="acc-dot black"></span>Black</button></div>
     <div class="ctl-head"><span>Appearance</span></div>
     <div class="seg full" id="themeSeg"><button data-theme="auto" class="on">Automatic</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
-    <label class="field"><span>My instrument</span><select id="appInst"></select></label>
+    <label class="field"><span>My instrument</span><select id="appInst"></select>
+      <input class="other-input" id="instOtherApp" placeholder="Name your instrument" aria-label="Name of your instrument" maxlength="30" hidden></label>
     <section class="sub-card">
       <div class="sub-head"><div><h3>Sound and Bluetooth</h3><p class="hint">Metronome and scales play through your Bluetooth headphones or speaker when they are connected. The microphone always stays on the iPad, so the tuner and recordings hear the room, not your headphones.</p></div></div>
       <label class="check"><input type="checkbox" id="audioSpeaker"> Play through the iPad speaker even when Bluetooth is connected</label>
@@ -602,7 +631,7 @@
       </div>
       <input type="file" id="backupInput" hidden>
     </section>
-    <p class="hint center">Stand 1.5.2 · everything stays on this iPad</p>
+    <p class="hint center">Stand 1.6 · everything stays on this iPad</p>
   </div>
 </aside>
 

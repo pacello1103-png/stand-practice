@@ -81,8 +81,35 @@ function maskImage(src) {
 }
 let tintCanvas = null;
 
+// Passages: a marked part of the music (any instrument). The kind sets the colour.
+export const PASSAGE_KINDS = {
+  melodic: { label: 'Melodic', color: '#2b6fd6' },
+  technical: { label: 'Technical', color: '#d12f2f' },
+  shift: { label: 'Shift', color: '#7b3fc4' },
+  rhythm: { label: 'Rhythm', color: '#0f8f8f' },
+  bowing: { label: 'Bowing & breath', color: '#ea7a17' },
+};
+function drawPassage(ctx, s, W, H) {
+  const c = (PASSAGE_KINDS[s.kind] || PASSAGE_KINDS.melodic).color;
+  const x = s.x0 * W, y = s.y0 * H, w = (s.x1 - s.x0) * W, h = (s.y1 - s.y0) * H;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = c + '14';
+  ctx.strokeStyle = c; ctx.lineWidth = Math.max(1.5, W / 700);
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+  const label = (s.name || PASSAGE_KINDS[s.kind]?.label || 'Passage').slice(0, 28);
+  const fs = Math.max(11, Math.round(W / 95));
+  ctx.font = `600 ${fs}px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif`;
+  const tw = ctx.measureText(label).width + fs;
+  ctx.fillStyle = c;
+  ctx.beginPath(); ctx.roundRect(x, y - fs * 1.35, tw, fs * 1.35, 5); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + fs * 0.5, y - fs * 0.68);
+}
+
 export function drawItem(ctx, s, W, H, live) {
   ctx.save();
+  if (s.t === 'passage') { drawPassage(ctx, s, W, H); ctx.restore(); return; }
   if (s.t === 'stamp') { drawStamp(ctx, s, W, H); ctx.restore(); return; }
   if (s.t === 'mask') {
     const m = maskImage(s.d);
@@ -175,6 +202,7 @@ function textHalfWidth(s) {
 
 // ---------- geometry helpers (selection, eraser) ----------
 export function itemBounds(s) {
+  if (s.t === 'passage') return { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 };
   if (s.t === 'stamp' && s.k === 'txt') { const hw = textHalfWidth(s) + s.s * 0.15, hh = s.s * 0.55; return { x0: s.x - hw, y0: s.y - hh, x1: s.x + hw, y1: s.y + hh }; }
   if (s.t === 'stamp') { const r = s.s * 1.2; return { x0: s.x - r, y0: s.y - r * 0.8, x1: s.x + r, y1: s.y + r * 0.8 }; }
   if (s.t === 'mask') return { x0: s.x, y0: s.y, x1: s.x + s.w, y1: s.y + s.h };
@@ -195,6 +223,7 @@ function inPoly(x, y, poly) {
 export function itemsInLasso(items, poly) {
   const sel = [];
   items.forEach((s, i) => {
+    if (s.t === 'passage') return;
     if (s.t === 'stamp') { if (inPoly(s.x, s.y, poly)) sel.push(i); return; }
     if (s.t === 'mask') { if (inPoly(s.x + s.w / 2, s.y + s.h / 2, poly)) sel.push(i); return; }
     let n = 0; for (const p of s.p) if (inPoly(p[0], p[1], poly)) n++;
@@ -205,12 +234,14 @@ export function itemsInLasso(items, poly) {
 // Move and scale an item about an origin (page coordinates).
 export function transformItem(s, dx, dy, k, ox, oy) {
   const tx = (x) => ox + (x - ox) * k + dx, ty = (y) => oy + (y - oy) * k + dy;
+  if (s.t === 'passage') return { ...s, x0: tx(s.x0), y0: ty(s.y0), x1: tx(s.x1), y1: ty(s.y1) };
   if (s.t === 'stamp') return { ...s, x: tx(s.x), y: ty(s.y), s: s.s * k };
   if (s.t === 'mask') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
   return { ...s, s: s.s * k, p: s.p.map((p) => [+tx(p[0]).toFixed(5), +ty(p[1]).toFixed(5), p[2]]) };
 }
 
 export function itemHit(s, x, y, r, W, H) {
+  if (s.t === 'passage') return false;
   if (s.t === 'stamp' && s.k === 'txt') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
   if (s.t === 'stamp') { const d = Math.hypot((s.x - x) * W, (s.y - y) * H); return d < Math.max(r * W, s.s * W); }
   if (s.t === 'mask') return x >= s.x - r && x <= s.x + s.w + r && y >= s.y - r && y <= s.y + s.h + r;

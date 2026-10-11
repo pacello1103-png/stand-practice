@@ -8,6 +8,7 @@ A practice app for musicians that runs on iPad (and any modern browser) and work
 - **Markings** – smooth Apple Pencil pen, two favourite colours always one tap away, highlighter, music symbols, text, hold at the end of a line to make it straight, an eraser that erases only what it touches, Pencil double-tap for the eraser, lasso to move, resize, recolour or duplicate, undo/redo across everything, and a smart eraser that removes printed marks from the score itself.
 - **Notebook paper** – staves for every clef and ensemble, guitar tab, lined, dotted, grid and plain.
 - **Listen** – choose the performer and open the piece on YouTube, Spotify or Apple Music; save the recordings you like; add an audio file to a score and play along with it, slower without pitch change and with an A–B loop.
+- **Passages** – select a part of the score with the Select tool, name it and choose its type (melodic, technical, shift, rhythm, bowing and breath). Log the tempo each session to see progress from start to target, with a short "what you have missed" box.
 - **Practice tracker** – daily goal, streak, week/month/year charts, time per piece, notes per day, an 18-week calendar.
 - **Metronome** – accents, subdivisions, compound meters, tap tempo, smooth or stepped speed trainer, silent bars.
 - **Tuner** – stable and precise, with intonation trace, equal / just / Pythagorean targets, and **Your intonation**: a map of which notes you tend to play sharp or flat.

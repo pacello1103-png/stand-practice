@@ -37,7 +37,7 @@ export async function exportPdf({ score, file, doc, withInk, onProgress }) {
   for (let i = 0; i < n; i++) {
     onProgress && onProgress(i / n);
     const orig = doc.orig(i);
-    const items = withInk ? await loadItems(score.id + ':' + orig) : [];
+    const items = withInk ? (await loadItems(score.id + ':' + orig)).filter((s) => s.t !== 'passage') : [];
     if (items.length) await settleMasks(items);
     let page = null, W, H;
     if (src) {

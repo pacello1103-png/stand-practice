@@ -7,7 +7,8 @@ import { ScalePlayer, SCALE_TYPES } from './scales.js';
 import { Recorder, Player, computePeaks, peakOf, ROOMS } from './recorder.js';
 import { VideoRecorder, decodeVideoAudio, videoThumb } from './video.js';
 import { openDocument, makeThumb, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox } from './score.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, itemHit, textFont } from './ink.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont } from './ink.js';
+import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages } from './passages.js';
 import { exportPdf } from './export.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
@@ -57,6 +58,7 @@ function showPanel(name, tab) {
   if (name === 'settings') fillScoreSettings();
   if (name === 'scales') renderScaleStrip();
   if (name === 'pages') { PG.sel.clear(); renderPagesPanel(); }
+  if (name === 'passages') renderPassages();
 }
 function hidePanel() {
   if (!openPanel) return;
@@ -173,6 +175,7 @@ async function deleteScoreData(s) {
   for (const t of takes) await deleteTakeData(t.id);
   const inkKeys = (await db.keys('ink')).filter((k) => String(k).startsWith(s.id + ':'));
   for (const k of inkKeys) await db.del('ink', k);
+  dropScorePassages(s.id);
   await db.del('files', s.fileId).catch(() => {});
   await db.del('files', 'ref:' + s.id).catch(() => {});
   await db.del('scores', s.id);
@@ -285,21 +288,46 @@ const EXAMPLES = {
   flute: ['Mozart flute concerto G', 'Fauré fantaisie', 'Bach flute sonata', 'Andersen etudes', 'Doppler fantaisie pastorale'],
   default: ['Bach cello suites', 'Mozart sonata', 'Chopin nocturne', 'Schubert ave maria', 'Debussy clair de lune'],
 };
+// The instrument's name as the player wrote it when it is "Other".
+const instName = () => (S.instrument === 'other' && S.otherName) || INSTRUMENTS[S.instrument].label;
+const INST_SELECTS = () => [['#instSel', '#instOtherFind'], ['#tunerInst', '#instOtherTuner'], ['#appInst', '#instOtherApp']];
 function fillInstrumentSelects() {
-  for (const sel of [$('#instSel'), $('#tunerInst'), $('#appInst')]) {
-    sel.textContent = '';
-    for (const [k, v] of Object.entries(INSTRUMENTS)) { const o = el('option', '', v.label); o.value = k; sel.append(o); }
-    sel.value = S.instrument;
+  for (const [sel] of INST_SELECTS()) {
+    const s = $(sel);
+    s.textContent = '';
+    for (const [k, v] of Object.entries(INSTRUMENTS)) { const o = el('option', '', v.label); o.value = k; s.append(o); }
+    s.value = S.instrument;
   }
+  syncOtherInputs();
+}
+// "Other" shows a box to type the instrument's name, in each place the instrument is chosen.
+function syncOtherInputs(focus) {
+  const show = S.instrument === 'other';
+  let first = null;
+  for (const [, inp] of INST_SELECTS()) {
+    const i = $(inp);
+    i.hidden = !show;
+    if (show && i.value !== (S.otherName || '')) i.value = S.otherName || '';
+    if (show && !first) first = i;
+  }
+  if (show && focus && first && !S.otherName) setTimeout(() => first.focus(), 60);
+}
+function setOtherName(name) {
+  S.otherName = name.trim().slice(0, 30);
+  saveSettings();
+  for (const [, inp] of INST_SELECTS()) { const i = $(inp); if (document.activeElement !== i && i.value !== S.otherName) i.value = S.otherName; }
+  if (currentWork) renderWork(currentWork);
+  updateTunerSetup();
 }
 function setInstrument(k) {
   S.instrument = k; saveSettings();
-  $('#instSel').value = k; $('#tunerInst').value = k; $('#appInst').value = k;
+  for (const [sel] of INST_SELECTS()) $(sel).value = k;
+  syncOtherInputs(true);
   renderExamples(); updateTunerSetup();
   if (currentWork) renderWork(currentWork);
 }
-$('#instSel').addEventListener('change', (e) => setInstrument(e.target.value));
-$('#tunerInst').addEventListener('change', (e) => setInstrument(e.target.value));
+for (const [sel] of INST_SELECTS()) $(sel).addEventListener('change', (e) => setInstrument(e.target.value));
+for (const [, inp] of INST_SELECTS()) $(inp).addEventListener('input', (e) => setOtherName(e.target.value));
 function renderExamples() {
   const box = $('#findExamples'); box.textContent = '';
   for (const q of EXAMPLES[S.instrument] || EXAMPLES.default) {
@@ -456,7 +484,7 @@ function renderWork(data) {
   renderBuy($('#workBuy'), wq);
   const wl = $('#workListen'); wl.textContent = ''; wl.append(el('div', 'buy-title', 'Listen to a performance'));
   const sv = el('div', 'services'); renderServices(sv, wq, true); wl.append(sv);
-  const whyText = { mine: `Best for ${inst.label.toLowerCase()}`, score: 'Most downloaded full score', top: 'Most downloaded overall' };
+  const whyText = { mine: `Best for ${instName().toLowerCase()}`, score: 'Most downloaded full score', top: 'Most downloaded overall' };
   picks.forEach((p, i) => {
     const c = el('div', 'pick' + (i === 0 ? ' best' : ''));
     const why = el('div', 'why'); why.append(icon('i-star'), document.createTextNode(whyText[p.why])); c.append(why);
@@ -478,7 +506,7 @@ function renderWork(data) {
       list.slice(0, n).forEach((f) => {
         const li = el('li'); const main = el('div', 'f-main');
         const lab = el('div', 'f-label', f.label);
-        if (f.mine) lab.append(el('span', 'tag', 'For ' + inst.label.toLowerCase()));
+        if (f.mine) lab.append(el('span', 'tag', 'For ' + instName().toLowerCase()));
         if (f.index === mostDownloaded) lab.append(el('span', 'tag top', 'Most downloaded'));
         if (/non-pd|copyright/i.test(f.copyright) && !/public domain/i.test(f.copyright)) lab.append(el('span', 'tag', 'Check copyright'));
         main.append(lab, el('div', 'f-meta', fileMeta(f)));
@@ -928,6 +956,7 @@ function makeSelection(entry, idx) {
   };
   bar.append(
     mk('Colour', () => editSelection((s) => (s.t === 'pen' || s.t === 'stamp' ? { ...s, c: penColor() } : s))),
+    mk('Passage', () => markRegion(entry.layer.key, { ...Sel.box })),
     mk('Duplicate', duplicateSelection),
     mk('Delete', deleteSelection, 'danger'),
   );
@@ -1155,7 +1184,14 @@ function endInk(cancelled) {
   if (g.kind === 'lasso') {
     if (g.rel.length < 4) return;
     const idx = itemsInLasso(L.items, g.rel);
-    if (!idx.length) { inkHint('Nothing inside. Draw the loop around your markings.'); return; }
+    if (!idx.length) {
+      // a loop around music with nothing marked in it is a passage
+      const xs = g.rel.map((p) => p[0]), ys = g.rel.map((p) => p[1]);
+      const box = { x0: clamp(Math.min(...xs), 0, 1), y0: clamp(Math.min(...ys), 0, 1), x1: clamp(Math.max(...xs), 0, 1), y1: clamp(Math.max(...ys), 0, 1) };
+      if (box.x1 - box.x0 < 0.02 || box.y1 - box.y0 < 0.01) { inkHint('Draw a bigger loop around the passage.'); return; }
+      markRegion(L.key, box);
+      return;
+    }
     makeSelection(g.entry, idx);
     return;
   }
@@ -1495,6 +1531,26 @@ $('#delScoreYes').addEventListener('click', async () => {
   await deleteScoreData(s);
   refreshLibrary();
   toast('Score removed');
+});
+
+// ---------- passages (marked parts of the piece) ----------
+// Items for a passage go on the page's markings layer, without undo steps of their own.
+function mapPassageItems(key, fn) {
+  const L = layerFor(key);
+  if (L && L.ready) { L.setItems(fn(L.items.slice())); return; }
+  loadItems(key).then((items) => saveItems(key, fn(items)));
+}
+initPassages({
+  scoreId: () => (V.score ? V.score.id : null),
+  currentBpm: () => (metro.running ? metro.bpm : null),
+  toast,
+  showPanel,
+  goToPage(orig) {
+    if (!V.doc) return;
+    for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === orig) { hidePanel(); goTo(i); return; }
+    toast('That page is not in this score any more.');
+  },
+  mapItems: mapPassageItems,
 });
 
 // ---------- practice tracking ----------
@@ -2891,7 +2947,6 @@ function applyAppearance() {
 }
 $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => { S.theme = b.dataset.theme; saveSettings(); applyAppearance(); }));
 $$('#accentSeg button').forEach((b) => b.addEventListener('click', () => { S.accent = b.dataset.accent; saveSettings(); applyAppearance(); }));
-$('#appInst').addEventListener('change', (e) => setInstrument(e.target.value));
 
 // --- wink to turn pages (iPad app, face tracking) ---
 const wink = { on: false, testing: false };
@@ -3033,6 +3088,7 @@ renderReps();
 (async function boot() {
   await loadSettings();
   await practice.load();
+  await loadPassages();
   applyAppearance();
   document.body.classList.add('at-home');
   player.room = S.room; player.wet = S.wet; player.autoLevel = S.autoLevel;
