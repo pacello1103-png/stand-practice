@@ -794,11 +794,12 @@ function drawLasso(pts) {
 const INK = {
   tool: 'pen', finger: false, stamp: 'p', erase: 'smart',
   slots: [COLORS[0], COLORS[2]], slot: 0,
+  hlSlots: [COLORS[4], COLORS[5]], hlSlot: 0,
   pen: { size: 3, a: 1 }, hl: { c: COLORS[4], size: 5, a: 0.4 }, stampStyle: { size: 5, a: 1 }, white: { size: 6 },
 };
-const inkSize = (tool, v) => tool === 'pen' ? 0.0011 + v * 0.00055 : tool === 'hl' ? 0.006 + v * 0.0024 : tool === 'white' ? 0.004 + v * 0.003 : 0.014 + v * 0.0042;
+const inkSize = (tool, v) => tool === 'pen' ? 0.0007 + Math.pow(v / 10, 1.5) * 0.0045 : tool === 'hl' ? 0.006 + v * 0.0024 : tool === 'white' ? 0.004 + v * 0.003 : 0.014 + v * 0.0042;
 const penColor = () => INK.slots[INK.slot];
-function persistInk() { S.ink = { tool: ['pen', 'hl', 'stamp'].includes(INK.tool) ? INK.tool : 'pen', finger: INK.finger, stamp: INK.stamp, erase: INK.erase, slots: INK.slots, slot: INK.slot, pen: INK.pen, hl: INK.hl, stampStyle: INK.stampStyle, white: INK.white }; saveSettings(); }
+function persistInk() { S.ink = { tool: ['pen', 'hl', 'stamp'].includes(INK.tool) ? INK.tool : 'pen', finger: INK.finger, stamp: INK.stamp, erase: INK.erase, slots: INK.slots, slot: INK.slot, hlSlots: INK.hlSlots, hlSlot: INK.hlSlot, pen: INK.pen, hl: INK.hl, stampStyle: INK.stampStyle, white: INK.white }; saveSettings(); }
 function styleFor(tool) { return tool === 'stamp' ? INK.stampStyle : tool === 'hl' ? INK.hl : INK.pen; }
 function colorFor(tool) { return tool === 'hl' ? INK.hl.c : penColor(); }
 let hintT;
@@ -818,7 +819,10 @@ function setInking(on) {
 function closeInkPops() { $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; }
 function syncInkBar() {
   $$('.ink-tool[data-tool]').forEach((x) => x.classList.toggle('on', x.dataset.tool === INK.tool));
-  $$('.slot').forEach((b, i) => { b.style.setProperty('--c', INK.slots[i]); b.classList.toggle('on', i === INK.slot && INK.tool !== 'hl'); });
+  const hl = INK.tool === 'hl';
+  if (hl) INK.hl.c = INK.hlSlots[INK.hlSlot];
+  // the two colour buttons show the highlighter's colours while the highlighter is in use
+  $$('.slot').forEach((b, i) => { b.style.setProperty('--c', hl ? INK.hlSlots[i] : INK.slots[i]); b.classList.toggle('on', hl ? i === INK.hlSlot : i === INK.slot); b.classList.toggle('hl', hl); });
   const hlDot = $('#hlDot'); if (hlDot) hlDot.style.setProperty('--c', INK.hl.c);
   $('#fingerBtn').classList.toggle('on', INK.finger);
   $('#inkUndo').disabled = !V.undo.length; $('#inkRedo').disabled = !V.redo.length;
@@ -830,7 +834,7 @@ function fillInkPop() {
   const sw = $('#swatches'); sw.textContent = '';
   for (const c of COLORS) {
     const b = el('button'); b.style.setProperty('--c', c); b.classList.toggle('on', c === cur); b.setAttribute('aria-label', 'Colour ' + c);
-    b.addEventListener('click', () => { if (tool === 'hl') INK.hl.c = c; else INK.slots[INK.slot] = c; fillInkPop(); syncInkBar(); persistInk(); });
+    b.addEventListener('click', () => { if (tool === 'hl') { INK.hl.c = c; INK.hlSlots[INK.hlSlot] = c; } else INK.slots[INK.slot] = c; fillInkPop(); syncInkBar(); persistInk(); });
     sw.append(b);
   }
   $('#inkSize').value = st.size; $('#inkSizeVal').textContent = st.size;
@@ -850,6 +854,7 @@ $('#inkSize').addEventListener('input', (e) => { const tool = INK.tool === 'hl' 
 $('#inkAlpha').addEventListener('input', (e) => { const tool = INK.tool === 'hl' ? 'hl' : INK.tool === 'stamp' ? 'stamp' : 'pen'; styleFor(tool).a = +e.target.value / 100; $('#inkAlphaVal').textContent = e.target.value + '%'; drawInkPreview(); syncInkBar(); persistInk(); });
 $('#inkColorBtn').addEventListener('click', () => { const p = $('#inkPop'); const open = p.hidden; closeInkPops(); p.hidden = !open; if (open) fillInkPop(); });
 $$('.slot').forEach((b, i) => b.addEventListener('click', () => {
+  if (INK.tool === 'hl') { INK.hlSlot = i; INK.hl.c = INK.hlSlots[i]; syncInkBar(); persistInk(); return; }
   const again = INK.slot === i && ['pen', 'stamp'].includes(INK.tool);
   INK.slot = i; if (!['pen', 'stamp'].includes(INK.tool)) INK.tool = 'pen';
   syncInkBar(); persistInk(); clearSelection();
@@ -1653,18 +1658,28 @@ function drawRamp(progressBeat) {
     g.beginPath(); g.arc(X(b), Y(metro._tempoAt(progressBeat)), 4.5, 0, Math.PI * 2); g.fillStyle = accent; g.fill();
   }
 }
-let beatTotal = 0;
+let beatTotal = 0, autoBars = 0;
+// Automatic page turns: the page changes on the downbeat that starts every N bars, after the
+// bars you were playing. Pages can still be turned by hand, wink or pedal as usual.
+function autoTurnBar() {
+  autoBars++;
+  const n = S.autoTurn || 0;
+  if (!n || autoBars <= 1 || (autoBars - 1) % n !== 0) return;
+  if (!V.doc || V.inking || $('#score').hidden) return;
+  if (V.page + (V.spread === 2 ? 1 : 0) >= V.doc.pages - 1) return;   // last page: stay
+  turn(1);
+}
 metro.onBeat = (ev) => {
   const dots = $$('#beatDots .beat');
   dots.forEach((d, i) => d.classList.toggle('hit', i === ev.beat));
   const led = $('#metroLed'); led.classList.add('hit'); led.classList.toggle('acc', ev.acc === 2);
   setTimeout(() => { led.classList.remove('hit'); dots.forEach((d) => d.classList.remove('hit')); }, 110);
   if (ev.countIn) $('#recNote').textContent = `Count-in ${ev.beat + 1}`;
-  else { beatTotal++; showBpm(ev.bpm); if (metro.ramp.on && openPanel === 'metronome') drawRamp(beatTotal); if (ev.beat === 0 && beatTotal > 0) walk.bar(); }
+  else { beatTotal++; showBpm(ev.bpm); if (metro.ramp.on && openPanel === 'metronome') drawRamp(beatTotal); if (ev.beat === 0 && beatTotal > 0) { walk.bar(); autoTurnBar(); } }
   if (S.flash && ev.beat === 0 && !ev.muted) { const f = $('#flash'); f.classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('on'))); }
 };
 metro.onStop = () => { updateMetroButtons(); showBpm(metro.bpm); };
-function startMetro(opts) { unlock(); beatTotal = -1; const t = metro.start(opts); updateMetroButtons(); return t; }
+function startMetro(opts) { unlock(); beatTotal = -1; autoBars = 0; const t = metro.start(opts); updateMetroButtons(); return t; }
 function stopMetro() { metro.stop(); }
 function updateMetroButtons() {
   const on = metro.running;
@@ -2896,6 +2911,10 @@ function syncWinkUI() {
 }
 $('#winkOn').addEventListener('change', (e) => { S.wink = e.target.checked; saveSettings(); syncWinkUI(); sendFace(); });
 $('#winkSens').addEventListener('input', (e) => { S.winkSens = +e.target.value / 100; saveSettings(); sendFace(); });
+$('#autoTurn').addEventListener('change', (e) => { S.autoTurn = +e.target.value; saveSettings(); autoBars = 0; });
+// Sound routing in the iPad app: the microphone is always the iPad's; the speaker can be forced.
+function sendAudio() { if (NATIVE && NATIVE.standAudio) NATIVE.standAudio.postMessage({ speaker: !!S.audioSpeaker }); }
+$('#audioSpeaker').addEventListener('change', (e) => { S.audioSpeaker = e.target.checked; saveSettings(); sendAudio(); });
 $('#winkSwap').addEventListener('change', (e) => { S.winkSwap = e.target.checked; saveSettings(); });
 $('#winkTest').addEventListener('click', () => { wink.testing = !wink.testing; $('#winkTest').textContent = wink.testing ? 'Stop test' : 'Test'; $('#winkMeter').hidden = !wink.testing; sendFace(); });
 window.standFaceEvent = (ev) => {
@@ -2908,7 +2927,7 @@ window.standFaceEvent = (ev) => {
   if (ev.type === 'wink') {
     let eye = ev.eye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
     if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
-    if (!$('#score').hidden && S.wink && !openPanel) {
+    if (!$('#score').hidden && S.wink && !V.inking) {
       turn(eye === 'right' ? 1 : -1);
       const f = $('#winkFlash'); f.className = 'wink-flash ' + eye; void f.offsetWidth; f.classList.add('on');
     }
@@ -3028,10 +3047,12 @@ renderReps();
     INK.finger = !!k.finger; INK.stamp = k.stamp || 'p'; INK.tool = k.tool || 'pen'; INK.erase = k.erase || 'smart';
     if (Array.isArray(k.slots) && k.slots.length === 2) INK.slots = k.slots; else if (k.pen && k.pen.c) INK.slots = [k.pen.c, COLORS[2]];
     INK.slot = k.slot === 1 ? 1 : 0;
+    if (Array.isArray(k.hlSlots) && k.hlSlots.length === 2) INK.hlSlots = k.hlSlots; INK.hlSlot = k.hlSlot === 1 ? 1 : 0;
     Object.assign(INK.pen, { size: (k.pen && k.pen.size) || 3, a: (k.pen && k.pen.a) || 1 }); Object.assign(INK.hl, k.hl || {}); Object.assign(INK.stampStyle, k.stampStyle || {}); Object.assign(INK.white, k.white || {});
   }
   syncInkBar();
-  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'soft', 'strings'].includes(scale.sound)) scale.sound = 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
+  $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio();
+  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'soft', 'flute'].includes(scale.sound)) scale.sound = scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;
   $('#countIn').checked = S.countIn; $('#clickWhileRec').checked = S.clickWhileRec;

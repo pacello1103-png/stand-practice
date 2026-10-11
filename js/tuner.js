@@ -292,7 +292,7 @@ export function playHarmonics(f0, { mode = 'series', h = 1, count = 8, volume = 
 }
 
 // ---------------- Drone ----------------
-export const DRONE_VOICES = { pure: 'Soft', warm: 'Warm', organ: 'Organ' };
+export const DRONE_VOICES = { pure: 'Soft', flute: 'Flute', organ: 'Organ' };
 export const DRONE_CHORDS = {
   root: { label: 'Root', r: [1] }, fifth: { label: '+ Fifth', r: [1, 3 / 2] }, octave: { label: '+ Octave', r: [1, 2] },
   open: { label: 'Fifth + octave', r: [1, 3 / 2, 2] }, major: { label: 'Major', r: [1, 5 / 4, 3 / 2] }, minor: { label: 'Minor', r: [1, 6 / 5, 3 / 2] },

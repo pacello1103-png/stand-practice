@@ -91,8 +91,8 @@ export class ScalePlayer {
   }
   _startDrone() {
     const f = this.freqOf(12 * (this.octave + 1) + this.tonic);
-    const a = holdNote(this._out(), f, 'strings', 0.45), b = holdNote(this._out(), f * 1.5, 'strings', 0.22);
-    this._drone = { stop: (t) => { a.stop(t); b.stop(t); } };
+    const a = holdNote(this._out(), f, 'flute', 0.4);
+    this._drone = { stop: (t) => a.stop(t) };
   }
   _tick() {
     const ctx = getCtx();

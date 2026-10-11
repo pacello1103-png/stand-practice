@@ -4,7 +4,7 @@
 // strings: a warm bowed tone with a gentle attack, no vibrato (good for intonation)
 import { getCtx } from './audio.js';
 
-export const VOICES = { piano: 'Piano', soft: 'Soft', strings: 'Strings' };
+export const VOICES = { piano: 'Piano', soft: 'Soft', flute: 'Flute' };
 
 const waveCache = new Map();
 function wave(ctx, name, amps) {
@@ -55,7 +55,7 @@ export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
     return end + release;
   }
   const o = ctx.createOscillator();
-  o.setPeriodicWave(voice === 'strings' ? wave(ctx, 'strings', STRINGS) : wave(ctx, 'soft', SOFT));
+  o.setPeriodicWave(voice === 'strings' ? wave(ctx, 'strings', STRINGS) : voice === 'flute' ? wave(ctx, 'flute', FLUTE) : wave(ctx, 'soft', SOFT));
   o.frequency.value = freq;
   const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.5;
   lp.frequency.value = voice === 'strings' ? Math.min(6000, freq * 7) : Math.min(8000, freq * 6);
@@ -77,6 +77,7 @@ export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
 //   organ    a flue organ: 8' and 4' ranks, perfectly steady (best for intonation)
 //   choir    an "ah" vowel sung by two voices with a very small vibrato
 //   pure     a sine wave
+//   flute    one clean breathy tone (a sine with a whisper of overtone)
 let noiseBuf = null;
 function noise(ctx) {
   if (noiseBuf && noiseBuf.sampleRate === ctx.sampleRate) return noiseBuf;
@@ -86,7 +87,8 @@ function noise(ctx) {
   return noiseBuf;
 }
 const SAW = Array.from({ length: 48 }, (_, i) => 1 / (i + 1));
-export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, warm: 0.95 };
+export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, flute: 1.05 };
+const FLUTE = [1, 0.22, 0.04];
 export function holdNote(out, freq, voice = 'strings', level = 1) {
   const ctx = getCtx(), t = ctx.currentTime + 0.02;
   const g = ctx.createGain(); g.gain.value = 0; g.connect(out);
@@ -121,13 +123,14 @@ export function holdNote(out, freq, voice = 'strings', level = 1) {
       const fg = ctx.createGain(); fg.gain.value = gv * 3.2; mix.connect(bp).connect(fg).connect(lp);
     }
     const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = Math.max(300, freq * 1.5); const lg = ctx.createGain(); lg.gain.value = 0.35; mix.connect(low).connect(lg).connect(lp);
-  } else if (voice === 'warm') {
-    // two soft, slightly detuned reeds that breathe very slowly: round and calm, like a quiet harmonium
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(2400, freq * 3.2); lp.Q.value = 0.4; lp.connect(g);
-    for (const [det, lv] of [[-2.5, 0.5], [2.5, 0.5]]) { const og = ctx.createGain(); og.gain.value = lv; osc(freq, 'warm', [1, 0.32, 0.14, 0.06, 0.03, 0.015], det).connect(og).connect(lp); }
-    const sub = ctx.createGain(); sub.gain.value = 0.18; osc(freq / 2).connect(sub).connect(lp);
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.17; const lg = ctx.createGain(); lg.gain.value = 0.02 * level;
-    lfo.connect(lg).connect(g.gain); lfo.start(t); src.push(lfo);
+  } else if (voice === 'flute') {
+    // one clean tone: a sine with a whisper of second harmonic and a soft breath of air
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(5000, freq * 5); lp.Q.value = 0.4; lp.connect(g);
+    const tone = ctx.createGain(); tone.gain.value = 0.9; osc(freq, 'flute', FLUTE).connect(tone).connect(lp);
+    const n = ctx.createBufferSource(); n.buffer = noise(ctx); n.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(6000, freq * 4); bp.Q.value = 2.5;
+    const ng = ctx.createGain(); ng.gain.value = 0.006;
+    n.connect(bp).connect(ng).connect(g); n.start(t); src.push(n);
   } else {
     osc(freq).connect(g);
   }

@@ -37,7 +37,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         try? session.setCategory(.playAndRecord, mode: .default,
                                  options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
         try? session.setActive(true)
+        standPreferBuiltInMicrophone()
+        // Bluetooth headphones or a speaker can take over the microphone when they connect;
+        // put the iPad microphone back every time the audio route changes.
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { _ in
+            standPreferBuiltInMicrophone()
+        }
     }
+
 
     // "Open in Stand" from Files, Mail or Safari downloads.
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
@@ -119,10 +126,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standScan", "standVideo"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standScan", "standVideo", "standAudio"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true, audio: true };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -248,6 +255,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.55)
             face.test = body["test"] as? Bool ?? false
             if body["on"] as? Bool == true { face.start() } else { face.stop() }
+        case "standAudio":
+            standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
         case "standScan":
             guard VNDocumentCameraViewController.isSupported else { return }
             face.stop()   // the scanner needs the camera
@@ -443,6 +452,8 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     private var locked = false
     private var lastFire: TimeInterval = 0
     private var lastLevels: TimeInterval = 0
+    private var smoothL: Float?
+    private var smoothR: Float?
 
     override init() {
         super.init()
@@ -463,19 +474,29 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         running = false
         candidate = nil
         locked = false
+        smoothL = nil; smoothR = nil
     }
+    // Called for every camera frame (about 30 times a second). The eyes are smoothed a little so
+    // one jittery frame can't start or stop a wink; a wink is decided by how far apart the two eyes are.
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        guard let face = anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked else { return }
-        let left = face.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0
-        let right = face.blendShapes[.eyeBlinkRight]?.floatValue ?? 0
+        guard let face = anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked else {
+            candidate = nil; return
+        }
+        let rawL = Float(face.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0)
+        let rawR = Float(face.blendShapes[.eyeBlinkRight]?.floatValue ?? 0)
+        smoothL = smoothL == nil ? rawL : smoothL! * 0.45 + rawL * 0.55
+        smoothR = smoothR == nil ? rawR : smoothR! * 0.45 + rawR * 0.55
+        let left = smoothL!, right = smoothR!
         let now = CACurrentMediaTime()
         if test && now - lastLevels > 0.07 {
             lastLevels = now
             emit(["type": "levels", "l": Double(left), "r": Double(right)])
         }
-        let closed = max(0.3, min(0.85, 1.15 - sensitivity))   // higher sensitivity = less closing needed
-        let open = max(0.12, closed - 0.32)
+        // Higher sensitivity needs less closing. Typical wink: one eye 0.6+, the other below 0.2.
+        let closed = min(0.7, max(0.28, 0.85 - sensitivity * 0.7))
+        let open = max(0.12, min(0.3, closed - 0.22))
         if locked {
+            // re-arm once both eyes are open again (a normal blink passes through here quickly)
             if left < open && right < open { locked = false }
             return
         }
@@ -483,7 +504,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         if right > closed && left < open { eye = "right" } else if left > closed && right < open { eye = "left" }
         guard let e = eye else { candidate = nil; return }
         if let c = candidate, c.eye == e {
-            if now - c.since > 0.14 && now - lastFire > 0.6 {
+            if now - c.since > 0.08 && now - lastFire > 0.4 {
                 lastFire = now; locked = true; candidate = nil
                 emit(["type": "wink", "eye": e])
             }
@@ -498,6 +519,19 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     private func emit(_ message: [String: Any]) {
         DispatchQueue.main.async { self.onEvent?(message) }
     }
+}
+
+// MARK: - Sound routing
+// The microphone is always the iPad's, so the tuner and recordings hear the room. Sound output
+// follows whatever is connected (Bluetooth included) unless the user asks for the iPad speaker.
+func standPreferBuiltInMicrophone() {
+    let session = AVAudioSession.sharedInstance()
+    guard let inputs = session.availableInputs,
+          let builtIn = inputs.first(where: { $0.portType == .builtInMic }) else { return }
+    try? session.setPreferredInput(builtIn)
+}
+func standSetSpeakerOverride(_ on: Bool) {
+    try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
 }
 
 // MARK: - Video recording
@@ -534,6 +568,7 @@ final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default,
                                                          options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
+        standPreferBuiltInMicrophone()
         session.beginConfiguration()
         session.automaticallyConfiguresApplicationAudioSession = false   // keep the app's audio (metronome) playing
         if #available(iOS 16.0, *), session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }

@@ -292,6 +292,8 @@
       <button class="btn big" id="tapBtn">Tap tempo</button>
     </div>
     <div class="field-grid">
+      <label class="field"><span>Turn the page</span>
+        <select id="autoTurn"><option value="0">Never</option><option value="2">Every 2 bars</option><option value="4">Every 4 bars</option><option value="8">Every 8 bars</option><option value="16">Every 16 bars</option></select></label>
       <label class="field"><span>Meter</span>
         <select id="meterSel">
           <option value="1">1/4</option><option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="5">5/4</option><option value="6">6/8</option><option value="7">7/8</option><option value="9">9/8</option><option value="12">12/8</option>
@@ -443,7 +445,7 @@
     </div>
     <div class="field-grid">
       <label class="field"><span>Notes per beat</span><select id="scalePer"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
-      <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="soft">Soft</option><option value="strings">Strings</option></select></label>
+      <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="soft">Soft</option><option value="flute">Flute</option></select></label>
     </div>
     <label class="field"><span>Volume</span><input type="range" id="scaleVol" min="0" max="1" step="0.01" value="0.6"></label>
     <label class="check"><input type="checkbox" id="scaleDrone"> Drone on the key note underneath</label>
@@ -574,6 +576,10 @@
     <div class="ctl-head"><span>Appearance</span></div>
     <div class="seg full" id="themeSeg"><button data-theme="auto" class="on">Automatic</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
     <label class="field"><span>My instrument</span><select id="appInst"></select></label>
+    <section class="sub-card">
+      <div class="sub-head"><div><h3>Sound and Bluetooth</h3><p class="hint">Metronome and scales play through your Bluetooth headphones or speaker when they are connected. The microphone always stays on the iPad, so the tuner and recordings hear the room, not your headphones.</p></div></div>
+      <label class="check"><input type="checkbox" id="audioSpeaker"> Play through the iPad speaker even when Bluetooth is connected</label>
+    </section>
     <section class="sub-card">
       <div class="sub-head">
         <div><h3>Turn pages by winking</h3><p class="hint">Wink your right eye for the next page, your left eye to go back. Normal blinks are ignored.</p></div>
