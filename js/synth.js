@@ -1,10 +1,9 @@
 // Shared, simple instrument voices for scales, reference tones and the drone.
 // piano: struck string with slightly stretched partials that each fade at their own speed
-// soft:  a pure, flute-like tone
 // strings: a warm bowed tone with a gentle attack, no vibrato (good for intonation)
 import { getCtx } from './audio.js';
 
-export const VOICES = { piano: 'Piano', soft: 'Soft', flute: 'Flute' };
+export const VOICES = { piano: 'Piano', organ: 'Organ', flute: 'Flute', pure: 'Soft' };
 
 const waveCache = new Map();
 function wave(ctx, name, amps) {
@@ -54,8 +53,14 @@ export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
     ns.connect(nf).connect(ng).connect(g); ns.start(t);
     return end + release;
   }
+  if (voice === 'organ' || voice === 'flute' || voice === 'pure' || voice === 'strings') {
+    // the same sustained voices as the drone, shaped to this note's length
+    const h = holdNote(out, freq, voice, vel, t);
+    h.stop(t + dur);
+    return t + dur + 0.15;
+  }
   const o = ctx.createOscillator();
-  o.setPeriodicWave(voice === 'strings' ? wave(ctx, 'strings', STRINGS) : voice === 'flute' ? wave(ctx, 'flute', FLUTE) : wave(ctx, 'soft', SOFT));
+  o.setPeriodicWave(wave(ctx, 'soft', SOFT));
   o.frequency.value = freq;
   const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.5;
   lp.frequency.value = voice === 'strings' ? Math.min(6000, freq * 7) : Math.min(8000, freq * 6);
@@ -76,7 +81,7 @@ export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
 //   strings  three slightly detuned bows with a warm body and a breath of bow noise
 //   organ    a flue organ: 8' and 4' ranks, perfectly steady (best for intonation)
 //   choir    an "ah" vowel sung by two voices with a very small vibrato
-//   pure     a sine wave
+//   pure     a sine wave ("Soft")
 //   flute    one clean breathy tone (a sine with a whisper of overtone)
 let noiseBuf = null;
 function noise(ctx) {
@@ -89,8 +94,8 @@ function noise(ctx) {
 const SAW = Array.from({ length: 48 }, (_, i) => 1 / (i + 1));
 export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, flute: 1.05 };
 const FLUTE = [1, 0.22, 0.04];
-export function holdNote(out, freq, voice = 'strings', level = 1) {
-  const ctx = getCtx(), t = ctx.currentTime + 0.02;
+export function holdNote(out, freq, voice = 'strings', level = 1, at) {
+  const ctx = getCtx(), t = at ?? ctx.currentTime + 0.02;
   const g = ctx.createGain(); g.gain.value = 0; g.connect(out);
   const src = [];
   const osc = (f, waveName, amps, det = 0) => {

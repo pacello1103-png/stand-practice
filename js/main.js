@@ -2899,14 +2899,14 @@ function winkSupported() { return !!(NATIVE && NATIVE.standFace && CAPS.face); }
 function sendFace() {
   if (!winkSupported()) return;
   const active = (S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing;
-  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.55, test: wink.testing });
+  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.65, test: wink.testing });
   wink.on = !!active;
   $('#winkBadge').hidden = !(S.wink && !$('#score').hidden && active);
 }
 function syncWinkUI() {
   const ok = winkSupported();
   $('#winkRow').hidden = !ok; $('#winkNo').hidden = ok;
-  $('#winkOn').checked = !!S.wink; $('#winkSens').value = Math.round((S.winkSens || 0.55) * 100);
+  $('#winkOn').checked = !!S.wink; $('#winkSens').value = Math.round((S.winkSens || 0.65) * 100);
   $('#winkSwap').checked = !!S.winkSwap; $('#winkBody').hidden = !S.wink;
 }
 $('#winkOn').addEventListener('change', (e) => { S.wink = e.target.checked; saveSettings(); syncWinkUI(); sendFace(); });
@@ -3052,7 +3052,7 @@ renderReps();
   }
   syncInkBar();
   $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio();
-  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'soft', 'flute'].includes(scale.sound)) scale.sound = scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
+  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'organ', 'flute', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;
   $('#countIn').checked = S.countIn; $('#clickWhileRec').checked = S.clickWhileRec;

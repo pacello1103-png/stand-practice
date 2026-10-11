@@ -252,7 +252,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 try? FileManager.default.removeItem(at: incomingDir.appendingPathComponent(String(p.dropFirst("/__incoming/".count))))
             }
         case "standFace":
-            face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.55)
+            face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.65)
             face.test = body["test"] as? Bool ?? false
             if body["on"] as? Bool == true { face.start() } else { face.stop() }
         case "standAudio":
@@ -445,7 +445,7 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     static var supported: Bool { ARFaceTrackingConfiguration.isSupported }
     private let session = ARSession()
     var onEvent: (([String: Any]) -> Void)?
-    var sensitivity: Float = 0.55
+    var sensitivity: Float = 0.65
     var test = false
     private(set) var running = false
     private var candidate: (eye: String, since: TimeInterval)?
@@ -476,35 +476,40 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         locked = false
         smoothL = nil; smoothR = nil
     }
-    // Called for every camera frame (about 30 times a second). The eyes are smoothed a little so
-    // one jittery frame can't start or stop a wink; a wink is decided by how far apart the two eyes are.
+    // Called for every camera frame (about 30 times a second). A wink is one eye closing while the
+    // other stays comparatively open. It is judged by the difference between the two eyes rather
+    // than by how far each eye closes, so a relaxed, natural wink counts and no exaggerated face is needed.
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         guard let face = anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked else {
             candidate = nil; return
         }
         let rawL = Float(face.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0)
         let rawR = Float(face.blendShapes[.eyeBlinkRight]?.floatValue ?? 0)
-        smoothL = smoothL == nil ? rawL : smoothL! * 0.45 + rawL * 0.55
-        smoothR = smoothR == nil ? rawR : smoothR! * 0.45 + rawR * 0.55
+        smoothL = smoothL == nil ? rawL : smoothL! * 0.3 + rawL * 0.7
+        smoothR = smoothR == nil ? rawR : smoothR! * 0.3 + rawR * 0.7
         let left = smoothL!, right = smoothR!
         let now = CACurrentMediaTime()
         if test && now - lastLevels > 0.07 {
             lastLevels = now
             emit(["type": "levels", "l": Double(left), "r": Double(right)])
         }
-        // Higher sensitivity needs less closing. Typical wink: one eye 0.6+, the other below 0.2.
-        let closed = min(0.7, max(0.28, 0.85 - sensitivity * 0.7))
-        let open = max(0.12, min(0.3, closed - 0.22))
+        // Sensitivity 0...1 (higher = easier). At the default the closing eye needs to reach about
+        // 0.3 and be about 0.35 more closed than the other eye; at maximum about 0.2 and 0.25.
+        let s = min(1, max(0, sensitivity))
+        let closedNeeded = 0.4 - 0.2 * s
+        let gapNeeded = 0.5 - 0.25 * s
         if locked {
-            // re-arm once both eyes are open again (a normal blink passes through here quickly)
-            if left < open && right < open { locked = false }
+            // re-arm once both eyes are open again
+            if left < 0.2 && right < 0.2 { locked = false }
             return
         }
         var eye: String?
-        if right > closed && left < open { eye = "right" } else if left > closed && right < open { eye = "left" }
+        if right >= closedNeeded && right - left >= gapNeeded { eye = "right" }
+        else if left >= closedNeeded && left - right >= gapNeeded { eye = "left" }
         guard let e = eye else { candidate = nil; return }
         if let c = candidate, c.eye == e {
-            if now - c.since > 0.08 && now - lastFire > 0.4 {
+            // about two frames in a row, so a single noisy frame can't turn a page
+            if now - c.since >= 0.04 && now - lastFire > 0.35 {
                 lastFire = now; locked = true; candidate = nil
                 emit(["type": "wink", "eye": e])
             }

@@ -445,7 +445,7 @@
     </div>
     <div class="field-grid">
       <label class="field"><span>Notes per beat</span><select id="scalePer"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
-      <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="soft">Soft</option><option value="flute">Flute</option></select></label>
+      <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="organ">Organ</option><option value="flute">Flute</option><option value="pure">Soft</option></select></label>
     </div>
     <label class="field"><span>Volume</span><input type="range" id="scaleVol" min="0" max="1" step="0.01" value="0.6"></label>
     <label class="check"><input type="checkbox" id="scaleDrone"> Drone on the key note underneath</label>
@@ -587,7 +587,7 @@
       </div>
       <p class="hint" id="winkNo">Available in the Stand app for iPad (it uses the front camera; nothing is recorded or saved).</p>
       <div class="sub-body" id="winkBody" hidden>
-        <div class="ctl"><div class="ctl-head"><span>Sensitivity</span></div><input type="range" id="winkSens" min="35" max="80" value="55"></div>
+        <div class="ctl"><div class="ctl-head"><span>Sensitivity</span></div><input type="range" id="winkSens" min="20" max="95" value="65"></div>
         <label class="check"><input type="checkbox" id="winkSwap"> Swap left and right</label>
         <div class="row-even"><button class="btn" id="winkTest">Test</button><span class="hint" id="winkLast"></span></div>
         <div class="eye-meter" id="winkMeter" hidden><div><span>Left eye</span><i id="eyeL"></i></div><div><span>Right eye</span><i id="eyeR"></i></div></div>
@@ -602,7 +602,7 @@
       </div>
       <input type="file" id="backupInput" hidden>
     </section>
-    <p class="hint center">Stand 1.5 · everything stays on this iPad</p>
+    <p class="hint center">Stand 1.5.2 · everything stays on this iPad</p>
   </div>
 </aside>
 

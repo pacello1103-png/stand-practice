@@ -21,14 +21,22 @@ let seed = 12345;
 const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x3fffffff - 1; };
 
 const VOICES = {
-  // Classic electronic metronome tick
-  click: (ctx, f) => synth(ctx, 0.03, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 320) + 0.35 * noise() * Math.exp(-t * 1400)),
+  // A round, clear "tock": a small bright wooden knock. The pitch falls a little as it
+  // sounds (the way a struck block rings), a second mode adds body, and a tiny
+  // transient gives the attack a crisp edge without any hiss.
+  click: (ctx, f) => synth(ctx, 0.07, (t) => {
+    const glide = f * 0.06 * (1 - Math.exp(-t * 180)) / 180;
+    const body = Math.sin(TAU * (f * t + glide)) * Math.exp(-t * 105);
+    const ring = 0.4 * Math.sin(TAU * f * 2.1 * t) * Math.exp(-t * 170);
+    const tick = 0.22 * noise() * Math.exp(-t * 900);
+    return body + ring + tick;
+  }),
   // Woodblock: two resonant modes and a short knock
   wood: (ctx, f) => synth(ctx, 0.07, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 70) + 0.5 * Math.sin(TAU * f * 2.42 * t) * Math.exp(-t * 120) + 0.15 * noise() * Math.exp(-t * 900)),
   // Plain beep
   beep: (ctx, f) => synth(ctx, 0.06, (t) => Math.sin(TAU * f * t) * Math.min(1, t / 0.0015) * Math.exp(-t * 45)),
 };
-const PITCH = { click: [3100, 2200, 2200], wood: [1180, 860, 860], beep: [1500, 1000, 1000] };
+const PITCH = { click: [1750, 1250, 1250], wood: [1180, 860, 860], beep: [1500, 1000, 1000] };
 const GAINS = [1, 0.62, 0.32]; // accent, beat, subdivision
 
 // ---------- tempo names, as printed in scores ----------
