@@ -17,10 +17,10 @@ let incomingDir: URL = {
     return dir
 }()
 
-@main
 // Set from the page: nil follows the iPad, .landscape keeps the app sideways.
 var orientationLock: UIInterfaceOrientationMask? = nil
 
+@main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
@@ -260,7 +260,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "standOrientation":
             // "landscape" keeps the whole app sideways; "auto" lets it follow the iPad again
             orientationLock = (body["lock"] as? String) == "landscape" ? .landscape : nil
-            setNeedsUpdateOfSupportedInterfaceOrientations()
+            if #available(iOS 16.0, *) { setNeedsUpdateOfSupportedInterfaceOrientations() }
             UIViewController.attemptRotationToDeviceOrientation()
         case "standFace":
             face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.65)
