@@ -262,37 +262,17 @@ export function itemHit(s, x, y, r, W, H) {
 }
 
 // ---------- smart eraser for the printed score ----------
-// Erases the printed marks under a scribble (slurs and ties, dynamics, fingerings, marks in the
-// score) and never the staff lines, stems, barlines, noteheads or other solid shapes.
-// Staff lines and stems are set aside first, so a slur that crosses them is still found; the
-// part of the line it crosses is kept, and the slur is cut only where it really is.
+// Erases printed marks under a scribble (slurs and ties, dynamics, fingerings, marks in the score).
+// It never paints over staff lines, stems, barlines or noteheads. A mark that crosses a staff line
+// or a stem is followed through it, so the whole slur goes, and the line itself is left as it was.
 
-// Summed-area table: lets any rectangle's count be read in constant time.
-function integral(src, W, H) {
-  const I = new Int32Array((W + 1) * (H + 1));
-  for (let y = 0; y < H; y++) {
-    let row = 0;
-    for (let x = 0; x < W; x++) {
-      row += src[y * W + x];
-      I[(y + 1) * (W + 1) + x + 1] = I[y * (W + 1) + x + 1] + row;
-    }
-  }
-  return I;
-}
-// Count of ones in the rectangle [x0..x1] x [y0..y1], clipped to the page.
-function rectCount(I, W, H, x0, y0, x1, y1) {
-  x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
-  if (x1 < x0 || y1 < y0) return 0;
-  return I[(y1 + 1) * (W + 1) + x1 + 1] - I[y0 * (W + 1) + x1 + 1] - I[(y1 + 1) * (W + 1) + x0] + I[y0 * (W + 1) + x0];
-}
-// Marks the pixels of long straight dark runs (staff lines, stems, barlines).
-function markLongRuns(dark, W, H, minLen, horizontal, mark) {
+// Pixels of long straight runs in one direction (staff lines, stems, barlines).
+function markLongRuns(ink, W, H, minLen, horizontal, mark) {
   const outer = horizontal ? H : W, inner = horizontal ? W : H;
   for (let a = 0; a < outer; a++) {
     let start = -1;
     for (let b = 0; b <= inner; b++) {
-      const i = horizontal ? a * W + b : b * W + a;
-      const on = b < inner && dark[i];
+      const on = b < inner && ink[horizontal ? a * W + b : b * W + a];
       if (on && start < 0) start = b;
       if (!on && start >= 0) {
         if (b - start >= minLen) for (let k = start; k < b; k++) mark[horizontal ? a * W + k : k * W + a] = 1;
@@ -301,39 +281,97 @@ function markLongRuns(dark, W, H, minLen, horizontal, mark) {
     }
   }
 }
+// Grows a mask by r pixels in every direction.
+function grow(src, W, H, r) {
+  const out = new Uint8Array(src.length);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!src[y * W + x]) continue;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < W && ny < H) out[ny * W + nx] = 1;
+    }
+  }
+  return out;
+}
+// Distance from each ink pixel to the nearest paper pixel (chamfer 3-4): thick shapes have large values.
+function thickness(ink, W, H) {
+  const INF = 1e9, d = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) d[i] = ink[i] ? INF : 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x; if (!d[i]) continue;
+    let v = d[i];
+    if (x > 0) v = Math.min(v, d[i - 1] + 3);
+    if (y > 0) { v = Math.min(v, d[i - W] + 3); if (x > 0) v = Math.min(v, d[i - W - 1] + 4); if (x < W - 1) v = Math.min(v, d[i - W + 1] + 4); }
+    d[i] = v;
+  }
+  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+    const i = y * W + x; if (!d[i]) continue;
+    let v = d[i];
+    if (x < W - 1) v = Math.min(v, d[i + 1] + 3);
+    if (y < H - 1) { v = Math.min(v, d[i + W] + 3); if (x < W - 1) v = Math.min(v, d[i + W + 1] + 4); if (x > 0) v = Math.min(v, d[i + W - 1] + 4); }
+    d[i] = v;
+  }
+  for (let i = 0; i < W * H; i++) d[i] /= 3;
+  return d;
+}
+// Staff spacing in pixels, from the staff lines (median gap between neighbouring lines).
+function staffSpace(staffCore, W, H) {
+  const rows = [];
+  for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x++) n += staffCore[y * W + x]; if (n > W * 0.05) rows.push(y); }
+  const centres = []; let run = [];
+  for (const y of rows) { if (run.length && y - run[run.length - 1] > 1) { centres.push(run.reduce((a, b) => a + b) / run.length); run = []; } run.push(y); }
+  if (run.length) centres.push(run.reduce((a, b) => a + b) / run.length);
+  const gaps = [];
+  for (let i = 1; i < centres.length; i++) { const g = centres[i] - centres[i - 1]; if (g >= 3 && g <= H * 0.2) gaps.push(g); }
+  if (!gaps.length) return 16;
+  gaps.sort((a, b) => a - b);
+  return gaps[gaps.length >> 1];
+}
 
 export function smartMask(art, stroke) {
   const W = art.width, H = art.height, N = W * H;
   const img = art.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-  const dark = new Uint8Array(N);
-  for (let i = 0; i < N; i++) { const o = i * 4; dark[i] = img[o] + img[o + 1] + img[o + 2] < 3 * 175 ? 1 : 0; }
+  const ink = new Uint8Array(N);
+  for (let i = 0; i < N; i++) { const o = i * 4; ink[i] = img[o] + img[o + 1] + img[o + 2] < 3 * 170 ? 1 : 0; }
 
-  // staff lines (horizontal) and stems, barlines (vertical): they are never painted over, but a
-  // slur may run across them, so the search goes through them in the direction they run
-  const staffM = new Uint8Array(N), stemM = new Uint8Array(N);
-  markLongRuns(dark, W, H, Math.round(W * 0.1), true, staffM);
-  markLongRuns(dark, W, H, Math.max(12, Math.round(H * 0.018)), false, stemM);
-  // solid shapes (noteheads, clefs, heavy marks): 5x5 all dark; never erased, nor touched
-  const solidSrc = new Uint8Array(N);
-  const dI = integral(dark, W, H);
-  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
-    if (dark[y * W + x] && rectCount(dI, W, H, x - 2, y - 2, x + 2, y + 2) === 25) solidSrc[y * W + x] = 1;
+  // 1) the score's own lines: staff lines and stems/barlines. Their core pixels are never painted.
+  const staffCore = new Uint8Array(N), stemCore = new Uint8Array(N);
+  markLongRuns(ink, W, H, Math.round(W * 0.08), true, staffCore);
+  const G = staffSpace(staffCore, W, H);
+  markLongRuns(ink, W, H, Math.max(10, Math.round(G * 0.8)), false, stemCore);
+  const lineCore = grow(staffCore.map((v, i) => v | stemCore[i]), W, H, 1);
+
+  // 2) solid shapes: noteheads, clefs, heavy marks. Thin slurs are far thinner than a notehead.
+  const dt = thickness(ink, W, H);
+  const thick = new Uint8Array(N);
+  for (let i = 0; i < N; i++) thick[i] = dt[i] >= Math.max(2.2, G * 0.16) ? 1 : 0;
+  const solid = grow(thick, W, H, 2);
+  const nearSolid = grow(thick, W, H, 3);
+
+  // 3) pixels the eraser may take: printed ink that is not a score line and not next to a solid shape.
+  //    A line pixel is only used to cross from one side of a mark to the other.
+  const free = new Uint8Array(N), crossing = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    if (!ink[i] || nearSolid[i]) continue;
+    if (lineCore[i]) crossing[i] = 1; else free[i] = 1;
   }
-  const solidI = integral(solidSrc, W, H);
-  const nearSolid = new Uint8Array(N);   // within 3 px of a solid shape: notehead edges, accidentals
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    if (rectCount(solidI, W, H, x - 3, y - 3, x + 3, y + 3) > 0) nearSolid[y * W + x] = 1;
-  }
-  const blocked = (j) => !dark[j] || nearSolid[j];
-  // may the search step onto pixel j by a move of (dx, dy)?
-  const canEnter = (j, dx, dy) => {
-    if (blocked(j)) return false;
-    if (!staffM[j] && !stemM[j]) return true;                 // printed mark
-    if (staffM[j] && dx === 0 && !stemM[j]) return true;       // crossing a staff line straight down or up
-    if (stemM[j] && dy === 0 && !staffM[j]) return true;       // crossing a stem or barline sideways
+  // a line pixel joins the search only if printed ink lies on both sides of it, across the line
+  // (above and below a staff line, left and right of a stem); the slope of the mark does not matter
+  const usable = new Uint8Array(N);
+  const anyFree = (x0, x1, y0, y1) => {
+    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) if (free[y * W + x]) return true;
     return false;
   };
+  for (let i = 0; i < N; i++) {
+    if (free[i]) { usable[i] = 1; continue; }
+    if (!crossing[i]) continue;
+    const x = i % W, y = (i / W) | 0;
+    const acrossLine = staffCore[i] && anyFree(x - 2, x + 2, y - 7, y - 1) && anyFree(x - 2, x + 2, y + 1, y + 7);
+    const acrossStem = stemCore[i] && anyFree(x - 7, x - 1, y - 2, y + 2) && anyFree(x + 1, x + 7, y - 2, y + 2);
+    if (acrossLine || acrossStem) usable[i] = 1;
+  }
 
+  // 4) seeds: the scribble, snapped to the nearest printed pixel within a few px
   const seen = new Uint8Array(N);
   const maxPx = N * 0.01, maxW = W * 0.6, maxH = H * 0.25;
   const accepted = [];
@@ -346,25 +384,22 @@ export function smartMask(art, stroke) {
       const sx = Math.round((i ? stroke[i - 1][0] + (px - stroke[i - 1][0]) * t : px) * W);
       const sy = Math.round((i ? stroke[i - 1][1] + (py - stroke[i - 1][1]) * t : py) * H);
       if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
-      // a finger or pencil is not exact: take the nearest printed dark pixel within a few pixels
-      let s0 = sy * W + sx;
-      if (!dark[s0]) {
-        let best = -1, bd = 5;
-        for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
-          const nx = sx + dx, ny = sy + dy;
-          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-          const d = Math.hypot(dx, dy), n = ny * W + nx;
-          if (dark[n] && d < bd) { bd = d; best = n; }
-        }
-        if (best < 0) continue;
-        s0 = best;
+      let s0 = -1, bd = 5;
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const nx = sx + dx, ny = sy + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const n = ny * W + nx, d = Math.hypot(dx, dy);
+        if (free[n] && d < bd) { bd = d; s0 = n; }
+      }
+      if (s0 < 0) {
+        // the scribble is on a note or a line only: nothing is erased there
+        if (ink[sy * W + sx] && (thick[sy * W + sx] || lineCore[sy * W + sx])) rejected++;
+        continue;
       }
       if (seen[s0]) continue;
-      if (blocked(s0) || staffM[s0] || stemM[s0]) { rejected++; seen[s0] = 1; continue; }   // over notes or lines: they stay
-      if (!canEnter(s0, 0, 0)) continue;
-      // flood through printed marks, and across lines in the direction they run
+      // 5) follow the printed mark through its neighbours, across lines where it crosses them
       const stack = [s0]; const comp = []; seen[s0] = 1;
-      let x0 = sx, x1 = sx, y0 = sy, y1 = sy, ok = true;
+      let x0 = s0 % W, x1 = x0, y0 = (s0 / W) | 0, y1 = y0, ok = true;
       while (stack.length) {
         const j = stack.pop(); comp.push(j);
         const x = j % W, y = (j / W) | 0;
@@ -375,10 +410,7 @@ export function smartMask(art, stroke) {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
           const n = ny * W + nx;
-          if (seen[n] || !canEnter(n, dx, dy)) continue;
-          // a line pixel is only left in the direction it runs, so the search never runs along a staff
-          if ((staffM[j] && !stemM[j] && dx !== 0) || (stemM[j] && !staffM[j] && dy !== 0)) continue;
-          seen[n] = 1; stack.push(n);
+          if (!seen[n] && usable[n]) { seen[n] = 1; stack.push(n); }
         }
       }
       if (!ok) { rejected++; continue; }
@@ -387,29 +419,29 @@ export function smartMask(art, stroke) {
   }
   if (!accepted.length) return { item: null, rejected };
 
-  // paint only printed marks: never a staff line, stem, barline or note
-  const mine = new Uint8Array(N);
+  // 6) paint: only the marks found, never a score line, a solid shape, or ink next to one
+  const mark = new Uint8Array(N);
   let bx0 = W, by0 = H, bx1 = 0, by1 = 0;
   for (const a of accepted) {
-    for (const j of a.comp) if (!staffM[j] && !stemM[j]) mine[j] = 1;
+    for (const j of a.comp) mark[j] = 1;
     if (a.x0 < bx0) bx0 = a.x0; if (a.y0 < by0) by0 = a.y0; if (a.x1 > bx1) bx1 = a.x1; if (a.y1 > by1) by1 = a.y1;
   }
-  const paintOK = (j) => !nearSolid[j] && !staffM[j] && !stemM[j];
   const pad = 3;
   const px0 = Math.max(0, bx0 - pad), py0 = Math.max(0, by0 - pad), px1 = Math.min(W - 1, bx1 + pad), py1 = Math.min(H - 1, by1 + pad);
   const mw = px1 - px0 + 1, mh = py1 - py0 + 1;
   const mc = document.createElement('canvas'); mc.width = mw; mc.height = mh;
   const mg = mc.getContext('2d');
   const md = mg.createImageData(mw, mh);
+  const paintable = (j) => !lineCore[j] && !nearSolid[j];
   let count = 0;
   for (let y = py0; y <= py1; y++) for (let x = px0; x <= px1; x++) {
     const j = y * W + x;
-    if (!paintOK(j)) continue;
+    if (!paintable(j)) continue;
     let hit = false;
     for (let dy = -2; dy <= 2 && !hit; dy++) for (let dx = -2; dx <= 2 && !hit; dx++) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-      if (mine[ny * W + nx]) hit = true;
+      if (mark[ny * W + nx]) hit = true;
     }
     if (!hit) continue;
     md.data[((y - py0) * mw + (x - px0)) * 4 + 3] = 255; count++;
