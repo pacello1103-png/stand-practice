@@ -38,7 +38,7 @@ document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = tru
 // Settings
 // =====================================================================
 const S = {
-  ref: 442, twoUp: true, onePage: false, landscapeLock: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
+  ref: 442, twoUp: true, onePage: false, landscapeLock: false, turnScore: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
   room: 'studio', wet: 0.18, autoLevel: true, sort: 'recent', flash: false,
   instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
@@ -704,15 +704,29 @@ function clearCache() { for (const p of V.cache.values()) p.then((c) => setTimeo
 function freeCanvas(c) { if (c && !c.isConnected) { c.width = 0; c.height = 0; } }
 function freePages() { for (const p of V.pages) if (p.ink) { p.ink.width = 0; p.ink.height = 0; } V.pages = []; }
 
+// Turned score: the page is drawn a quarter turn anticlockwise so that a landscape page fills an upright screen.
+// Every page position is still in the page's own frame (fx along its width, fy along its height), so
+// the helpers below turn screen points into page fractions and back.
+const TURN = () => !!S.turnScore;
+function fracOf(x, y, r) {
+  return TURN() ? [1 - (y - r.top) / r.height, (x - r.left) / r.width] : [(x - r.left) / r.width, (y - r.top) / r.height];
+}
+function screenOf(fx, fy, r) {
+  return TURN() ? [r.left + fy * r.width, r.top + (1 - fx) * r.height] : [r.left + fx * r.width, r.top + fy * r.height];
+}
+// size of a page box on screen, in page units (width, height)
+function pageSize(r) { return TURN() ? [r.height, r.width] : [r.width, r.height]; }
+
 function spreadSize() {
   const r = stage.getBoundingClientRect();
   // One page at a time: forced by the setting; otherwise two pages only when the iPad is landscape.
-  return !S.onePage && S.twoUp && r.width > r.height * 1.05 && V.doc && V.doc.pages > 1 ? 2 : 1;
+  return !TURN() && !S.onePage && S.twoUp && r.width > r.height * 1.05 && V.doc && V.doc.pages > 1 ? 2 : 1;
 }
 function cropOf() { return V.crop || { x: 0, y: 0, w: 1, h: 1 }; }
 // Size on screen of each page box (cropped when trimming margins).
 function pageBox(indices) {
-  const r = stage.getBoundingClientRect();
+  const r0 = stage.getBoundingClientRect();
+  const r = TURN() ? { width: r0.height, height: r0.width } : r0;   // turned: fit the page to the swapped screen
   const c = cropOf();
   const pad = 6, gap = indices.length > 1 ? 2 : 0;
   const ratios = indices.map((i) => (V.doc.sizes[i][0] * c.w) / (V.doc.sizes[i][1] * c.h));
@@ -855,7 +869,19 @@ function spreadNatural() {
   const w = Z.el.offsetWidth, h = Z.el.offsetHeight;
   return { ox: (sr.width - w) / 2, oy: (sr.height - h) / 2, w, h, sw: sr.width, sh: sr.height, left: sr.left, top: sr.top };
 }
+// Visual box of the spread when turned: centred on the stage, so offsets are from the centre.
+function turnedBox() {
+  const sr = stage.getBoundingClientRect();
+  return { sw: sr.width, sh: sr.height, cx: sr.left + sr.width / 2, cy: sr.top + sr.height / 2,
+    vw: Z.el.offsetHeight, vh: Z.el.offsetWidth };   // offset sizes are unturned, so swap them
+}
 function clampZoom() {
+  if (TURN()) {
+    const b = turnedBox(), cw = b.vw * Z.s, ch = b.vh * Z.s;
+    Z.x = cw <= b.sw ? 0 : clamp(Z.x, -(cw - b.sw) / 2, (cw - b.sw) / 2);
+    Z.y = ch <= b.sh ? 0 : clamp(Z.y, -(ch - b.sh) / 2, (ch - b.sh) / 2);
+    return;
+  }
   const n = spreadNatural();
   const cw = n.w * Z.s, ch = n.h * Z.s;
   if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
@@ -863,9 +889,12 @@ function clampZoom() {
 }
 function applyZoom() {
   if (!Z.el) return;
+  const turn = TURN();
+  Z.el.style.transformOrigin = turn ? '50% 50%' : '';
+  const turnCss = turn ? ' rotate(-90deg)' : '';
   // close to the normal size it snaps back, so returning to 100% is easy
-  if (Math.abs(Z.s - 1) < 0.04) { Z.s = 1; Z.x = 0; Z.y = 0; Z.el.style.transform = ''; }
-  else { clampZoom(); Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})`; }
+  if (Math.abs(Z.s - 1) < 0.04) { Z.s = 1; Z.x = 0; Z.y = 0; Z.el.style.transform = turnCss.trim(); }
+  else { clampZoom(); Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})${turnCss}`; }
   zoomPill.hidden = Z.s === 1;
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (Sel.entry) placeSelection();
@@ -892,6 +921,17 @@ async function sharpen() {
 }
 function setZoomAt(s, cx, cy, base) {
   // keep the point under (cx, cy) still while scaling from base
+  if (TURN()) {
+    const b = turnedBox();
+    const ux = (cx - b.cx - base.x) / base.s, uy = (cy - b.cy - base.y) / base.s;
+    // undo the quarter turn: on screen a local offset (px, py) shows as (py, -px)
+    const px = -uy, py = ux;
+    Z.s = clamp(s, ZOOM_MIN, 5);
+    Z.x = (cx - b.cx) - Z.s * py;
+    Z.y = (cy - b.cy) + Z.s * px;
+    applyZoom();
+    return;
+  }
   const n = spreadNatural();
   const wx = (cx - n.left - n.ox - base.x) / base.s, wy = (cy - n.top - n.oy - base.y) / base.s;
   Z.s = clamp(s, ZOOM_MIN, 5);
@@ -915,9 +955,15 @@ function drawLiveItem(entry, item, extra, clear = true) {
   const k = liveCanvas.width / sr.width;
   if (clear) g.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
   g.save();
-  g.setTransform(1, 0, 0, 1, (r.left - sr.left) * k, (r.top - sr.top) * k);
   const it = extra && extra.length ? { ...item, p: item.p.concat(extra) } : item;
-  drawItem(g, it, r.width * k, r.height * k, true);
+  if (TURN()) {
+    // page drawn a quarter turn anticlockwise: its width runs up the screen
+    g.setTransform(0, -1, 1, 0, (r.left - sr.left) * k, (r.top - sr.top + r.height) * k);
+    drawItem(g, it, r.height * k, r.width * k, true);
+  } else {
+    g.setTransform(1, 0, 0, 1, (r.left - sr.left) * k, (r.top - sr.top) * k);
+    drawItem(g, it, r.width * k, r.height * k, true);
+  }
   g.restore();
 }
 function drawLasso(pts) {
@@ -1100,7 +1146,10 @@ function makeSelection(entry, idx) {
   box.addEventListener('pointerdown', (e) => start(e, e.target === handle ? 'scale' : 'move'));
   box.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const dx = (e.clientX - drag.x) / drag.r.width, dy = (e.clientY - drag.y) / drag.r.height;
+    // move in page units: turned, the page's width runs up the screen
+    const sx = (e.clientX - drag.x), sy = (e.clientY - drag.y);
+    const dx = TURN() ? -sy / drag.r.height : sx / drag.r.width;
+    const dy = TURN() ? sx / drag.r.width : sy / drag.r.height;
     let k = 1, mx = dx, my = dy;
     if (drag.mode === 'scale') {
       const w0 = drag.box.x1 - drag.box.x0, h0 = drag.box.y1 - drag.box.y0;
@@ -1161,7 +1210,8 @@ function entryAt(x, y) {
 }
 function relPos(entry, e, rect) {
   const r = rect || entry.inner.getBoundingClientRect();
-  return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 0.5];
+  const [fx, fy] = fracOf(e.clientX, e.clientY, r);
+  return [fx, fy, e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 0.5];
 }
 function touches() { return [...PT.values()].filter((p) => p.type === 'touch' && !p.palm); }
 
@@ -1264,12 +1314,13 @@ function startText(entry, p, e) {
   const r = entry.inner.getBoundingClientRect();
   const input = el('input', 'ink-text');
   input.value = item.txt || ''; input.placeholder = 'Type'; input.autocapitalize = 'off'; input.spellcheck = false;
-  input.style.font = textFont(item.s * r.width, item.b); input.style.color = item.c;
-  input.style.left = r.left + item.x * r.width + 'px'; input.style.top = r.top + item.y * r.height + 'px';
+  const PS = pageSize(r), at = screenOf(item.x, item.y, r);
+  input.style.font = textFont(item.s * PS[0], item.b); input.style.color = item.c;
+  input.style.left = at[0] + 'px'; input.style.top = at[1] + 'px';
   document.body.append(input);
   textEdit = { entry, item, hit, input, before: items.slice() };
   if (hit >= 0) entry.layer.redraw(new Set([hit]));
-  const fit = () => { input.style.width = Math.max(60, (input.value.length + 2) * item.s * r.width * 0.42) + 'px'; };
+  const fit = () => { input.style.width = Math.max(60, (input.value.length + 2) * item.s * PS[0] * 0.42) + 'px'; };
   fit();
   input.addEventListener('input', fit);
   input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); finishText(); } else if (ev.key === 'Escape') finishText(true); });
@@ -1622,7 +1673,7 @@ $('#trimMargins').addEventListener('change', (e) => setTrim(e.target.checked));
 function fillScoreSettings() {
   if (!V.score) return;
   $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || '';
-  $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#landscapeLock').checked = !!S.landscapeLock; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
+  $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#landscapeLock').checked = !!S.landscapeLock; $('#turnScore').checked = !!S.turnScore; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
   renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
   $$('#paperSeg button').forEach((b) => b.classList.toggle('on', b.dataset.paper === S.paper));
   db.byIndex('takes', 'score', V.score.id).then((t) => {
@@ -1645,6 +1696,7 @@ $('#metaComposer').addEventListener('change', saveScoreMeta);
 $('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; saveSettings(); clearCache(); layout(); });
 $('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; saveSettings(); clearCache(); layout(); });
 $('#landscapeLock').addEventListener('change', (e) => { S.landscapeLock = e.target.checked; saveSettings(); applyOrientation(); });
+$('#turnScore').addEventListener('change', (e) => { S.turnScore = e.target.checked; saveSettings(); clearCache(); layout(); });
 $('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; saveSettings(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
   S.paper = b.dataset.paper; saveSettings(); $('#score').dataset.paper = S.paper;
@@ -3404,7 +3456,7 @@ function textBarChange(fn) {
     if (fn.bold !== undefined) cur.b = fn.bold ? 1 : 0;
     if (fn.bg !== undefined) cur.bg = fn.bg ? 1 : 0;
     const r = textEdit.entry.inner.getBoundingClientRect();
-    textEdit.input.style.font = textFont(cur.s * r.width, cur.b);
+    textEdit.input.style.font = textFont(cur.s * pageSize(r)[0], cur.b);
     textEdit.input.dataset.paper = cur.bg ? '1' : '';
     textEdit.input.style.background = cur.bg ? 'rgba(255,255,255,0.95)' : '';
   }
@@ -3468,7 +3520,8 @@ function finishWord(g) {
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
   for (const p of pts) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
   const inner = entry.inner.getBoundingClientRect();
-  const size = Math.max((x1 - x0) * inner.width, (y1 - y0) * inner.height);
+  const PS = pageSize(inner);
+  const size = Math.max((x1 - x0) * PS[0], (y1 - y0) * PS[1]);
   // a tap, not writing: open the box for typing
   if (pts.length < 6 || size < 14) { startText(entry, pts[0], null); return; }
   if (!NATIVE || !NATIVE.standRecognize) {
