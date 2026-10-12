@@ -843,6 +843,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- zoom ----------
 const Z = { s: 1, x: 0, y: 0, el: null, sharpT: 0, sharp: 1 };
+const ZOOM_MIN = 0.7;   // the page can be made a little smaller than the width of the screen
 function spreadNatural() {
   // position of the spread inside the stage before our transform
   const sr = stage.getBoundingClientRect();
@@ -857,9 +858,10 @@ function clampZoom() {
 }
 function applyZoom() {
   if (!Z.el) return;
-  if (Z.s <= 1.001) { Z.s = 1; Z.x = 0; Z.y = 0; Z.el.style.transform = ''; }
+  // close to the normal size it snaps back, so returning to 100% is easy
+  if (Math.abs(Z.s - 1) < 0.04) { Z.s = 1; Z.x = 0; Z.y = 0; Z.el.style.transform = ''; }
   else { clampZoom(); Z.el.style.transform = `translate(${Z.x}px, ${Z.y}px) scale(${Z.s})`; }
-  zoomPill.hidden = Z.s <= 1.001;
+  zoomPill.hidden = Z.s === 1;
   zoomPill.textContent = Math.round(Z.s * 100) + '%  ·  Reset';
   if (Sel.entry) placeSelection();
 }
@@ -887,7 +889,7 @@ function setZoomAt(s, cx, cy, base) {
   // keep the point under (cx, cy) still while scaling from base
   const n = spreadNatural();
   const wx = (cx - n.left - n.ox - base.x) / base.s, wy = (cy - n.top - n.oy - base.y) / base.s;
-  Z.s = clamp(s, 1, 5);
+  Z.s = clamp(s, ZOOM_MIN, 5);
   Z.x = cx - n.left - n.ox - wx * Z.s; Z.y = cy - n.top - n.oy - wy * Z.s;
   applyZoom();
 }
@@ -1366,7 +1368,6 @@ stage.addEventListener('pointerdown', (e) => {
     startPinch();
     return;
   }
-  if (V.inking && INK.finger) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
   startNav(e);
 });
 window.addEventListener('pointermove', (e) => {
@@ -1381,14 +1382,14 @@ window.addEventListener('pointermove', (e) => {
     const s = GS.base.s * (d / GS.d0);
     // zoom about the first centre, then follow the fingers (two-finger pan)
     setZoomAt(s, GS.cx0, GS.cy0, GS.base);
-    if (Z.s > 1.001) { Z.x += cx - GS.cx0; Z.y += cy - GS.cy0; applyZoom(); }
+    if (Z.s !== 1) { Z.x += cx - GS.cx0; Z.y += cy - GS.cy0; applyZoom(); }
     GS.lastDx = cx - GS.cx0; GS.lastDs = d / GS.d0;
     return;
   }
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
     const dx = e.clientX - GS.x, dy = e.clientY - GS.y;
     if (Math.hypot(dx, dy) > 8) GS.moved = true;
-    if (Z.s > 1.001 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
+    if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
   }
 });
 function pointerEnd(e) {
@@ -1404,7 +1405,7 @@ function pointerEnd(e) {
       const g = GS; GS = PT.size ? { kind: 'wait' } : null;
       scheduleSharpen();
       // a quick two-finger swipe without zooming turns the page
-      if (Z.s <= 1.001 && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > 90 && now() - g.t0 < 700) turn(g.lastDx < 0 ? 1 : -1);
+      if (Z.s === 1 && Math.abs(g.lastDs - 1) < 0.08 && Math.abs(g.lastDx || 0) > 90 && now() - g.t0 < 700) turn(g.lastDx < 0 ? 1 : -1);
     }
     return;
   }
@@ -1413,7 +1414,7 @@ function pointerEnd(e) {
     const g = GS; GS = null;
     if (!p || e.type === 'pointercancel') return;
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
-    if (Z.s > 1.001) {
+    if (Z.s !== 1) {
       if (g.moved) { scheduleSharpen(); return; }
     } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3 && dt < 800) { turn(dx < 0 ? 1 : -1); return; }
     if (Math.hypot(dx, dy) > 12 || dt > 600) return;
@@ -1421,7 +1422,7 @@ function pointerEnd(e) {
     const w = window.innerWidth;
     if (lastTap && now() - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40 && e.clientX > w * 0.32 && e.clientX < w * 0.68) {
       lastTap = null;
-      if (Z.s > 1.001) { Z.s = 1; applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: 0, y: 0 });
+      if (Z.s !== 1) { Z.s = 1; applyZoom(); } else setZoomAt(2.2, e.clientX, e.clientY, { s: 1, x: 0, y: 0 });
       scheduleSharpen(); return;
     }
     lastTap = { t: now(), x: e.clientX, y: e.clientY };

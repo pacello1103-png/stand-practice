@@ -13,6 +13,8 @@ A practice app for musicians that runs on iPad (and any modern browser) and work
 - **Cut recordings** – keep only a selected part of a recording, or remove it and join the rest. Audio and video both work.
 - **Count-in** – one bar of 4 3 2 1 and clicks before the scale starts.
 - **Words on the score** – choose Text in the markings bar and tap where the words should start. Type them, or write them with the Pencil (handwriting becomes typed letters). The words start at your tap, and move only if that spot is on the notes or staff lines. The bar underneath sets size, bold and a paper box behind the words.
+- **Score eraser** – scribble over a printed slur, tie, dynamic or fingering. Staff lines, stems, barlines and noteheads are never erased, and a slur that crosses a staff line is cut cleanly with the line left intact.
+- **Finger and Pencil** – the Pencil writes; a finger always moves, turns and zooms the score. The page zooms down a little below the screen width, and snaps back to 100% when you are close to it.
 - **Practice timer** – play and rest in rounds. Presets 25/5, 45/15 and 60/20 (short focused blocks with rest, as deliberate-practice research suggests), or your own times. A small pill shows the time while it runs; play time counts in the practice tracker.
 - **Tap the stand** – a firm knock on the iPad or its stand turns to the next page (off by default; Settings).
 - **Passages** – see the Passages entry below.
