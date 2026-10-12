@@ -3,6 +3,7 @@ import WebKit
 import AVFoundation
 import ARKit
 import CoreMotion
+import Vision
 
 // Stand for iPad: a native shell around the web app in ../www.
 // The page is served from the app bundle through a custom URL scheme (stand://app/)
@@ -127,7 +128,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize"] {
             config.userContentController.add(self, name: name)
         }
         let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true };"
@@ -260,6 +261,16 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "standTap":
             tapper.sensitivity = body["sensitivity"] as? Double ?? 0.6
             if body["on"] as? Bool == true { tapper.start() } else { tapper.stop() }
+        case "standRecognize":
+            // a word written with the Pencil: read it and send the text back to the page
+            let id = body["id"] as? String ?? ""
+            let words = body["words"] as? [String] ?? []
+            guard let b64 = body["png"] as? String, let data = Data(base64Encoded: b64), let image = UIImage(data: data)?.cgImage else {
+                send("standRecognized", ["id": id, "text": ""]); return
+            }
+            WordReader.read(image, words: words) { [weak self] text in
+                self?.send("standRecognized", ["id": id, "text": text])
+            }
         case "standAudio":
             standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
         case "standScan":
@@ -326,6 +337,30 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pageReady = false
         webView.reload()
+    }
+}
+
+// MARK: - Words written with the Pencil
+// Reads handwriting with the system's text recognition. The music words are given to it so that
+// "violin" or "cello" come out spelled right.
+enum WordReader {
+    static func read(_ image: CGImage, words: [String], done: @escaping (String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let request = VNRecognizeTextRequest { finished, _ in
+                let lines = (finished.results as? [VNRecognizedTextObservation] ?? []).compactMap { $0.topCandidates(1).first?.string }
+                let text = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                DispatchQueue.main.async { done(text) }
+            }
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            request.recognitionLanguages = ["en-US", "pt-PT", "de-DE", "fr-FR", "it-IT", "es-ES"]
+            request.customWords = words
+            do {
+                try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            } catch {
+                DispatchQueue.main.async { done("") }
+            }
+        }
     }
 }
 

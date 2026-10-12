@@ -752,3 +752,7 @@ body.reviewing .tb-tools, body.reviewing #library { visibility: hidden; }
 .text-bar { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); display: flex; gap: 6px; align-items: center; padding: 6px; border-radius: 22px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); }
 .text-bar .btn.small { min-width: 44px; min-height: 36px; padding: 0 10px; }
 .text-bar .btn.on { background: var(--accent-text); color: #fff; }
+
+/* The middle of the page can hide the toolbars, also while writing */
+.chrome-off .inkbar, .chrome-off .text-bar { opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+.inkbar, .text-bar { transition: opacity .22s ease; }

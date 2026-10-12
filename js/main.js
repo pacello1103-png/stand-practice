@@ -1175,7 +1175,7 @@ function startInk(e, entry) {
     return;
   }
   if (tool === 'eraser') { GS = { kind: 'erase', id: e.pointerId, entry, rect, before, type: e.pointerType, changed: false }; GS.changed = entry.layer.eraseAt(p[0], p[1], 0.012); showEraserDot(e); return; }
-  if (tool === 'text') { GS = { kind: 'done', id: e.pointerId }; startText(entry, p, e); return; }
+  if (tool === 'text' && e.pointerType !== 'pen') { GS = { kind: 'done', id: e.pointerId }; startText(entry, p, e); return; }
   if (tool === 'select') { GS = { kind: 'lasso', id: e.pointerId, entry, rect, pts: [[e.clientX, e.clientY]], rel: [p], type: e.pointerType }; return; }
   if (tool === 'print' && INK.erase === 'smart') {
     GS = { kind: 'smart', id: e.pointerId, entry, rect, before, type: e.pointerType, t0: now(), item: { t: 'hl', c: '#ff5a5f', a: 0.35, s: 0.012, p: [p] } };
@@ -1184,7 +1184,7 @@ function startInk(e, entry) {
   const t = tool === 'print' ? 'white' : tool === 'hl' ? 'hl' : 'pen';
   const st = t === 'white' ? INK.white : styleFor(t);
   const item = { t, c: t === 'white' ? '#fff' : colorFor(t), a: t === 'white' ? 1 : st.a, s: inkSize(t, st.size), p: [p] };
-  GS = { kind: 'ink', id: e.pointerId, entry, rect, before, item, type: e.pointerType, t0: now(), predicted: null };
+  GS = { kind: 'ink', id: e.pointerId, entry, rect, before, item, type: e.pointerType, t0: now(), predicted: null, word: tool === 'text' };
   scheduleLive();
 }
 let liveRaf = 0;
@@ -1316,6 +1316,7 @@ function endInk(cancelled) {
     makeSelection(g.entry, idx);
     return;
   }
+  if (g.word) { finishWord(g); return; }
   if (g.kind === 'smart') {
     const res = smartMask(g.entry.art, g.item.p);
     if (!res.item) { inkHint(res.rejected ? 'That shape is joined to the staff or notes. Switch to Brush to cover it by hand.' : 'Nothing printed there.'); return; }
@@ -1368,6 +1369,7 @@ stage.addEventListener('pointerdown', (e) => {
     startPinch();
     return;
   }
+  if (V.inking && INK.finger) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
   startNav(e);
 });
 window.addEventListener('pointermove', (e) => {
@@ -1427,10 +1429,10 @@ function pointerEnd(e) {
     }
     lastTap = { t: now(), x: e.clientX, y: e.clientY };
     // a tap near the top, where the toolbar lives, brings the toolbar back (never turns a page)
-    if (!V.inking && $('#score').classList.contains('chrome-off') && e.clientY < stage.getBoundingClientRect().top + 80) { showChrome(true); return; }
+    if ($('#score').classList.contains('chrome-off') && e.clientY < stage.getBoundingClientRect().top + 80) { showChrome(true); return; }
     if (e.clientX > w * 0.68) turn(1);
     else if (e.clientX < w * 0.32) turn(-1);
-    else if (!V.inking) showChrome($('#score').classList.contains('chrome-off'));
+    else showChrome($('#score').classList.contains('chrome-off'));
   }
 }
 let lastTap = null;
@@ -3422,3 +3424,73 @@ window.addEventListener('pointerup', () => { setTimeout(() => { barTouch = false
   if (saved) { TXT.size = saved.size || null; TXT.bold = !!saved.bold; TXT.bg = !!saved.bg; }
   syncTextBar();
 })();
+
+// =====================================================================
+// Words written with the Pencil
+// =====================================================================
+// In the Text tool, a stroke written with the Pencil is read as a word (on the iPad, by the system's
+// text recognition). The typed word starts where the handwriting started, and the placement rules
+// keep it off the printed notes. A tap still opens the box for typing.
+const WORDS = new Map();
+const RECOGNISE_WORDS = [...new Set([
+  ...Object.values(INSTRUMENTS).map((i) => i.label), 'violin', 'viola', 'cello', 'double bass', 'bass', 'flute', 'piano', 'organ', 'harp',
+  'guitar', 'oboe', 'clarinet', 'bassoon', 'horn', 'trumpet', 'trombone', 'tuba', 'pizzicato', 'arco', 'legato', 'staccato', 'tenuto',
+  'marcato', 'accent', 'ritardando', 'rallentando', 'accelerando', 'crescendo', 'diminuendo', 'dolce', 'cantabile', 'espressivo', 'tempo',
+  'poco', 'molto', 'sempre', 'forte', 'fortissimo', 'pianissimo', 'fermata', 'tutti', 'solo', 'vibrato', 'portamento', 'mezzo', 'senza',
+  'sul ponticello', 'sul tasto', 'con sordino', 'sordino', 'breath', 'bowing', 'fingering', 'a tempo', 'rit.', 'cresc.', 'dim.',
+])];
+// The handwriting as a small black-on-white picture, big enough for the recogniser to read.
+function wordBitmap(pts, x0, y0, x1, y1, inner) {
+  const wpx = Math.max(1, (x1 - x0) * inner.width), hpx = Math.max(1, (y1 - y0) * inner.height);
+  const k = Math.min(220 / hpx, 3000 / wpx), pad = 40;
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(wpx * k + pad * 2); c.height = Math.ceil(hpx * k + pad * 2);
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.strokeStyle = '#000'; g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = Math.max(5, hpx * k * 0.07);
+  g.beginPath();
+  pts.forEach((p, i) => {
+    const X = pad + (p[0] - x0) * inner.width * k, Y = pad + (p[1] - y0) * inner.height * k;
+    if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
+  });
+  g.stroke();
+  return c.toDataURL('image/png');
+}
+function finishWord(g) {
+  const pts = g.item.p, entry = g.entry, L = entry.layer;
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const p of pts) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+  const inner = entry.inner.getBoundingClientRect();
+  const size = Math.max((x1 - x0) * inner.width, (y1 - y0) * inner.height);
+  // a tap, not writing: open the box for typing
+  if (pts.length < 6 || size < 14) { startText(entry, pts[0], null); return; }
+  if (!NATIVE || !NATIVE.standRecognize) {
+    inkHint('Writing words needs the iPad app. Type them here instead.', 4000);
+    startText(entry, pts[0], null); return;
+  }
+  const id = uid();
+  WORDS.set(id, { entry, pts, before: L.items.slice(), bold: TXT.bold });
+  NATIVE.standRecognize.postMessage({ id, png: wordBitmap(pts, x0, y0, x1, y1, inner).split(',')[1], words: RECOGNISE_WORDS });
+  inkHint('Reading the word…', 6000);
+}
+// The recogniser's answer: the word goes where the handwriting started, in the size of the handwriting.
+window.standRecognized = (msg) => {
+  const job = WORDS.get(msg.id); WORDS.delete(msg.id);
+  if (!job) return;
+  const text = (msg.text || '').trim();
+  if (!text) { inkHint('I could not read that. Try writing it a little bigger.', 4000); return; }
+  const art = job.entry.art, W = art.width, H = art.height;
+  const pts = job.pts;
+  let y0 = 1, y1 = 0;
+  for (const p of pts) { y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  const hArt = Math.max(8, (y1 - y0) * H);
+  const item = {
+    t: 'stamp', k: 'txt', txt: text, c: penColor(), a: INK.stampStyle.a,
+    s: clamp01((hArt * 1.2) / (0.78 * W), 0.006, 0.07),
+    x: +pts[0][0].toFixed(4), y: +pts[0][1].toFixed(4), al: 'l', b: job.bold ? 1 : 0, bg: 0,
+  };
+  const placed = placeWords(art, item);
+  const after = [...job.before, placed];
+  job.entry.layer.setItems(after); pushUndo(job.entry.layer.key, job.before, after.slice());
+  inkHint(`“${text}”`, 2000);
+};
