@@ -158,7 +158,15 @@ function drawStamp(ctx, s, W, H) {
   ctx.fillStyle = s.c; ctx.strokeStyle = s.c; ctx.globalAlpha = s.a ?? 1;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (def.font === 'words') {
-    ctx.font = textFont(size);
+    ctx.font = textFont(size, s.b);
+    ctx.textAlign = s.al === 'l' ? 'left' : 'center';
+    if (s.bg) {   // a paper box behind the words, for when they cannot sit clear of the notes
+      const w = ctx.measureText(def.label).width, pad = size * 0.14;
+      ctx.save();
+      ctx.globalAlpha = 0.92; ctx.fillStyle = '#fff';
+      ctx.fillRect(s.al === 'l' ? x - pad : x - w / 2 - pad, y - size * 0.55, w + pad * 2, size * 1.1);
+      ctx.restore();
+    }
     ctx.fillText(def.label, x, y);
   } else if (def.font === 'music') {
     ctx.font = `${size * 1.6}px Bravura`;
@@ -192,18 +200,22 @@ function drawStamp(ctx, s, W, H) {
 }
 
 // Words typed with the text tool: the italic serif used for expression marks in printed music.
-export const textFont = (size) => `italic 500 ${size * 0.78}px "Times New Roman", Georgia, serif`;
+export const textFont = (size, bold) => `italic ${bold ? 700 : 500} ${size * 0.78}px "Times New Roman", Georgia, serif`;
 let measureCtx = null;
 function textHalfWidth(s) {
   if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
-  measureCtx.font = textFont(100);
+  measureCtx.font = textFont(100, s.b);
   return (measureCtx.measureText(s.txt || '').width / 100) * s.s / 2;
 }
 
 // ---------- geometry helpers (selection, eraser) ----------
 export function itemBounds(s) {
   if (s.t === 'passage') return { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 };
-  if (s.t === 'stamp' && s.k === 'txt') { const hw = textHalfWidth(s) + s.s * 0.15, hh = s.s * 0.55; return { x0: s.x - hw, y0: s.y - hh, x1: s.x + hw, y1: s.y + hh }; }
+  if (s.t === 'stamp' && s.k === 'txt') {
+    const hw = textHalfWidth(s) + s.s * 0.15, hh = s.s * 0.55;
+    const cx = s.al === 'l' ? s.x + hw - s.s * 0.15 : s.x;   // words that start at the tap run to the right
+    return { x0: cx - hw, y0: s.y - hh, x1: cx + hw, y1: s.y + hh };
+  }
   if (s.t === 'stamp') { const r = s.s * 1.2; return { x0: s.x - r, y0: s.y - r * 0.8, x1: s.x + r, y1: s.y + r * 0.8 }; }
   if (s.t === 'mask') return { x0: s.x, y0: s.y, x1: s.x + s.w, y1: s.y + s.h };
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;

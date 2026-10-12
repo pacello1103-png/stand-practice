@@ -13,6 +13,7 @@ import { exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
 import * as P from './pomodoro.js';
+import { placeWords } from './textplace.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -953,6 +954,9 @@ function setInking(on) {
 function closeInkPops() { $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; }
 function syncInkBar() {
   $$('.ink-tool[data-tool]').forEach((x) => x.classList.toggle('on', x.dataset.tool === INK.tool));
+  $('#textBar').hidden = !(V.inking && INK.tool === 'text');
+  if (INK.tool === 'text') $('#inkHint').hidden = true;
+  if (INK.tool !== 'text' && textEdit) finishText();
   const hl = INK.tool === 'hl';
   if (hl) INK.hl.c = INK.hlSlots[INK.hlSlot];
   // the two colour buttons show the highlighter's colours while the highlighter is in use
@@ -1248,11 +1252,12 @@ function startText(entry, p, e) {
   const items = entry.layer.items;
   const hit = items.findIndex((s) => s.t === 'stamp' && s.k === 'txt' && itemHit(s, p[0], p[1], 0.004, 1, 1));
   const st = INK.stampStyle;
-  const item = hit >= 0 ? items[hit] : { t: 'stamp', k: 'txt', txt: '', c: penColor(), a: st.a, s: inkSize('stamp', st.size) * 0.9, x: +p[0].toFixed(4), y: +p[1].toFixed(4) };
+  // new words start at the tap, left-aligned, in the size and style the writing bar last set
+  const item = hit >= 0 ? { ...items[hit] } : { t: 'stamp', k: 'txt', txt: '', c: penColor(), a: st.a, s: txtSize(), x: +p[0].toFixed(4), y: +p[1].toFixed(4), al: 'l', b: TXT.bold ? 1 : 0, bg: 0 };
   const r = entry.inner.getBoundingClientRect();
   const input = el('input', 'ink-text');
   input.value = item.txt || ''; input.placeholder = 'Type'; input.autocapitalize = 'off'; input.spellcheck = false;
-  input.style.font = textFont(item.s * r.width); input.style.color = item.c;
+  input.style.font = textFont(item.s * r.width, item.b); input.style.color = item.c;
   input.style.left = r.left + item.x * r.width + 'px'; input.style.top = r.top + item.y * r.height + 'px';
   document.body.append(input);
   textEdit = { entry, item, hit, input, before: items.slice() };
@@ -1262,7 +1267,7 @@ function startText(entry, p, e) {
   input.addEventListener('input', fit);
   input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); finishText(); } else if (ev.key === 'Escape') finishText(true); });
   const t0 = now();
-  input.addEventListener('blur', () => { if (now() - t0 < 400 && textEdit && textEdit.input === input) { input.focus(); return; } finishText(); });
+  input.addEventListener('blur', () => { if ((now() - t0 < 400 || barTouch) && textEdit && textEdit.input === input) { input.focus(); return; } finishText(); });
   input.focus();
   window.addEventListener('pointerup', () => input.focus(), { once: true });
 }
@@ -1272,8 +1277,8 @@ function finishText(cancel) {
   const L = t.entry.layer;
   if (cancel) { L.redraw(); return; }
   let after;
-  if (t.hit >= 0) after = txt ? t.before.map((s, i) => (i === t.hit ? { ...s, txt } : s)) : t.before.filter((_, i) => i !== t.hit);
-  else if (txt) after = [...t.before, { ...t.item, txt }];
+  if (t.hit >= 0) after = txt ? t.before.map((s, i) => (i === t.hit ? { ...t.item, txt } : s)) : t.before.filter((_, i) => i !== t.hit);
+  else if (txt) after = [...t.before, placeWords(t.entry.art, { ...t.item, txt })];
   else { L.redraw(); return; }
   L.setItems(after); pushUndo(L.key, t.before, after.slice());
 }
@@ -3369,3 +3374,50 @@ pomoField('#pomoRest', 'rest', 1, 60);
 $('#pomoRounds').addEventListener('change', (e) => { P.pomo.rounds = +e.target.value; pomoChanged(); });
 $('#pomoChime').addEventListener('change', (e) => { P.pomo.chime = e.target.checked; pomoChanged(); });
 P.initPomodoro({ toast, draw: drawPomo });
+
+// =====================================================================
+// Writing bar for typed words
+// =====================================================================
+// Words are typed with the keyboard, or written with the Pencil (iPad Scribble turns handwriting into
+// typed letters in the box). They start where you tapped and stay clear of the notes.
+const TXT = { size: null, bold: false, bg: false };
+const txtDefault = () => inkSize('stamp', INK.stampStyle.size) * 0.9;
+const txtSize = () => TXT.size ?? txtDefault();
+function syncTextBar() {
+  $('#txtBold').classList.toggle('on', TXT.bold);
+  $('#txtPaper').classList.toggle('on', TXT.bg);
+}
+function textBarChange(fn) {
+  const cur = textEdit && textEdit.item;
+  if (cur) {
+    if (fn.size) cur.s = clamp01(cur.s * fn.size, 0.004, 0.09);
+    if (fn.bold !== undefined) cur.b = fn.bold ? 1 : 0;
+    if (fn.bg !== undefined) cur.bg = fn.bg ? 1 : 0;
+    const r = textEdit.entry.inner.getBoundingClientRect();
+    textEdit.input.style.font = textFont(cur.s * r.width, cur.b);
+    textEdit.input.dataset.paper = cur.bg ? '1' : '';
+    textEdit.input.style.background = cur.bg ? 'rgba(255,255,255,0.95)' : '';
+  }
+  if (fn.size) TXT.size = clamp01(txtSize() * fn.size, 0.004, 0.09);
+  if (fn.bold !== undefined) TXT.bold = fn.bold;
+  if (fn.bg !== undefined) TXT.bg = fn.bg;
+  syncTextBar();
+  setSetting('textBar', { size: TXT.size, bold: TXT.bold, bg: TXT.bg });
+  if (textEdit) { textEdit.entry.layer.redraw(); textEdit.input.focus(); }
+}
+const clamp01 = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+$('#txtSmaller').addEventListener('click', () => textBarChange({ size: 1 / 1.2 }));
+$('#txtBigger').addEventListener('click', () => textBarChange({ size: 1.2 }));
+$('#txtBold').addEventListener('click', () => textBarChange({ bold: !TXT.bold }));
+$('#txtPaper').addEventListener('click', () => textBarChange({ bg: !TXT.bg }));
+$('#txtDone').addEventListener('click', () => { if (textEdit) finishText(); else { INK.tool = 'pen'; syncInkBar(); persistInk(); } });
+// Pressing the bar must not take the typing focus away from the words.
+// Tapping the bar keeps the words in focus, so the writing is not finished by the tap.
+let barTouch = false;
+$('#textBar').addEventListener('pointerdown', (e) => { e.preventDefault(); barTouch = true; if (textEdit) textEdit.input.focus(); });
+window.addEventListener('pointerup', () => { setTimeout(() => { barTouch = false; }, 350); });
+(async () => {
+  const saved = await getSetting('textBar', null);
+  if (saved) { TXT.size = saved.size || null; TXT.bold = !!saved.bold; TXT.bg = !!saved.bg; }
+  syncTextBar();
+})();
