@@ -3,7 +3,6 @@ import WebKit
 import AVFoundation
 import ARKit
 import CoreMotion
-import VisionKit
 
 // Stand for iPad: a native shell around the web app in ../www.
 // The page is served from the app bundle through a custom URL scheme (stand://app/)
@@ -114,7 +113,7 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
-final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, VNDocumentCameraViewControllerDelegate, UIPencilInteractionDelegate {
+final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, UIPencilInteractionDelegate {
     private var webView: WKWebView!
     private var pageReady = false
     private var pending: [[String: Any]] = []
@@ -131,7 +130,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true, audio: true };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -264,11 +263,16 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "standAudio":
             standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
         case "standScan":
-            guard VNDocumentCameraViewController.isSupported else { return }
+            guard PageScanner.available else { return }
             face.stop()   // the scanner needs the camera
-            let scanner = VNDocumentCameraViewController()
-            scanner.delegate = self
-            scanner.modalPresentationStyle = .fullScreen   // Cancel and Save always visible
+            let scanner = PageScanner()
+            scanner.modalPresentationStyle = .fullScreen
+            scanner.onFinish = { [weak self] urls in
+                guard let self = self else { return }
+                let f = DateFormatter(); f.dateFormat = "d MMM yyyy HH.mm"
+                let paths = urls.map { "/__incoming/" + $0.lastPathComponent }
+                self.deliver(["paths": paths, "name": "Scan " + f.string(from: Date()) + ".jpg"])
+            }
             present(scanner, animated: true)
         case "standVideo":
             switch body["cmd"] as? String {
@@ -282,35 +286,6 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             }
         default: break
         }
-    }
-
-    // MARK: document scanner
-    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
-        var paths: [String] = []
-        for i in 0..<scan.pageCount {
-            let image = Self.downscale(scan.imageOfPage(at: i), maxSide: 2400)
-            guard let data = image.jpegData(compressionQuality: 0.85) else { continue }
-            let name = UUID().uuidString + "-scan\(i + 1).jpg"
-            if (try? data.write(to: incomingDir.appendingPathComponent(name))) != nil { paths.append("/__incoming/" + name) }
-        }
-        let f = DateFormatter(); f.dateFormat = "d MMM yyyy HH.mm"
-        controller.dismiss(animated: true) {
-            if !paths.isEmpty { self.deliver(["paths": paths, "name": "Scan " + f.string(from: Date()) + ".jpg"]) }
-        }
-    }
-    func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-        controller.dismiss(animated: true) { self.send("standScanEnded", [:]) }
-    }
-    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
-        controller.dismiss(animated: true) { self.send("standScanEnded", ["error": error.localizedDescription]) }
-    }
-    static func downscale(_ image: UIImage, maxSide: CGFloat) -> UIImage {
-        let size = image.size
-        let k = min(1, maxSide / max(size.width, size.height))
-        if k >= 1 { return image }
-        let target = CGSize(width: size.width * k, height: size.height * k)
-        let format = UIGraphicsImageRendererFormat.default(); format.scale = 1
-        return UIGraphicsImageRenderer(size: target, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
     // MARK: web view
@@ -373,7 +348,7 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "IMSLP"
+        title = "Scores"
         view.backgroundColor = .systemBackground
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(close))
         let config = WKWebViewConfiguration()
@@ -382,7 +357,7 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
         web.navigationDelegate = self
         web.uiDelegate = self
         web.translatesAutoresizingMaskIntoConstraints = false
-        status.text = "Accept IMSLP’s terms if asked. The score is added to Stand as soon as the PDF arrives."
+        status.text = "Accept the publisher’s terms if asked. The score is added to Stand as soon as the PDF arrives."
         status.font = .preferredFont(forTextStyle: .footnote)
         status.textColor = .secondaryLabel
         status.numberOfLines = 0

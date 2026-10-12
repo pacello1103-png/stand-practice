@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Stand</title>
-<meta name="description" content="Practice stand for musicians: scores, IMSLP search, metronome, tuner, harmonics, scales, drone and audio/video recorder.">
+<meta name="description" content="Practice stand for musicians: scores, score search, metronome, tuner, harmonics, scales, drone and audio/video recorder.">
 <meta name="theme-color" content="#F3F4F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B0E16" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -112,7 +112,7 @@
 
     <div class="home-tabs seg" id="homeTabs" role="tablist">
       <button data-hometab="mine" class="on" role="tab"><svg><use href="#i-lib"/></svg>My scores</button>
-      <button data-hometab="find" role="tab"><svg><use href="#i-search"/></svg>Find on IMSLP</button>
+      <button data-hometab="find" role="tab"><svg><use href="#i-search"/></svg>Find a score</button>
     </div>
 
     <section id="tab-mine">
@@ -141,7 +141,7 @@
       <section class="empty" id="emptyLib" hidden>
         <div class="empty-staff" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
         <h2>Your stand is empty</h2>
-        <p>Find a piece on IMSLP or import a PDF or photo of your part. Everything stays on this iPad and works offline.</p>
+        <p>Find a piece online or import a PDF or photo of your part. Everything stays on this iPad and works offline.</p>
         <div class="empty-actions">
           <button class="btn primary" data-goto="find"><svg><use href="#i-search"/></svg><span>Find a piece</span></button>
           <label class="btn" for="importInput"><svg><use href="#i-plus"/></svg><span>Import a file</span></label>
@@ -161,7 +161,7 @@
       </div>
       <div id="findList">
         <div class="find-intro" id="findIntro">
-          <p class="hint">Free public-domain scores from IMSLP, ranked by how many musicians downloaded each edition. Try:</p>
+          <p class="hint">Free public-domain scores, ranked by how many musicians downloaded each edition. Try:</p>
           <div class="chips" id="findExamples"></div>
         </div>
         <p class="find-status" id="findStatus" hidden></p>
@@ -176,7 +176,7 @@
             <h2 id="workTitle"></h2>
             <p class="muted" id="workComposer"></p>
           </div>
-          <a class="btn" id="workOpen" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg><span>IMSLP page</span></a>
+          <a class="btn" id="workOpen" target="_blank" rel="noopener"><svg><use href="#i-ext"/></svg><span>Open the page</span></a>
         </div>
         <p class="find-status" id="workStatus" hidden></p>
         <div class="picks" id="workPicks"></div>
@@ -684,7 +684,7 @@
       </div>
       <input type="file" id="backupInput" hidden>
     </section>
-    <p class="hint center">Stand 1.7 · everything stays on this iPad</p>
+    <p class="hint center">Stand 1.8 · everything stays on this iPad</p>
   </div>
 </aside>
 
@@ -791,6 +791,35 @@
 <div class="flash" id="flash"></div>
 <div class="wink-flash" id="winkFlash"></div>
 <div class="toast" id="toast" role="status" hidden></div>
+
+<section class="review" id="review" hidden aria-label="Review pages">
+  <header class="review-top">
+    <button class="btn ghost" id="revCancel">Cancel</button>
+    <div class="review-title"><strong id="revTitle">Review</strong><span class="hint num" id="revSub"></span></div>
+    <button class="btn primary" id="revSave">Add to library</button>
+  </header>
+  <div class="review-stage"><canvas id="revCanvas"></canvas><div class="rev-busy" id="revBusy" hidden>Working…</div></div>
+  <div class="rev-strip" id="revStrip"></div>
+  <div class="rev-tools">
+    <div class="rev-row">
+      <button class="rev-btn" id="revRotL" aria-label="Turn left">&#8630; Turn</button>
+      <button class="rev-btn" id="revRotR" aria-label="Turn right">Turn &#8631;</button>
+      <button class="rev-btn danger" id="revDelete" aria-label="Remove this page">Remove page</button>
+    </div>
+    <div class="seg full" id="revColour"><button data-bw="0" class="on">Colour</button><button data-bw="1">Black and white</button></div>
+    <label class="check"><input type="checkbox" id="revClean" checked> Clean the paper and remove shadows</label>
+    <div class="ctl"><div class="ctl-head"><span>Contrast</span></div><input type="range" id="revContrast" min="0" max="100" value="60"></div>
+    <details class="rev-crop"><summary>Crop the margins</summary>
+      <div class="rev-crop-grid">
+        <label class="field"><span>Top</span><input type="range" id="cropT" min="0" max="40" value="0"></label>
+        <label class="field"><span>Bottom</span><input type="range" id="cropB" min="0" max="40" value="0"></label>
+        <label class="field"><span>Left</span><input type="range" id="cropL" min="0" max="40" value="0"></label>
+        <label class="field"><span>Right</span><input type="range" id="cropR" min="0" max="40" value="0"></label>
+      </div>
+    </details>
+    <button class="btn" id="revApplyAll">Use these settings for all pages</button>
+  </div>
+</section>
 
 <script type="module" src="js/main.js"></script>
 </body>

@@ -11,6 +11,7 @@ import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMa
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages } from './passages.js';
 import { exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
+import { initReview, openReview } from './review.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -328,11 +329,19 @@ $('#scanBtn').addEventListener('click', () => {
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standScan && (window.standCaps || {}).scan) window.webkit.messageHandlers.standScan.postMessage({});
   else $('#scanInput').click();
 });
-$('#scanInput').addEventListener('change', async (e) => {
+// Pages go through the review first: straightened, cleaned and cropped before they join the library.
+initReview({
+  toast,
+  async commit(blobs, name) {
+    const sc = await addImages(blobs, name);
+    await refreshLibrary(); setHomeTab('mine');
+    toast('Added: ' + label(sc), 3000);
+    openScore(sc.id);
+  },
+});
+$('#scanInput').addEventListener('change', (e) => {
   const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
-  toast('Adding the scan…', 8000);
-  try { const sc = await addImages(files, 'Scan ' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '.jpg'); await refreshLibrary(); setHomeTab('mine'); toast('Added. Tap the title in More to rename it.', 3500); openScore(sc.id); }
-  catch (err) { console.error(err); toast('Those photos could not be read.'); }
+  openReview(files, 'Scan ' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '.jpg');
 });
 const label = (sc) => (sc.composer ? `${sc.title} — ${sc.composer}` : sc.title);
 $('#importInput').addEventListener('change', async (e) => {
@@ -345,12 +354,10 @@ $('#importInput').addEventListener('change', async (e) => {
   for (const f of pdfs) {
     try { last = await addPdf(await f.arrayBuffer(), f.name); added++; } catch (err) { console.error(err); toast(`Could not open ${f.name}. Is it a PDF?`); }
   }
-  if (imgs.length) {
-    try { last = await addImages(imgs, imgs[0].name); added++; } catch (err) { console.error(err); toast('Those photos could not be read.'); }
-  }
   setHomeTab('mine');
   await refreshLibrary();
   if (added) toast(added === 1 ? 'Added: ' + label(last) : `${added} scores added`, 4000);
+  if (imgs.length) openReview(imgs, imgs[0].name);
 });
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
 window.standIncoming = async (msg) => {
@@ -358,21 +365,23 @@ window.standIncoming = async (msg) => {
     const paths = msg.paths || [msg.path];
     const blobs = [];
     for (const p of paths) { const res = await fetch(p); if (!res.ok) throw new Error('missing file'); blobs.push(await res.blob()); }
-    let sc;
-    toast('Adding ' + (msg.meta && msg.meta.title ? msg.meta.title : msg.name) + '…', 8000);
-    if (blobs.length === 1 && (/\.pdf$/i.test(msg.name) || blobs[0].type === 'application/pdf')) sc = await addPdf(await blobs[0].arrayBuffer(), msg.name, msg.meta && msg.meta.title ? msg.meta : null);
-    else sc = await addImages(blobs.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), msg.name);
+    // the files are in memory now, so the native copies can go
     if (NATIVE && NATIVE.standDone) for (const p of paths) NATIVE.standDone.postMessage({ path: p });
-    await refreshLibrary();
     if (!$('#score').hidden) await closeScore();
-    hidePanel(); setHomeTab('mine');
+    hidePanel();
+    const isPdf = blobs.length === 1 && (/\.pdf$/i.test(msg.name) || blobs[0].type === 'application/pdf');
+    if (!isPdf) { setHomeTab('mine'); openReview(blobs.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), msg.name || 'Scan.jpg'); return; }
+    toast('Adding ' + (msg.meta && msg.meta.title ? msg.meta.title : msg.name) + '…', 8000);
+    const sc = await addPdf(await blobs[0].arrayBuffer(), msg.name, msg.meta && msg.meta.title ? msg.meta : null);
+    await refreshLibrary();
+    setHomeTab('mine');
     toast('Added: ' + label(sc), 3000);
     openScore(sc.id);
   } catch (e) { console.error(e); toast('That file could not be added.'); }
 };
 
 // =====================================================================
-// Find on IMSLP
+// Find a score
 // =====================================================================
 const EXAMPLES = {
   cello: ['Elgar cello concerto', 'Bach cello suites', 'Fauré élégie', 'Popper Hungarian rhapsody', 'Saint-Saëns swan', 'Brahms cello sonata 1'],
@@ -437,19 +446,19 @@ async function runSearch() {
   $('#findInput').blur();
   const token = ++searchToken;
   $('#workView').hidden = true; $('#findList').hidden = false; $('#findIntro').hidden = true;
-  const st = $('#findStatus'); st.hidden = false; st.textContent = 'Searching IMSLP…';
+  const st = $('#findStatus'); st.hidden = false; st.textContent = 'Searching…';
   $('#workList').textContent = '';
   try {
     const res = await searchWorks(q);
     if (token !== searchToken) return;
     const list = res.results;
-    if (!list.length) { st.textContent = 'Nothing on IMSLP for that. Try the composer’s surname and one word of the title, for example “Fauré élégie”. Newer music may only exist in print:'; renderBuy($('#findBuy'), q); $('#findBuy').hidden = false; return; }
+    if (!list.length) { st.textContent = 'Nothing found for that. Try the composer’s surname and one word of the title, for example “Fauré élégie”. Newer music may only exist in print:'; renderBuy($('#findBuy'), q); $('#findBuy').hidden = false; return; }
     $('#findBuy').hidden = true;
-    st.textContent = res.browse ? `All ${list.length} works by ${res.composer.n} on IMSLP` : (res.composer ? `Works by ${res.composer.n}` : 'Results from IMSLP');
+    st.textContent = res.browse ? `All ${list.length} works by ${res.composer.n}` : (res.composer ? `Works by ${res.composer.n}` : 'Results');
     renderWorkList(list, res.browse ? 80 : 30);
   } catch (e) {
     console.error(e);
-    if (token === searchToken) st.textContent = 'IMSLP did not answer. Check the internet connection and try again.';
+    if (token === searchToken) st.textContent = 'The score library did not answer. Check the internet connection and try again.';
   }
 }
 function renderWorkList(list, limit) {
@@ -494,7 +503,7 @@ async function openWork(title) {
   $('#workTitle').textContent = work; $('#workComposer').textContent = composer;
   $('#workOpen').href = workUrl(title);
   $('#workPicks').textContent = ''; $('#workGroups').textContent = '';
-  const st = $('#workStatus'); st.hidden = false; st.textContent = 'Reading the editions on IMSLP…';
+  const st = $('#workStatus'); st.hidden = false; st.textContent = 'Reading the editions…';
   $('#library').scrollTo({ top: 0 });
   currentWork = null;
   try {
@@ -505,19 +514,19 @@ async function openWork(title) {
     renderWork(data);
   } catch (e) {
     console.error(e);
-    st.textContent = 'This piece could not be loaded from IMSLP. Try again, or open the IMSLP page.';
+    st.textContent = 'This piece could not be loaded. Try again, or open the page.';
   }
 }
 $('#workBack').addEventListener('click', () => { $('#workView').hidden = true; $('#findList').hidden = false; currentWork = null; });
 
+// The edition under its name: who edited or arranged it, the publisher, then pages and downloads.
 function fileMeta(f) {
   const bits = [];
-  if (f.heading && f.group !== 'Full scores' && f.heading.length < 70) bits.push(f.heading);
-  bits.push(f.downloads.toLocaleString() + ' downloads');
-  if (f.pages) bits.push(f.pages + (f.pages === 1 ? ' page' : ' pages'));
   const src = f.arranger ? 'arr. ' + f.arranger : (f.editor && !/first edition|unknown/i.test(f.editor) ? 'ed. ' + f.editor : '');
   if (src) bits.push(src);
   if (f.publisher) bits.push(f.publisher.slice(0, 60));
+  if (f.pages) bits.push(f.pages + (f.pages === 1 ? ' page' : ' pages'));
+  bits.push(f.downloads.toLocaleString() + ' downloads');
   return bits.join(' · ');
 }
 const inApp = () => !!(NATIVE && NATIVE.standOpen);
@@ -533,8 +542,8 @@ function downloadLink(f, big) {
     if (inApp()) {
       e.preventDefault();
       NATIVE.standOpen.postMessage({ url: fileUrl(f.index), title: meta.title, composer: meta.composer, index: f.index });
-      toast('IMSLP opens here. Accept their terms if asked; the score then lands on your stand by itself.', 6000);
-    } else toast('Accept IMSLP’s terms on their page to download. Then come back and tap Import score.', 6000);
+      toast('The score page opens here. Accept the terms if asked; the score then lands on your stand by itself.', 6000);
+    } else toast('Accept the terms on the score page to download. Then come back and tap Import score.', 6000);
   });
   return a;
 }
@@ -570,7 +579,7 @@ function renderWork(data) {
   const inst = INSTRUMENTS[S.instrument];
   const { picks, groups, mostDownloaded } = rankFiles(data.files, inst.words);
   const st = $('#workStatus');
-  if (!data.files.length) { st.hidden = false; st.textContent = 'IMSLP has no PDF scores for this page. It may hold only recordings, or the work is still under copyright.'; return; }
+  if (!data.files.length) { st.hidden = false; st.textContent = 'There are no PDF scores for this piece. It may hold only recordings, or the work is still under copyright.'; return; }
   st.hidden = true;
   const pk = $('#workPicks'); pk.textContent = '';
   const sp = splitTitle(data.title);
@@ -588,7 +597,7 @@ function renderWork(data) {
   });
   const gbox = $('#workGroups'); gbox.textContent = '';
   const total = data.files.length;
-  const det = el('details', 'all-editions'); det.append(el('summary', '', `All editions on IMSLP (${total})`));
+  const det = el('details', 'all-editions'); det.append(el('summary', '', `All editions (${total})`));
   gbox.append(det);
   for (const g of ['Parts', 'Full scores', 'Arrangements', 'Vocal scores', 'Other']) {
     const list = groups[g]; if (!list) continue;
