@@ -840,6 +840,8 @@ function setInking(on) {
   stage.classList.toggle('inking', on);
   closeInkPops(); clearSelection();
   if (on) {
+    // writing always shows the markings, even if they were hidden to see the clean score
+    if (stage.classList.contains('hide-ink')) { stage.classList.remove('hide-ink'); $('#hideInkBtn').classList.remove('on'); $('#hideInkBtn').setAttribute('aria-pressed', 'false'); }
     showChrome(true); hidePanel(); loadMusicFont(); sizeLive(); syncInkBar();
     inkHint(INK.finger ? 'Your finger writes. Two fingers zoom and move; swipe with two fingers to turn.' : 'The Pencil writes. Your finger turns pages, pinches to zoom and moves the page.');
   } else { $('#inkHint').hidden = true; clearLive(); }
@@ -912,6 +914,14 @@ let erasePopT;
 $$('#eraseMode button').forEach((b) => b.addEventListener('click', () => { INK.erase = b.dataset.mode; syncErasePop(); persistInk(); clearTimeout(erasePopT); erasePopT = setTimeout(() => { $('#erasePop').hidden = true; }, 1200); }));
 $('#fingerBtn').addEventListener('click', () => { INK.finger = !INK.finger; syncInkBar(); persistInk(); inkHint(INK.finger ? 'Finger writing on. Two fingers zoom; swipe with two fingers to turn.' : 'Finger writing off. The Pencil writes, your finger turns pages.'); });
 $('#inkBtn').addEventListener('click', () => setInking(!V.inking));
+// Hide the markings to see the clean score (the markings stay where they are)
+$('#hideInkBtn').addEventListener('click', () => {
+  const on = !stage.classList.contains('hide-ink');
+  stage.classList.toggle('hide-ink', on);
+  $('#hideInkBtn').classList.toggle('on', on);
+  $('#hideInkBtn').setAttribute('aria-pressed', String(on));
+  if (on && V.inking) setInking(false);
+});
 $('#inkDone').addEventListener('click', () => setInking(false));
 
 // ---------- undo (by page key, so it survives zooming, colour changes and page turns) ----------
@@ -1229,6 +1239,8 @@ stage.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'pen' || e.pointerType === 'mouse') {
     if (GS && GS.type === 'touch' && (GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase')) endInk(true);
     if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; }
+    // the Apple Pencil on a page opens the markings tools and starts writing straight away
+    if (e.pointerType === 'pen' && !V.inking && S.penOpens !== false && entryAt(e.clientX, e.clientY)) setInking(true);
     if (V.inking) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
     if (!V.inking || e.pointerType === 'mouse') startNav(e);
     return;
@@ -2954,14 +2966,14 @@ function winkSupported() { return !!(NATIVE && NATIVE.standFace && CAPS.face); }
 function sendFace() {
   if (!winkSupported()) return;
   const active = (S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing;
-  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.65, test: wink.testing });
+  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing });
   wink.on = !!active;
   $('#winkBadge').hidden = !(S.wink && !$('#score').hidden && active);
 }
 function syncWinkUI() {
   const ok = winkSupported();
   $('#winkRow').hidden = !ok; $('#winkNo').hidden = ok;
-  $('#winkOn').checked = !!S.wink; $('#winkSens').value = Math.round((S.winkSens || 0.65) * 100);
+  $('#winkOn').checked = !!S.wink; $('#winkSens').value = Math.round((S.winkSens || 0.7) * 100);
   $('#winkSwap').checked = !!S.winkSwap; $('#winkBody').hidden = !S.wink;
 }
 $('#winkOn').addEventListener('change', (e) => { S.wink = e.target.checked; saveSettings(); syncWinkUI(); sendFace(); });
@@ -2970,6 +2982,7 @@ $('#autoTurn').addEventListener('change', (e) => { S.autoTurn = +e.target.value;
 // Sound routing in the iPad app: the microphone is always the iPad's; the speaker can be forced.
 function sendAudio() { if (NATIVE && NATIVE.standAudio) NATIVE.standAudio.postMessage({ speaker: !!S.audioSpeaker }); }
 $('#audioSpeaker').addEventListener('change', (e) => { S.audioSpeaker = e.target.checked; saveSettings(); sendAudio(); });
+$('#penOpens').addEventListener('change', (e) => { S.penOpens = e.target.checked; saveSettings(); });
 $('#winkSwap').addEventListener('change', (e) => { S.winkSwap = e.target.checked; saveSettings(); });
 $('#winkTest').addEventListener('click', () => { wink.testing = !wink.testing; $('#winkTest').textContent = wink.testing ? 'Stop test' : 'Test'; $('#winkMeter').hidden = !wink.testing; sendFace(); });
 window.standFaceEvent = (ev) => {
@@ -3107,7 +3120,7 @@ renderReps();
     Object.assign(INK.pen, { size: (k.pen && k.pen.size) || 3, a: (k.pen && k.pen.a) || 1 }); Object.assign(INK.hl, k.hl || {}); Object.assign(INK.stampStyle, k.stampStyle || {}); Object.assign(INK.white, k.white || {});
   }
   syncInkBar();
-  $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio();
+  $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio(); $('#penOpens').checked = S.penOpens !== false;
   if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'organ', 'flute', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;

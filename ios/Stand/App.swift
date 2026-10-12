@@ -494,13 +494,14 @@ final class FaceTurner: NSObject, ARSessionDelegate {
             emit(["type": "levels", "l": Double(left), "r": Double(right)])
         }
         // Sensitivity 0...1 (higher = easier). At the default the closing eye needs to reach about
-        // 0.3 and be about 0.35 more closed than the other eye; at maximum about 0.2 and 0.25.
+        // 0.16 and be about 0.26 more closed than the other eye; at maximum about 0.11 and 0.19.
         let s = min(1, max(0, sensitivity))
-        let closedNeeded = 0.4 - 0.2 * s
-        let gapNeeded = 0.5 - 0.25 * s
+        let closedNeeded = 0.28 - 0.18 * s
+        let gapNeeded = 0.4 - 0.22 * s
         if locked {
-            // re-arm once both eyes are open again
-            if left < 0.2 && right < 0.2 { locked = false }
+            // re-arm once the eyes are back together (both open, or both the same) so a
+            // squinting or half-open eye never leaves the detector stuck
+            if (left < 0.22 && right < 0.22) || abs(left - right) < 0.08 { locked = false }
             return
         }
         var eye: String?

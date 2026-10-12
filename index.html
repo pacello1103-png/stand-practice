@@ -213,6 +213,8 @@
     <button class="ink-tool" id="inkColorBtn" aria-label="Colours, thickness and opacity"><svg><use href="#i-palette"/></svg></button>
     <span class="sep"></span>
     <button class="ink-tool" id="fingerBtn" aria-label="Write with finger"><svg><use href="#i-finger"/></svg></button>
+    <button class="ink-tool" id="hideInkBtn" aria-label="Hide markings to see the clean score" aria-pressed="false"><svg><use href="#i-eye"/></svg></button>
+    <span class="sep"></span>
     <button class="ink-tool" id="inkUndo" aria-label="Undo"><svg><use href="#i-undo"/></svg></button>
     <button class="ink-tool" id="inkRedo" aria-label="Redo"><svg class="flipx"><use href="#i-undo"/></svg></button>
     <button class="btn small primary" id="inkDone">Done</button>
@@ -610,13 +612,17 @@
       <label class="check"><input type="checkbox" id="audioSpeaker"> Play through the iPad speaker even when Bluetooth is connected</label>
     </section>
     <section class="sub-card">
+      <div class="sub-head"><div><h3>Writing</h3><p class="hint">With the Apple Pencil, touching a score opens the markings tools and starts writing at once. Finger gestures still turn pages.</p></div></div>
+      <label class="check"><input type="checkbox" id="penOpens"> Apple Pencil opens markings</label>
+    </section>
+    <section class="sub-card">
       <div class="sub-head">
         <div><h3>Turn pages by winking</h3><p class="hint">Wink your right eye for the next page, your left eye to go back. Normal blinks are ignored.</p></div>
         <label class="switch" id="winkRow"><input type="checkbox" id="winkOn"><span></span></label>
       </div>
       <p class="hint" id="winkNo">Available in the Stand app for iPad (it uses the front camera; nothing is recorded or saved).</p>
       <div class="sub-body" id="winkBody" hidden>
-        <div class="ctl"><div class="ctl-head"><span>Sensitivity</span></div><input type="range" id="winkSens" min="20" max="95" value="65"></div>
+        <div class="ctl"><div class="ctl-head"><span>Sensitivity</span></div><input type="range" id="winkSens" min="20" max="100" value="70"></div>
         <label class="check"><input type="checkbox" id="winkSwap"> Swap left and right</label>
         <div class="row-even"><button class="btn" id="winkTest">Test</button><span class="hint" id="winkLast"></span></div>
         <div class="eye-meter" id="winkMeter" hidden><div><span>Left eye</span><i id="eyeL"></i></div><div><span>Right eye</span><i id="eyeR"></i></div></div>
@@ -631,7 +637,7 @@
       </div>
       <input type="file" id="backupInput" hidden>
     </section>
-    <p class="hint center">Stand 1.6 · everything stays on this iPad</p>
+    <p class="hint center">Stand 1.6.1 · everything stays on this iPad</p>
   </div>
 </aside>
 
