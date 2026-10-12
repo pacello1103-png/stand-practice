@@ -262,193 +262,72 @@ export function itemHit(s, x, y, r, W, H) {
 }
 
 // ---------- smart eraser for the printed score ----------
-// Erases printed marks under a scribble (slurs and ties, dynamics, fingerings, marks in the score).
-// It never paints over staff lines, stems, barlines or noteheads. A mark that crosses a staff line
-// or a stem is followed through it, so the whole slur goes, and the line itself is left as it was.
-
-// Pixels of long straight runs in one direction (staff lines, stems, barlines).
-function markLongRuns(ink, W, H, minLen, horizontal, mark) {
-  const outer = horizontal ? H : W, inner = horizontal ? W : H;
-  for (let a = 0; a < outer; a++) {
-    let start = -1;
-    for (let b = 0; b <= inner; b++) {
-      const on = b < inner && ink[horizontal ? a * W + b : b * W + a];
-      if (on && start < 0) start = b;
-      if (!on && start >= 0) {
-        if (b - start >= minLen) for (let k = start; k < b; k++) mark[horizontal ? a * W + k : k * W + a] = 1;
-        start = -1;
-      }
-    }
-  }
-}
-// Grows a mask by r pixels in every direction.
-function grow(src, W, H, r) {
-  const out = new Uint8Array(src.length);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    if (!src[y * W + x]) continue;
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      const nx = x + dx, ny = y + dy;
-      if (nx >= 0 && ny >= 0 && nx < W && ny < H) out[ny * W + nx] = 1;
-    }
-  }
-  return out;
-}
-// Distance from each ink pixel to the nearest paper pixel (chamfer 3-4): thick shapes have large values.
-function thickness(ink, W, H) {
-  const INF = 1e9, d = new Float32Array(W * H);
-  for (let i = 0; i < W * H; i++) d[i] = ink[i] ? INF : 0;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x; if (!d[i]) continue;
-    let v = d[i];
-    if (x > 0) v = Math.min(v, d[i - 1] + 3);
-    if (y > 0) { v = Math.min(v, d[i - W] + 3); if (x > 0) v = Math.min(v, d[i - W - 1] + 4); if (x < W - 1) v = Math.min(v, d[i - W + 1] + 4); }
-    d[i] = v;
-  }
-  for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
-    const i = y * W + x; if (!d[i]) continue;
-    let v = d[i];
-    if (x < W - 1) v = Math.min(v, d[i + 1] + 3);
-    if (y < H - 1) { v = Math.min(v, d[i + W] + 3); if (x < W - 1) v = Math.min(v, d[i + W + 1] + 4); if (x > 0) v = Math.min(v, d[i + W - 1] + 4); }
-    d[i] = v;
-  }
-  for (let i = 0; i < W * H; i++) d[i] /= 3;
-  return d;
-}
-// Staff spacing in pixels, from the staff lines (median gap between neighbouring lines).
-function staffSpace(staffCore, W, H) {
-  const rows = [];
-  for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x++) n += staffCore[y * W + x]; if (n > W * 0.05) rows.push(y); }
-  const centres = []; let run = [];
-  for (const y of rows) { if (run.length && y - run[run.length - 1] > 1) { centres.push(run.reduce((a, b) => a + b) / run.length); run = []; } run.push(y); }
-  if (run.length) centres.push(run.reduce((a, b) => a + b) / run.length);
-  const gaps = [];
-  for (let i = 1; i < centres.length; i++) { const g = centres[i] - centres[i - 1]; if (g >= 3 && g <= H * 0.2) gaps.push(g); }
-  if (!gaps.length) return 16;
-  gaps.sort((a, b) => a - b);
-  return gaps[gaps.length >> 1];
-}
-
+// Finds the printed shapes under a scribble (connected dark pixels) and returns a mask item
+// that covers exactly those shapes. Shapes connected to staff lines or large note groups are
+// left alone, so the music itself is never erased by accident.
 export function smartMask(art, stroke) {
-  const W = art.width, H = art.height, N = W * H;
-  const img = art.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-  const ink = new Uint8Array(N);
-  for (let i = 0; i < N; i++) { const o = i * 4; ink[i] = img[o] + img[o + 1] + img[o + 2] < 3 * 170 ? 1 : 0; }
-
-  // 1) the score's own lines: staff lines and stems/barlines. Their core pixels are never painted.
-  const staffCore = new Uint8Array(N), stemCore = new Uint8Array(N);
-  markLongRuns(ink, W, H, Math.round(W * 0.08), true, staffCore);
-  const G = staffSpace(staffCore, W, H);
-  markLongRuns(ink, W, H, Math.max(10, Math.round(G * 0.8)), false, stemCore);
-  const lineCore = grow(staffCore.map((v, i) => v | stemCore[i]), W, H, 1);
-
-  // 2) solid shapes: noteheads, clefs, heavy marks. Thin slurs are far thinner than a notehead.
-  const dt = thickness(ink, W, H);
-  const thick = new Uint8Array(N);
-  for (let i = 0; i < N; i++) thick[i] = dt[i] >= Math.max(2.2, G * 0.16) ? 1 : 0;
-  const solid = grow(thick, W, H, 2);
-  const nearSolid = grow(thick, W, H, 3);
-
-  // 3) pixels the eraser may take: printed ink that is not a score line and not next to a solid shape.
-  //    A line pixel is only used to cross from one side of a mark to the other.
-  const free = new Uint8Array(N), crossing = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    if (!ink[i] || nearSolid[i]) continue;
-    if (lineCore[i]) crossing[i] = 1; else free[i] = 1;
-  }
-  // a line pixel joins the search only if printed ink lies on both sides of it, across the line
-  // (above and below a staff line, left and right of a stem); the slope of the mark does not matter
-  const usable = new Uint8Array(N);
-  const anyFree = (x0, x1, y0, y1) => {
-    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) if (free[y * W + x]) return true;
-    return false;
-  };
-  for (let i = 0; i < N; i++) {
-    if (free[i]) { usable[i] = 1; continue; }
-    if (!crossing[i]) continue;
-    const x = i % W, y = (i / W) | 0;
-    const acrossLine = staffCore[i] && anyFree(x - 2, x + 2, y - 7, y - 1) && anyFree(x - 2, x + 2, y + 1, y + 7);
-    const acrossStem = stemCore[i] && anyFree(x - 7, x - 1, y - 2, y + 2) && anyFree(x + 1, x + 7, y - 2, y + 2);
-    if (acrossLine || acrossStem) usable[i] = 1;
-  }
-
-  // 4) seeds: the scribble, snapped to the nearest printed pixel within a few px
-  const seen = new Uint8Array(N);
-  const maxPx = N * 0.01, maxW = W * 0.6, maxH = H * 0.25;
+  const W = art.width, H = art.height;
+  const g = art.getContext('2d', { willReadFrequently: true });
+  const img = g.getImageData(0, 0, W, H).data;
+  const dark = (i) => { const o = i * 4; return img[o] + img[o + 1] + img[o + 2] < 3 * 175; };
+  const maxW = W * 0.34, maxH = H * 0.055, maxPx = W * H * 0.006;
+  const seen = new Uint8Array(W * H);
   const accepted = [];
-  let rejected = 0;
+  let bx0 = W, by0 = H, bx1 = 0, by1 = 0, rejected = 0;
+  const seeds = [];
   for (let i = 0; i < stroke.length; i++) {
     const [px, py] = stroke[i];
     const steps = i ? Math.ceil(Math.hypot((px - stroke[i - 1][0]) * W, (py - stroke[i - 1][1]) * H) / 2) : 1;
     for (let k = 0; k < steps; k++) {
       const t = steps === 1 ? 1 : k / steps;
-      const sx = Math.round((i ? stroke[i - 1][0] + (px - stroke[i - 1][0]) * t : px) * W);
-      const sy = Math.round((i ? stroke[i - 1][1] + (py - stroke[i - 1][1]) * t : py) * H);
-      if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
-      let s0 = -1, bd = 5;
-      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
-        const nx = sx + dx, ny = sy + dy;
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-        const n = ny * W + nx, d = Math.hypot(dx, dy);
-        if (free[n] && d < bd) { bd = d; s0 = n; }
-      }
-      if (s0 < 0) {
-        // the scribble is on a note or a line only: nothing is erased there
-        if (ink[sy * W + sx] && (thick[sy * W + sx] || lineCore[sy * W + sx])) rejected++;
-        continue;
-      }
-      if (seen[s0]) continue;
-      // 5) follow the printed mark through its neighbours, across lines where it crosses them
-      const stack = [s0]; const comp = []; seen[s0] = 1;
-      let x0 = s0 % W, x1 = x0, y0 = (s0 / W) | 0, y1 = y0, ok = true;
-      while (stack.length) {
-        const j = stack.pop(); comp.push(j);
-        const x = j % W, y = (j / W) | 0;
-        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-        if (x1 - x0 > maxW || y1 - y0 > maxH || comp.length > maxPx) { ok = false; break; }
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          if (!dx && !dy) continue;
-          const nx = x + dx, ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-          const n = ny * W + nx;
-          if (!seen[n] && usable[n]) { seen[n] = 1; stack.push(n); }
-        }
-      }
-      if (!ok) { rejected++; continue; }
-      accepted.push({ comp, x0, y0, x1, y1 });
+      const x = Math.round((i ? stroke[i - 1][0] + (px - stroke[i - 1][0]) * t : px) * W);
+      const y = Math.round((i ? stroke[i - 1][1] + (py - stroke[i - 1][1]) * t : py) * H);
+      for (let oy = -3; oy <= 3; oy += 3) for (let ox = -3; ox <= 3; ox += 3) seeds.push([x + ox, y + oy]);
     }
   }
-  if (!accepted.length) return { item: null, rejected };
-
-  // 6) paint: only the marks found, never a score line, a solid shape, or ink next to one
-  const mark = new Uint8Array(N);
-  let bx0 = W, by0 = H, bx1 = 0, by1 = 0;
-  for (const a of accepted) {
-    for (const j of a.comp) mark[j] = 1;
-    if (a.x0 < bx0) bx0 = a.x0; if (a.y0 < by0) by0 = a.y0; if (a.x1 > bx1) bx1 = a.x1; if (a.y1 > by1) by1 = a.y1;
+  for (const [sx, sy] of seeds) {
+    if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+    const s0 = sy * W + sx;
+    if (seen[s0] || !dark(s0)) continue;
+    // flood fill with limits
+    const stack = [s0]; const comp = []; seen[s0] = 1;
+    let x0 = sx, x1 = sx, y0 = sy, y1 = sy, ok = true;
+    while (stack.length) {
+      const i = stack.pop(); comp.push(i);
+      const x = i % W, y = (i / W) | 0;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x1 - x0 > maxW || y1 - y0 > maxH || comp.length > maxPx) { ok = false; }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const j = ny * W + nx;
+        if (!seen[j] && dark(j)) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    // long thin horizontal shapes are staff lines; never erase them
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (!ok || (w > W * 0.25 && h < 6)) { rejected++; continue; }
+    accepted.push(comp);
+    if (x0 < bx0) bx0 = x0; if (y0 < by0) by0 = y0; if (x1 > bx1) bx1 = x1; if (y1 > by1) by1 = y1;
   }
+  if (!accepted.length) return { item: null, rejected };
   const pad = 3;
-  const px0 = Math.max(0, bx0 - pad), py0 = Math.max(0, by0 - pad), px1 = Math.min(W - 1, bx1 + pad), py1 = Math.min(H - 1, by1 + pad);
-  const mw = px1 - px0 + 1, mh = py1 - py0 + 1;
+  bx0 = Math.max(0, bx0 - pad); by0 = Math.max(0, by0 - pad); bx1 = Math.min(W - 1, bx1 + pad); by1 = Math.min(H - 1, by1 + pad);
+  const mw = bx1 - bx0 + 1, mh = by1 - by0 + 1;
   const mc = document.createElement('canvas'); mc.width = mw; mc.height = mh;
   const mg = mc.getContext('2d');
   const md = mg.createImageData(mw, mh);
-  const paintable = (j) => !lineCore[j] && !nearSolid[j];
-  let count = 0;
-  for (let y = py0; y <= py1; y++) for (let x = px0; x <= px1; x++) {
-    const j = y * W + x;
-    if (!paintable(j)) continue;
-    let hit = false;
-    for (let dy = -2; dy <= 2 && !hit; dy++) for (let dx = -2; dx <= 2 && !hit; dx++) {
+  // dilate by 2 px so anti-aliased edges disappear too
+  for (const comp of accepted) for (const i of comp) {
+    const x = (i % W) - bx0, y = ((i / W) | 0) - by0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       const nx = x + dx, ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-      if (mark[ny * W + nx]) hit = true;
+      if (nx < 0 || ny < 0 || nx >= mw || ny >= mh) continue;
+      md.data[(ny * mw + nx) * 4 + 3] = 255;
     }
-    if (!hit) continue;
-    md.data[((y - py0) * mw + (x - px0)) * 4 + 3] = 255; count++;
   }
   mg.putImageData(md, 0, 0);
-  if (!count) return { item: null, rejected };
-  return { item: { t: 'mask', x: px0 / W, y: py0 / H, w: mw / W, h: mh / H, d: mc.toDataURL('image/png') }, rejected, count: accepted.length };
+  return { item: { t: 'mask', x: bx0 / W, y: by0 / H, w: mw / W, h: mh / H, d: mc.toDataURL('image/png') }, rejected, count: accepted.length };
 }
 
 export class InkLayer {
