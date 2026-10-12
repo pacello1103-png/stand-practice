@@ -38,12 +38,16 @@ document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = tru
 // Settings
 // =====================================================================
 const S = {
-  ref: 442, twoUp: true, onePage: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
+  ref: 442, twoUp: true, onePage: false, landscapeLock: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
   room: 'studio', wet: 0.18, autoLevel: true, sort: 'recent', flash: false,
   instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
-async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); }
+async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); applyOrientation(); }
+// Lock the whole app sideways, so a landscape score reads the right way up while the iPad is held upright.
+function applyOrientation() {
+  try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: S.landscapeLock ? 'landscape' : 'auto' }); } catch { /* not on the iPad */ }
+}
 let saveT; function saveSettings() { clearTimeout(saveT); saveT = setTimeout(() => setSetting('settings', S), 300); }
 
 // =====================================================================
@@ -1618,7 +1622,7 @@ $('#trimMargins').addEventListener('change', (e) => setTrim(e.target.checked));
 function fillScoreSettings() {
   if (!V.score) return;
   $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || '';
-  $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
+  $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#landscapeLock').checked = !!S.landscapeLock; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
   renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
   $$('#paperSeg button').forEach((b) => b.classList.toggle('on', b.dataset.paper === S.paper));
   db.byIndex('takes', 'score', V.score.id).then((t) => {
@@ -1640,6 +1644,7 @@ $('#metaTitle').addEventListener('change', saveScoreMeta);
 $('#metaComposer').addEventListener('change', saveScoreMeta);
 $('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; saveSettings(); clearCache(); layout(); });
 $('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; saveSettings(); clearCache(); layout(); });
+$('#landscapeLock').addEventListener('change', (e) => { S.landscapeLock = e.target.checked; saveSettings(); applyOrientation(); });
 $('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; saveSettings(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
   S.paper = b.dataset.paper; saveSettings(); $('#score').dataset.paper = S.paper;

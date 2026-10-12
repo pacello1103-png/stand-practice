@@ -18,6 +18,9 @@ let incomingDir: URL = {
 }()
 
 @main
+// Set from the page: nil follows the iPad, .landscape keeps the app sideways.
+var orientationLock: UIInterfaceOrientationMask? = nil
+
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
@@ -128,7 +131,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation"] {
             config.userContentController.add(self, name: name)
         }
         let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true };"
@@ -187,7 +190,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     }
 
     override var prefersHomeIndicatorAutoHidden: Bool { true }
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .all }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { orientationLock ?? .all }
 
     // MARK: talking to the page
     private func send(_ function: String, _ payload: [String: Any]) {
@@ -254,6 +257,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             if let p = body["path"] as? String, p.hasPrefix("/__incoming/") {
                 try? FileManager.default.removeItem(at: incomingDir.appendingPathComponent(String(p.dropFirst("/__incoming/".count))))
             }
+        case "standOrientation":
+            // "landscape" keeps the whole app sideways; "auto" lets it follow the iPad again
+            orientationLock = (body["lock"] as? String) == "landscape" ? .landscape : nil
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+            UIViewController.attemptRotationToDeviceOrientation()
         case "standFace":
             face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.65)
             face.test = body["test"] as? Bool ?? false
