@@ -38,7 +38,7 @@ document.addEventListener('pointerdown', () => { if (!unlocked) { unlocked = tru
 // Settings
 // =====================================================================
 const S = {
-  ref: 442, twoUp: true, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
+  ref: 442, twoUp: true, onePage: false, halfTurn: false, paper: 'white', countIn: true, clickWhileRec: false, cam: 'user',
   room: 'studio', wet: 0.18, autoLevel: true, sort: 'recent', flash: false,
   instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
@@ -702,7 +702,8 @@ function freePages() { for (const p of V.pages) if (p.ink) { p.ink.width = 0; p.
 
 function spreadSize() {
   const r = stage.getBoundingClientRect();
-  return S.twoUp && r.width > r.height * 1.05 && V.doc && V.doc.pages > 1 ? 2 : 1;
+  // One page at a time: forced by the setting; otherwise two pages only when the iPad is landscape.
+  return !S.onePage && S.twoUp && r.width > r.height * 1.05 && V.doc && V.doc.pages > 1 ? 2 : 1;
 }
 function cropOf() { return V.crop || { x: 0, y: 0, w: 1, h: 1 }; }
 // Size on screen of each page box (cropped when trimming margins).
@@ -1617,7 +1618,7 @@ $('#trimMargins').addEventListener('change', (e) => setTrim(e.target.checked));
 function fillScoreSettings() {
   if (!V.score) return;
   $('#metaTitle').value = V.score.title; $('#metaComposer').value = V.score.composer || '';
-  $('#twoUp').checked = S.twoUp; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
+  $('#twoUp').checked = S.twoUp; $('#onePage').checked = S.onePage; $('#halfTurn').checked = S.halfTurn; $('#trimMargins').checked = !!V.score.trim;
   renderBookmarks(); renderJumps(); $('#paperTools').hidden = !(V.file && V.file.kind === 'paper');
   $$('#paperSeg button').forEach((b) => b.classList.toggle('on', b.dataset.paper === S.paper));
   db.byIndex('takes', 'score', V.score.id).then((t) => {
@@ -1638,6 +1639,7 @@ function saveScoreMeta() {
 $('#metaTitle').addEventListener('change', saveScoreMeta);
 $('#metaComposer').addEventListener('change', saveScoreMeta);
 $('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; saveSettings(); clearCache(); layout(); });
+$('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; saveSettings(); clearCache(); layout(); });
 $('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; saveSettings(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
   S.paper = b.dataset.paper; saveSettings(); $('#score').dataset.paper = S.paper;
