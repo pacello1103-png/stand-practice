@@ -12,6 +12,7 @@ A practice app for musicians that runs on iPad (and any modern browser) and work
 - **Folders** – organise scores into folders such as Etudes, Pieces or Orchestra. Move several scores at once from Select.
 - **Cut recordings** – keep only a selected part of a recording, or remove it and join the rest. Audio and video both work.
 - **Count-in** – one bar of 4 3 2 1 and clicks before the scale starts.
+- **Practice timer** – play and rest in rounds. Presets 25/5, 45/15 and 60/20 (short focused blocks with rest, as deliberate-practice research suggests), or your own times. A small pill shows the time while it runs; play time counts in the practice tracker.
 - **Tap the stand** – a firm knock on the iPad or its stand turns to the next page (off by default; Settings).
 - **Passages** – see the Passages entry below.
 - **Practice tracker** – daily goal, streak, week/month/year charts, time per piece, notes per day, an 18-week calendar.

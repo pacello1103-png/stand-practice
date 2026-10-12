@@ -12,6 +12,7 @@ import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassag
 import { exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
+import * as P from './pomodoro.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -1678,7 +1679,7 @@ const practice = {
   scoreOpened(id) { this.flush(); this.scoreId = id; this.lastTick = Date.now(); },
   scoreClosed() { this.flush(); this.scoreId = null; },
   toolsActive() {
-    try { return metro.running || drone.running || scale.playing || tuner.running || !!recState || player.playing || !ref.paused; } catch { return false; }
+    try { return metro.running || drone.running || scale.playing || tuner.running || !!recState || player.playing || !ref.paused || (P.pomo.running && P.pomo.phase === 'work'); } catch { return false; }
   },
   flush() {
     const t = Date.now(), dt = Math.min(60, (t - this.lastTick) / 1000); this.lastTick = t;
@@ -3316,3 +3317,55 @@ renderReps();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
+
+// =====================================================================
+// Practice timer
+// =====================================================================
+function drawPomo() {
+  const p = P.pomo, idle = p.phase === 'idle';
+  const word = p.phase === 'rest' ? 'Rest' : 'Play';
+  const setText = (sel, t) => { const n = $(sel); if (n.textContent !== t) n.textContent = t; };
+  setText('#pomoTime', P.fmt(idle ? p.work * 60000 : P.remaining()));
+  setText('#pomoPhase', idle ? 'Ready' : `${word} · round ${p.round} of ${p.rounds}`);
+  setText('#pomoPlayBtn span', idle ? 'Start' : 'Resume');
+  $('#pomoPlayBtn').hidden = p.running;
+  $('#pomoPauseBtn').hidden = !p.running;
+  $('#pomoStopBtn').hidden = idle;
+  $('#pomoPill').hidden = idle;
+  setText('#pomoPillTime', P.fmt(P.remaining()));
+  setText('#pomoPillPhase', word);
+  const pillBtn = $('#pomoPillToggle');
+  const icon = p.running ? 'i-pause' : 'i-play';
+  if (pillBtn.dataset.icon !== icon) { pillBtn.dataset.icon = icon; pillBtn.innerHTML = `<svg><use href="#${icon}"/></svg>`; }
+  pillBtn.setAttribute('aria-label', p.running ? 'Pause' : 'Resume');
+  $$('#pomoPresets button').forEach((b) => b.classList.toggle('on', b.dataset.p === p.preset));
+  $('#pomoCustom').hidden = p.preset !== 'custom';
+  $$('#panel-pomodoro .pomo-set, #pomoPresets button').forEach((n) => { n.disabled = !idle; });
+  setText('#pomoNote', p.preset === 'custom' ? 'Your own times. Play time counts in your practice tracker.' : P.PRESETS[p.preset].text + ' Play time counts in your practice tracker.');
+  if (document.activeElement !== $('#pomoWork')) $('#pomoWork').value = p.work;
+  if (document.activeElement !== $('#pomoRest')) $('#pomoRest').value = p.rest;
+  $('#pomoRounds').value = String(p.rounds);
+  $('#pomoChime').checked = p.chime;
+}
+function pomoChanged() { P.pomoSave(); drawPomo(); }
+$('#pomoPlayBtn').addEventListener('click', () => P.start());
+$('#pomoPauseBtn').addEventListener('click', () => P.pause());
+$('#pomoStopBtn').addEventListener('click', () => P.stop());
+$('#pomoPillToggle').addEventListener('click', () => P.toggle());
+$$('#pomoPresets button').forEach((b) => b.addEventListener('click', () => {
+  const k = b.dataset.p, p = P.pomo;
+  if (k !== 'custom') { p.work = P.PRESETS[k].work; p.rest = P.PRESETS[k].rest; }
+  p.preset = k; pomoChanged();
+}));
+function pomoField(sel, key, min, max) {
+  $(sel).addEventListener('change', (e) => {
+    const v = Math.round(+e.target.value);
+    P.pomo[key] = Math.min(max, Math.max(min, Number.isFinite(v) ? v : P.pomo[key]));
+    P.pomo.preset = 'custom'; pomoChanged();
+  });
+}
+pomoField('#pomoWork', 'work', 1, 180);
+pomoField('#pomoRest', 'rest', 1, 60);
+$('#pomoRounds').addEventListener('change', (e) => { P.pomo.rounds = +e.target.value; pomoChanged(); });
+$('#pomoChime').addEventListener('change', (e) => { P.pomo.chime = e.target.checked; pomoChanged(); });
+P.initPomodoro({ toast, draw: drawPomo });

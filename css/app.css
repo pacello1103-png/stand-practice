@@ -738,3 +738,12 @@ input[type=search]::-webkit-search-cancel-button, input[type=search]::-webkit-se
 .rev-crop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding-top: 8px; }
 .rev-crop-grid input { width: 100%; }
 body.reviewing .tb-tools, body.reviewing #library { visibility: hidden; }
+
+/* Practice timer */
+.pomo-face { text-align: center; padding: 14px 0 6px; }
+.pomo-time { font-size: 64px; font-weight: 600; letter-spacing: -1px; line-height: 1; }
+.pomo-phase { margin-top: 8px; color: var(--muted); font-size: 15px; }
+.pomo-ctl { display: flex; gap: 10px; justify-content: center; margin: 14px 0; }
+.pomo-ctl .btn { min-width: 120px; }
+.pomo-set:disabled { opacity: .45; }
+.pomo-custom { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

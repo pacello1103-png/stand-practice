@@ -31,6 +31,34 @@ const SYN = {
 };
 const norm = (w) => SYN[w] || w;
 
+// Music words that are never taken for a composer's name when a word is mistyped.
+const MUSIC = new Set([...Object.keys(SYN), ...Object.values(SYN), 'suite', 'sonata', 'concerto', 'prelude', 'fugue', 'fantasia', 'fantasy',
+  'dance', 'march', 'mass', 'opera', 'song', 'quartet', 'quintet', 'trio', 'duet', 'nocturne', 'waltz', 'polonaise', 'mazurka', 'rhapsody',
+  'serenade', 'overture', 'symphony', 'minuet', 'gavotte', 'allemande', 'sarabande', 'courante', 'gigue', 'bouree', 'elegy', 'ballade',
+  'scherzo', 'rondo', 'capriccio', 'toccata', 'chaconne', 'passacaglia', 'impromptu', 'barcarolle', 'sinfonia', 'cantata', 'requiem',
+  'piano', 'violin', 'viola', 'flute', 'cello', 'organ', 'harp', 'guitar', 'orchestra', 'solo', 'sextet', 'octet', 'maria', 'swan',
+  'piece', 'pieces', 'book', 'books', 'collection', 'the', 'and']);
+
+// How many single-letter mistakes separate two words (stops early past the cap).
+// A swapped pair of letters ("mozrat") counts as one mistake.
+function edits(a, b, cap) {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  const d = [];
+  for (let i = 0; i <= a.length; i++) { d[i] = [i]; }
+  for (let j = 0; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+// Allowed mistakes grow with the word: none for short words, one for 4 to 7 letters, two for longer.
+const typoCap = (w) => (w.length >= 8 ? 2 : w.length >= 4 ? 1 : 0);
+const near = (w, x) => { const cap = typoCap(w); return cap > 0 && edits(w, x, cap) <= cap; };
+
 let composers = null;
 export async function loadComposers() {
   if (!composers) composers = await fetch(new URL('./composers.json', import.meta.url)).then((r) => r.json());
@@ -51,8 +79,21 @@ export async function parseQuery(q) {
     }
   }
   let rest = f;
+  // A composer's name with a typo ("bahc", "fauree"): take the closest surname, if it is not a music word.
+  let typo = null;
+  if (!best) {
+    let fz = -Infinity;
+    for (const t of f.trim().split(' ')) {
+      if (t.length < 5 || MUSIC.has(t) || STOP.has(t)) continue;
+      for (const c of list) for (const k of c.k) {
+        if (k.includes(' ') || !near(t, k)) continue;
+        const score = c.p * 2 - edits(t, k, 2);
+        if (score > fz) { fz = score; best = c; bestKey = k; typo = t; }
+      }
+    }
+  }
   if (best) {
-    rest = rest.replace(' ' + bestKey + ' ', ' ');
+    rest = rest.replace(' ' + (typo || bestKey) + ' ', ' ');
     for (const g of best.g) rest = rest.replace(' ' + g + ' ', ' ');
     rest = rest.replace(/ (j s|js|cpe|w a|wa) /g, ' ');
   }
@@ -94,6 +135,7 @@ function scoreTitle(title, words) {
     n += weight;
     if (tset.has(w)) { s += weight; continue; }
     if (w.length >= 3 && tw.some((x) => x.startsWith(w) || (x.length >= 4 && w.startsWith(x)))) { s += weight * 0.75; continue; }
+    if (tw.some((x) => near(w, x))) { s += weight * 0.6; continue; }
     if (w === 'cello' && tw.some((x) => x.includes('cell'))) { s += weight; continue; }
   }
   return s / n;
@@ -112,7 +154,7 @@ export async function searchWorks(q) {
     results = works.map((t) => ({ title: t, score: scoreTitle(t, pq.words) - fold(t).length / 2000 }))
       .filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 30);
   }
-  if (!pq.composer || results.length === 0) {
+  if (!pq.composer || results.length < 3) {
     const extra = await nativeSearch(q).catch(() => []);
     const seen = new Set(results.map((r) => r.title));
     for (const t of extra) if (!seen.has(t)) { seen.add(t); results.push({ title: t, score: 0.2 }); }
