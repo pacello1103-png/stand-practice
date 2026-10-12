@@ -2,6 +2,7 @@ import UIKit
 import WebKit
 import AVFoundation
 import ARKit
+import CoreMotion
 import VisionKit
 
 // Stand for iPad: a native shell around the web app in ../www.
@@ -118,6 +119,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private var pageReady = false
     private var pending: [[String: Any]] = []
     private let face = FaceTurner()
+    private let tapper = StandTapper()
     private let video = NativeVideo()
 
     override func loadView() {
@@ -126,10 +128,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standScan", "standVideo", "standAudio"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true, audio: true };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(VNDocumentCameraViewController.isSupported), video: true, pencil: true, audio: true };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -145,6 +147,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         view = webView
 
         face.onEvent = { [weak self] event in self?.send("standFaceEvent", event) }
+        tapper.onEvent = { [weak self] event in self?.send("standTapEvent", event) }
         video.onEvent = { [weak self] event in self?.send("standVideoEvent", event) }
         // Apple Pencil double-tap (and squeeze on Pencil Pro) switches to the eraser and back.
         let pencil = UIPencilInteraction()
@@ -255,6 +258,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             face.sensitivity = Float(body["sensitivity"] as? Double ?? 0.65)
             face.test = body["test"] as? Bool ?? false
             if body["on"] as? Bool == true { face.start() } else { face.stop() }
+        case "standTap":
+            tapper.sensitivity = body["sensitivity"] as? Double ?? 0.6
+            if body["on"] as? Bool == true { tapper.start() } else { tapper.stop() }
         case "standAudio":
             standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
         case "standScan":
@@ -441,6 +447,65 @@ final class IMSLPBrowser: UIViewController, WKNavigationDelegate, WKUIDelegate, 
 // MARK: - Turning pages by winking
 // Uses ARKit face tracking (front camera, nothing is recorded). A wink is one eye closed while
 // the other stays open for a short moment; a normal blink closes both and is ignored.
+// MARK: - Tap on the stand
+// A firm, short knock on the iPad or its music stand turns to the next page. The sound of playing
+// and the steady vibration of bowing are ignored: a tap must be a sharp spike that is quiet
+// both just before it and just after it.
+final class StandTapper: NSObject {
+    static var supported: Bool { CMMotionManager().isDeviceMotionAvailable }
+    var onEvent: (([String: Any]) -> Void)?
+    var sensitivity: Double = 0.6      // 0 (firm taps only) ... 1 (light taps)
+    private(set) var running = false
+    private let motion = CMMotionManager()
+    private let queue: OperationQueue = {
+        let q = OperationQueue()
+        q.maxConcurrentOperationCount = 1
+        q.name = "stand.tap"
+        return q
+    }()
+    private var history: [(t: TimeInterval, m: Double)] = []
+    private var pending: TimeInterval?
+    private var lastTap: TimeInterval = 0
+
+    func start() {
+        guard Self.supported, !running else { return }
+        motion.deviceMotionUpdateInterval = 1.0 / 100
+        history.removeAll(); pending = nil
+        motion.startDeviceMotionUpdates(to: queue) { [weak self] data, _ in
+            guard let self = self, let a = data?.userAcceleration else { return }
+            self.process(sqrt(a.x * a.x + a.y * a.y + a.z * a.z), CACurrentMediaTime())
+        }
+        running = true
+    }
+    func stop() {
+        guard running else { return }
+        motion.stopDeviceMotionUpdates()
+        running = false
+        queue.addOperation { [weak self] in self?.history.removeAll(); self?.pending = nil }
+    }
+
+    // Runs on the motion queue, about 100 times a second.
+    private func process(_ m: Double, _ now: TimeInterval) {
+        history.append((now, m))
+        history.removeAll { now - $0.t > 0.6 }
+        let s = min(1, max(0, sensitivity))
+        let threshold = 0.9 - 0.55 * s          // in g
+        if pending == nil, m >= threshold, now - lastTap > 0.6 { pending = now }
+        guard let p = pending, now - p >= 0.15 else { return }
+        pending = nil
+        // quiet before the knock, and the knock dies away quickly
+        let before = history.filter { $0.t < p - 0.03 && $0.t >= p - 0.3 }.map { $0.m }
+        let after = history.filter { $0.t > p + 0.02 }.map { $0.m }
+        guard !after.isEmpty else { return }
+        let avgBefore = before.isEmpty ? 0 : before.reduce(0, +) / Double(before.count)
+        let avgAfter = after.reduce(0, +) / Double(after.count)
+        if avgBefore < threshold * 0.2, avgAfter < threshold * 0.45 {
+            lastTap = now
+            DispatchQueue.main.async { self.onEvent?(["type": "tap"]) }
+        }
+    }
+}
+
 final class FaceTurner: NSObject, ARSessionDelegate {
     static var supported: Bool { ARFaceTrackingConfiguration.isSupported }
     private let session = ARSession()

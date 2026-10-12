@@ -9,6 +9,11 @@ A practice app for musicians that runs on iPad (and any modern browser) and work
 - **Notebook paper** – staves for every clef and ensemble, guitar tab, lined, dotted, grid and plain.
 - **Listen** – choose the performer and open the piece on YouTube, Spotify or Apple Music; save the recordings you like; add an audio file to a score and play along with it, slower without pitch change and with an A–B loop.
 - **Passages** – select a part of the score with the Select tool, name it and choose its type (melodic, technical, shift, rhythm, bowing and breath). Log the tempo each session to see progress from start to target, with a short "what you have missed" box.
+- **Folders** – organise scores into folders such as Etudes, Pieces or Orchestra. Move several scores at once from Select.
+- **Cut recordings** – keep only a selected part of a recording, or remove it and join the rest. Audio and video both work.
+- **Count-in** – one bar of 4 3 2 1 and clicks before the scale starts.
+- **Tap the stand** – a firm knock on the iPad or its stand turns to the next page (off by default; Settings).
+- **Passages** – see the Passages entry below.
 - **Practice tracker** – daily goal, streak, week/month/year charts, time per piece, notes per day, an 18-week calendar.
 - **Metronome** – accents, subdivisions, compound meters, tap tempo, smooth or stepped speed trainer, silent bars.
 - **Tuner** – stable and precise, with intonation trace, equal / just / Pythagorean targets, and **Your intonation**: a map of which notes you tend to play sharp or flat.

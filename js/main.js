@@ -10,6 +10,7 @@ import { openDocument, makeThumb, readScoreInfo, findSplit, PAPERS, mapDoc, cont
 import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages } from './passages.js';
 import { exportPdf } from './export.js';
+import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { searchWorks, workFiles, rankFiles, splitTitle, fileUrl, workUrl, loadComposers } from './imslp.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -67,6 +68,7 @@ function hidePanel() {
   if (openPanel === 'settings') saveScoreMeta();
   if (openPanel === 'tuner') pauseHarmonicListening();
   if (openPanel === 'app' && wink.testing) { wink.testing = false; $('#winkTest').textContent = 'Test'; $('#winkMeter').hidden = true; sendFace(); }
+  if (openPanel === 'app' && tapTest.on) { tapTest.on = false; $('#tapTest').textContent = 'Test'; $('#tapLast').textContent = ''; sendTap(); }
   openPanel = null;
 }
 document.addEventListener('click', (e) => {
@@ -106,7 +108,11 @@ async function refreshLibrary() {
 }
 function renderGrid() {
   const q = $('#searchInput').value.trim().toLowerCase();
-  const list = scores.filter((s) => !q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q));
+  // inside a folder the library shows only its scores; a search looks through every score
+  if (FOLD.current && !folderOf(FOLD.current)) FOLD.current = null;
+  const inFolder = !q && FOLD.current ? FOLD.current : null;
+  const list = scores.filter((s) => (!q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q))
+    && (q || (inFolder ? s.folder === inFolder : !s.folder)));
   const by = S.sort;
   list.sort((a, b) => by === 'title' ? a.title.localeCompare(b.title)
     : by === 'composer' ? (a.composer || '~').localeCompare(b.composer || '~') || a.title.localeCompare(b.title)
@@ -114,6 +120,9 @@ function renderGrid() {
   const grid = $('#grid'); grid.textContent = '';
   $('#emptyLib').hidden = scores.length > 0;
   $('.lib-bar').hidden = scores.length === 0;
+  $('#folderBar').hidden = !inFolder;
+  if (inFolder) $('#folderTitle').textContent = folderOf(inFolder).name;
+  if (!q && !inFolder) for (const f of [...FOLD.list].sort((a, b) => a.name.localeCompare(b.name))) grid.append(folderCard(f));
   for (const s of list) {
     const b = el('button', 'card');
     const th = el('div', 'thumb');
@@ -138,6 +147,90 @@ function renderGrid() {
     grid.append(b);
   }
 }
+// ---------- folders in the library (Etudes, Pieces, Orchestra...) ----------
+// Folders are a single level, kept in settings. A score belongs to one folder or to the library.
+const FOLD = { list: [], current: null };
+const FP = { mode: 'new', id: null, armed: false };
+const FOLDER_IDEAS = ['Etudes', 'Pieces', 'Orchestra', 'Concertos', 'Chamber music', 'Exams'];
+async function loadFolders() { FOLD.list = (await getSetting('folders', [])) || []; }
+const saveFolders = () => setSetting('folders', FOLD.list);
+const folderOf = (id) => FOLD.list.find((f) => f.id === id);
+function folderCard(f) {
+  const n = scores.filter((s) => s.folder === f.id).length;
+  const b = el('button', 'card folder');
+  const th = el('div', 'thumb folder-tile');
+  th.append(icon('i-folder'), el('span', 'folder-count num', String(n)));
+  b.append(th, el('div', 'ttl', f.name), el('div', 'cmp', n === 1 ? '1 score' : n + ' scores'));
+  b.addEventListener('click', () => { FOLD.current = f.id; renderGrid(); });
+  return b;
+}
+function openFolderSheet(mode, id) {
+  FP.mode = mode; FP.id = id || null; FP.armed = false;
+  const f = id ? folderOf(id) : null;
+  $('#folderSheetTitle').textContent = mode === 'move' ? 'Move to folder' : f ? 'Folder' : 'New folder';
+  $('#folderNameBox').hidden = mode === 'move';
+  $('#folderMoveBox').hidden = mode !== 'move';
+  $('#folderActions').hidden = mode === 'move';
+  $('#folderName').value = mode === 'new' ? '' : f ? f.name : '';
+  $('#folderDelete').hidden = mode !== 'rename';
+  $('#folderDelete').textContent = 'Delete folder';
+  $('#folderChips').textContent = '';
+  if (mode === 'new') for (const name of FOLDER_IDEAS) {
+    const c = el('button', 'chip', name);
+    c.addEventListener('click', () => { $('#folderName').value = name; });
+    $('#folderChips').append(c);
+  }
+  if (mode === 'move') {
+    const pick = $('#folderPick'); pick.textContent = '';
+    const choose = (target) => {
+      const ids = [...LIB.sel];
+      for (const sid of ids) {
+        const sc = scores.find((x) => x.id === sid);
+        if (!sc) continue;
+        if (target) sc.folder = target; else delete sc.folder;
+        db.put('scores', sc);
+      }
+      setLibEditing(false);
+      hidePanel();
+      renderGrid();
+      toast(target ? `Moved to ${folderOf(target).name}.` : 'Moved to the library.');
+    };
+    const rows = [['', 'Library (no folder)'], ...[...FOLD.list].sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name])];
+    for (const [val, label] of rows) {
+      const b = el('button', 'folder-row', label);
+      b.addEventListener('click', () => choose(val || null));
+      pick.append(b);
+    }
+    pick.append(el('button', 'folder-row new', '+ New folder'));
+    pick.lastChild.addEventListener('click', () => { openFolderSheet('new'); });
+    $('#folderMoveHint').textContent = `Moving ${LIB.sel.size} ${LIB.sel.size === 1 ? 'score' : 'scores'}.`;
+  }
+  showPanel('folder');
+  if (mode !== 'move') setTimeout(() => $('#folderName').focus(), 80);
+}
+$('#newFolder').addEventListener('click', () => openFolderSheet('new'));
+$('#folderBack').addEventListener('click', () => { FOLD.current = null; renderGrid(); });
+$('#folderRename').addEventListener('click', () => openFolderSheet('rename', FOLD.current));
+$('#folderSave').addEventListener('click', async () => {
+  const name = $('#folderName').value.trim().slice(0, 40);
+  if (!name) { toast('Give the folder a name.'); return; }
+  if (FP.mode === 'new') {
+    const f = { id: uid(), name, created: Date.now() };
+    FOLD.list.push(f); FOLD.current = f.id;
+  } else {
+    const f = folderOf(FP.id); if (f) f.name = name;
+  }
+  saveFolders(); hidePanel(); renderGrid();
+});
+$('#folderDelete').addEventListener('click', async () => {
+  if (!FP.armed) { FP.armed = true; $('#folderDelete').textContent = 'Tap again to delete'; setTimeout(() => { FP.armed = false; $('#folderDelete').textContent = 'Delete folder'; }, 3000); return; }
+  // the scores in it go back to the library; nothing is deleted
+  for (const sc of scores.filter((x) => x.folder === FP.id)) { delete sc.folder; await db.put('scores', sc); }
+  FOLD.list = FOLD.list.filter((f) => f.id !== FP.id);
+  FOLD.current = null; saveFolders(); hidePanel(); renderGrid();
+});
+$('#libMove').addEventListener('click', () => { if (LIB.sel.size) openFolderSheet('move'); });
+
 // ---------- select and delete scores ----------
 const LIB = { editing: false, sel: new Set(), confirm: false };
 function setLibEditing(on) {
@@ -152,6 +245,7 @@ function syncLibActions() {
   LIB.confirm = false;
   $('#libCount').textContent = n ? (n === 1 ? '1 score selected' : n + ' scores selected') : 'Tap scores to select';
   $('#libDelete').disabled = !n;
+  $('#libMove').disabled = !n;
   $('#libDelete span').textContent = 'Delete';
   $('#libDelete').classList.remove('confirming');
 }
@@ -216,7 +310,7 @@ async function addPdf(data, name, meta) {
   const info = await readScoreInfo(doc, name, await loadComposers());
   const title = (meta && meta.title) || info.title || niceTitle(name);
   const composer = (meta && meta.composer) || info.composer || '';
-  const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' };
+  const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: FOLD.current || undefined };
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
   return score;
@@ -225,7 +319,7 @@ async function addImages(blobs, name) {
   const file = { id: uid(), kind: 'images', data: blobs };
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
-  const score = { id: uid(), fileId: file.id, title: niceTitle(name), composer: '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb };
+  const score = { id: uid(), fileId: file.id, title: niceTitle(name), composer: '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: FOLD.current || undefined };
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
   return score;
@@ -2167,6 +2261,7 @@ function syncScaleUI() {
   $('#scaleType').value = scale.type; fillScaleOctaves();
   $('#scaleOcts').value = scale.octaves; $('#scaleDir').value = scale.direction; $('#scaleSys').value = scale.system;
   $('#scalePer').value = scale.perBeat; $('#scaleSound').value = scale.sound; $('#scaleVol').value = scale.volume;
+  $('#scaleCount').checked = scale.countIn !== false;
   $('#scaleDrone').checked = scale.drone; $('#scaleRepeat').checked = scale.repeat;
   $('#scaleTitle').textContent = scale.title();
   $('#scalePillNote').textContent = scale.title();
@@ -2174,7 +2269,7 @@ function syncScaleUI() {
   renderScaleStrip();
 }
 function persistScale() {
-  S.scale = { tonic: scale.tonic, octave: scale.octave, octaves: scale.octaves, type: scale.type, direction: scale.direction, system: scale.system, perBeat: scale.perBeat, sound: scale.sound, volume: scale.volume, drone: scale.drone, click: scale.click, repeat: scale.repeat };
+  S.scale = { tonic: scale.tonic, octave: scale.octave, octaves: scale.octaves, type: scale.type, direction: scale.direction, system: scale.system, perBeat: scale.perBeat, sound: scale.sound, volume: scale.volume, drone: scale.drone, click: scale.click, repeat: scale.repeat, countIn: scale.countIn };
   saveSettings();
 }
 function scaleChanged(restart = true) {
@@ -2200,10 +2295,14 @@ $('#scaleDir').addEventListener('change', (e) => { scale.direction = e.target.va
 $('#scaleSys').addEventListener('change', (e) => { scale.system = e.target.value; scaleChanged(); });
 $('#scalePer').addEventListener('change', (e) => { scale.perBeat = +e.target.value; persistScale(); if (scale.playing) restartScale(); });
 $('#scaleSound').addEventListener('change', (e) => { scale.sound = e.target.value; scaleChanged(); });
+// count-in: the big note shows 4 3 2 1 before the first note
+$('#scaleCount').addEventListener('change', (e) => { scale.countIn = e.target.checked; persistScale(); });
+scale.onCount = (n) => { $('#scaleNote').textContent = n; $('#scaleCents').textContent = 'count-in'; };
 $('#scaleVol').addEventListener('input', (e) => { scale.setVolume(+e.target.value); persistScale(); });
 $('#scaleDrone').addEventListener('change', (e) => { scale.drone = e.target.checked; scaleChanged(); });
 $('#scaleRepeat').addEventListener('change', (e) => { scale.repeat = e.target.checked; persistScale(); });
 scale.onNote = (ev) => {
+  $('#scaleCents').textContent = '';
   const name = midiName(ev.midi);
   $('#scaleNote').textContent = name;
   const c = Math.round(scale.cents(ev.midi));
@@ -2553,7 +2652,49 @@ function syncPlayerControls() {
   $('#revVal').textContent = player.room === 'dry' ? 'Off' : ROOMS[player.room].label + ' · ' + Math.round(player.wet * 100) + '%';
   $('#autoLevel').checked = player.autoLevel;
 }
+// ---------- cutting a recording ----------
+function syncCut() {
+  const ok = !!currentTake && player.loop && player.b - player.a > 0.2 && !nativeVideo && !cutting;
+  $('#cutKeep').disabled = !ok; $('#cutRemove').disabled = !ok;
+  $('#cutRange').textContent = player.loop && player.b > player.a
+    ? `${fmtTime(player.a, true)} – ${fmtTime(player.b, true)} · ${(player.b - player.a).toFixed(1)} s`
+    : 'Select a part of the waveform';
+}
+let cutting = false;
+async function cutTake(mode) {
+  const t = currentTake;
+  if (!t || cutting || !(player.b > player.a)) return;
+  const a = player.a, b = player.b, dur = player.duration;
+  const segs = segmentsFor(dur, a, b, mode);
+  if (!segs.length || segmentsLength(segs) < 0.2) { toast('Nothing left to keep.'); return; }
+  cutting = true; syncCut();
+  const prog = $('#cutProgress'); prog.hidden = false; prog.querySelector('i').style.width = '0%';
+  const setPct = (f) => { prog.querySelector('i').style.width = Math.round(f * 100) + '%'; $('#cutPct').textContent = Math.round(f * 100) + '%'; };
+  try {
+    const pcm = cutPcm(t.data, t.sr, a, b, mode);
+    const id = uid();
+    let take = { id, kind: t.kind, scoreId: t.scoreId, page: t.page, name: t.name + (mode === 'keep' ? ' · selection' : ' · cut'), created: Date.now(), sr: t.sr, dur: pcm.length / t.sr, peaks: computePeaks(pcm), peak: peakOf(pcm), fav: false };
+    if (t.kind === 'video') {
+      const blob = await renderVideoCut({ url: videoURL, mirror: !!t.mirror, segs, pcm, sr: t.sr, onProgress: setPct });
+      take = { ...take, mime: blob.type, mirror: false, pcm: true, thumb: await videoThumb(blob) };
+      await db.put('files', { id: 'video:' + id, data: blob });
+    } else setPct(1);
+    await db.put('files', { id: 'audio:' + id, data: pcm });
+    await db.put('takes', take);
+    takesScope = take.scoreId ? 'score' : 'all';
+    toast('Saved as a new recording.', 3000);
+    refreshTakes();
+  } catch (err) {
+    toast('That recording could not be cut.', 3500);
+  } finally {
+    cutting = false; prog.hidden = true; syncCut();
+  }
+}
+$('#cutKeep').addEventListener('click', () => cutTake('keep'));
+$('#cutRemove').addEventListener('click', () => cutTake('remove'));
+
 player.onState = () => {
+  syncCut();
   const p = $('#playBtn'); p.innerHTML = player.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>';
   p.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
   $('#loopBtn').classList.toggle('on', player.loop);
@@ -2705,7 +2846,7 @@ $('#paperCreate').addEventListener('click', async () => {
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
   const name = $('#paperName').value.trim() || PAPERS[paperTpl].label + ' notebook';
-  const score = { id: uid(), fileId: file.id, title: name, composer: 'Manuscript', pages: file.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, kind: 'paper' };
+  const score = { id: uid(), fileId: file.id, title: name, composer: 'Manuscript', pages: file.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, kind: 'paper' , folder: FOLD.current || undefined };
   await db.put('files', file); await db.put('scores', score);
   $('#paperName').value = '';
   hidePanel(); await refreshLibrary(); openScore(score.id);
@@ -2963,7 +3104,36 @@ $$('#accentSeg button').forEach((b) => b.addEventListener('click', () => { S.acc
 // --- wink to turn pages (iPad app, face tracking) ---
 const wink = { on: false, testing: false };
 function winkSupported() { return !!(NATIVE && NATIVE.standFace && CAPS.face); }
+// --- tap the stand to turn pages (iPad app, motion sensors) ---
+const tapTest = { on: false };
+function tapSupported() { return !!(NATIVE && NATIVE.standTap && CAPS.tap); }
+function sendTap() {
+  if (!tapSupported()) return;
+  const active = (S.tapStand && !$('#score').hidden && !(recState && recState.kind === 'video')) || tapTest.on;
+  NATIVE.standTap.postMessage({ on: !!active, sensitivity: S.tapSens || 0.6 });
+}
+function syncTapUI() {
+  const ok = tapSupported();
+  $('#tapRow').hidden = !ok; $('#tapNo').hidden = ok; $('#tapCard').hidden = !ok;
+  $('#tapOn').checked = !!S.tapStand; $('#tapSens').value = Math.round((S.tapSens || 0.6) * 100);
+  $('#tapBody').hidden = !S.tapStand;
+}
+$('#tapOn').addEventListener('change', (e) => { S.tapStand = e.target.checked; saveSettings(); syncTapUI(); sendTap(); });
+$('#tapSens').addEventListener('input', (e) => { S.tapSens = +e.target.value / 100; saveSettings(); sendTap(); });
+$('#tapTest').addEventListener('click', () => {
+  tapTest.on = !tapTest.on;
+  $('#tapTest').textContent = tapTest.on ? 'Stop test' : 'Test';
+  $('#tapLast').textContent = tapTest.on ? 'Knock on the stand…' : '';
+  sendTap();
+});
+window.standTapEvent = (ev) => {
+  if (!ev || ev.type !== 'tap') return;
+  if (tapTest.on) { $('#tapLast').textContent = 'Tap heard'; return; }
+  if (!$('#score').hidden && S.tapStand && !V.inking) turn(1);
+};
+
 function sendFace() {
+  sendTap();
   if (!winkSupported()) return;
   const active = (S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing;
   NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing });
@@ -3072,7 +3242,7 @@ $('#backupInput').addEventListener('change', async (e) => {
   try { const n = await restoreBackup(f); await refreshLibrary(); renderGoal(); toast(`Restored ${n} score${n === 1 ? '' : 's'}.`); }
   catch (err) { console.error(err); toast(err.message || 'That file could not be restored.'); }
 });
-document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) { syncWinkUI(); $('#appInst').value = S.instrument; applyAppearance(); } });
+document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) { syncWinkUI(); syncTapUI(); $('#appInst').value = S.instrument; applyAppearance(); } });
 
 // =====================================================================
 // Repetitions
@@ -3102,6 +3272,7 @@ renderReps();
   await loadSettings();
   await practice.load();
   await loadPassages();
+  await loadFolders();
   applyAppearance();
   document.body.classList.add('at-home');
   player.room = S.room; player.wet = S.wet; player.autoLevel = S.autoLevel;
@@ -3131,7 +3302,7 @@ renderReps();
   renderExamples();
   $$('#sortSeg button').forEach((b) => b.classList.toggle('on', b.dataset.sort === S.sort));
   await refreshLibrary();
-  renderGoal(); syncWinkUI();
+  renderGoal(); syncWinkUI(); syncTapUI();
   setHomeTab(scores.length ? (S.hometab || 'mine') : 'mine');
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

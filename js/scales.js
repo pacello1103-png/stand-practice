@@ -47,6 +47,7 @@ export class ScalePlayer {
     this.system = 'equal'; this.ref = 442; this.bpm = 60; this.perBeat = 1; this.repeat = false;
     this.sound = 'piano'; this.volume = 0.6; this.click = false; this.drone = false; this.legato = true;
     this.playing = false; this.onNote = null; this.onEnd = null;
+    this.countIn = true; this.onCount = null;   // one bar of count-in before the scale: 4, 3, 2, 1
   }
   notes() { return buildScale(this); }
   freqOf(m) { return tunedFreq(m, this.ref, keyFor(this.tonic, this.type), this.system); }
@@ -81,8 +82,20 @@ export class ScalePlayer {
     this.stop(true);
     this._nodes = [];
     this._list = this.notes();
-    this._i = 0; this._next = at && at > ctx.currentTime ? at : ctx.currentTime + 0.12; this._queue = [];
+    this._i = 0; this._queue = [];
     this.playing = true;
+    // one bar of count-in: four beats at the scale's tempo, shown as 4 3 2 1 and clicked
+    let t0 = at && at > ctx.currentTime ? at : ctx.currentTime + 0.12;
+    const beat = 60 / this.bpm;
+    if (this.countIn) {
+      for (let i = 0; i < 4; i++) {
+        const t = t0 + i * beat;
+        if (!this.click) this._click(t, i === 0);   // with the metronome on, its own clicks are heard
+        this._queue.push({ time: t, count: 4 - i });
+      }
+      t0 += 4 * beat;
+    }
+    this._next = t0;
     if (this.drone) this._startDrone();
     this._tick();
     this._timer = setInterval(() => this._tick(), 25);
@@ -121,6 +134,7 @@ export class ScalePlayer {
     const now = getCtx().currentTime;
     while (this._queue.length && this._queue[0].time <= now) {
       const ev = this._queue.shift();
+      if (ev.count) { this.onCount && this.onCount(ev.count); continue; }
       if (ev.end) { setTimeout(() => { if (!this._timer) this.stop(); }, 600); continue; }
       this.onNote && this.onNote(ev);
     }
