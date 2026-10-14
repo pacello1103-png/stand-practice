@@ -1,0 +1,52 @@
+name: Duo screenshots
+
+on:
+  push:
+    branches: [duo]
+
+jobs:
+  shots:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build for simulator
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project Duo.xcodeproj -target Duo -configuration Debug -sdk iphonesimulator \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build | tail -n 5
+
+      - name: Run on iPhone and iPad simulators
+        shell: bash
+        run: |
+          set -x
+          APP=build/Debug-iphonesimulator/Duo.app
+          IPHONE_TYPE=$(xcrun simctl list devicetypes | grep -o "iPhone 16 Pro (com[^)]*)" | head -1 | sed 's/.*(\(.*\))/\1/')
+          IPAD_TYPE=$(xcrun simctl list devicetypes | grep -o "iPad Pro 13-inch[^(]*(com[^)]*)" | head -1 | sed 's/.*(\(.*\))/\1/')
+          IPH=$(xcrun simctl create shots-iphone "$IPHONE_TYPE")
+          IPD=$(xcrun simctl create shots-ipad "$IPAD_TYPE")
+          for D in $IPH $IPD; do
+            xcrun simctl boot $D
+            xcrun simctl bootstatus $D -b
+            xcrun simctl ui $D appearance dark || true
+            xcrun simctl status_bar $D override --time 9:41 --batteryState charged --batteryLevel 100 --wifiBars 3 || true
+            xcrun simctl install $D "$APP"
+            xcrun simctl privacy $D grant microphone com.paulo.duo || true
+          done
+          mkdir -p shots
+          xcrun simctl launch $IPH com.paulo.duo
+          xcrun simctl launch $IPD com.paulo.duo
+          sleep 20
+          xcrun simctl io $IPH screenshot shots/iphone.png
+          xcrun simctl io $IPD screenshot shots/ipad.png
+          xcrun simctl terminate $IPH com.paulo.duo
+          xcrun simctl launch $IPH com.paulo.duo -showSettings
+          sleep 6
+          xcrun simctl io $IPH screenshot shots/iphone-settings.png
+          ls -la shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots

@@ -31,6 +31,9 @@ struct ContentView: View {
             .frame(maxWidth: 520)
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("-showSettings") { showSettings = true }
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView().environmentObject(model)
         }
