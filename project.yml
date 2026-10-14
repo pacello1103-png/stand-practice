@@ -1,0 +1,50 @@
+name: Duo
+options:
+  bundleIdPrefix: com.paulo
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+targets:
+  Duo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Duo
+    info:
+      path: Duo/Info.plist
+      properties:
+        CFBundleDisplayName: Duo
+        CFBundleName: Duo
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes: [audio]
+        LSApplicationQueriesSchemes: [nflx]
+        NSMicrophoneUsageDescription: Duo needs this to play its start sound through the speaker while your headphones are connected. Duo never records anything.
+        NSLocalNetworkUsageDescription: Duo connects to your other iPhone or iPad nearby so both start at the same moment.
+        NSBonjourServices:
+          - _duo-sync._tcp
+          - _duo-sync._udp
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.paulo.duo
+        PRODUCT_NAME: Duo
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""

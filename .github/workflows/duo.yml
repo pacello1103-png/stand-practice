@@ -1,0 +1,52 @@
+name: Build Duo (IPA)
+
+on:
+  push:
+    branches: [duo]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build (unsigned)
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild -project Duo.xcodeproj -target Duo -configuration Release -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            build 2>&1 | grep -E "error|warning: unre|BUILD" | head -n 80
+
+      - name: Package IPA
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Release-iphoneos/Duo.app Payload/
+          zip -qry Duo.ipa Payload
+          ls -lh Duo.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duo-ipa
+          path: Duo.ipa
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: duo-1.${{ github.run_number }}
+          name: Duo 1.${{ github.run_number }}
+          make_latest: false
+          target_commitish: duo
+          files: Duo.ipa
+          body: |
+            Duo for iPhone and iPad. Download **Duo.ipa** and install it with Sideloadly on both devices.
