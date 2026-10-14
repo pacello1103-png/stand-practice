@@ -22,8 +22,8 @@ jobs:
         run: |
           set -x
           APP=build/Debug-iphonesimulator/Duo.app
-          IPHONE_TYPE=$(xcrun simctl list devicetypes | grep -o "iPhone 16 Pro (com[^)]*)" | head -1 | sed 's/.*(\(.*\))/\1/')
-          IPAD_TYPE=$(xcrun simctl list devicetypes | grep -o "iPad Pro 13-inch[^(]*(com[^)]*)" | head -1 | sed 's/.*(\(.*\))/\1/')
+          IPHONE_TYPE=$(xcrun simctl list devicetypes -j | jq -r '.devicetypes[] | select(.name=="iPhone 16 Pro") | .identifier' | head -1)
+          IPAD_TYPE=$(xcrun simctl list devicetypes -j | jq -r '.devicetypes[] | select(.name|startswith("iPad Pro 13")) | .identifier' | tail -1)
           IPH=$(xcrun simctl create shots-iphone "$IPHONE_TYPE")
           IPD=$(xcrun simctl create shots-ipad "$IPAD_TYPE")
           for D in $IPH $IPD; do
