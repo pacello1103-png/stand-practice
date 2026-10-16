@@ -74,38 +74,40 @@ enum Demo {
         guard writer.startWriting() else { throw writer.error ?? CaptureError.writer("demo") }
         writer.startSession(atSourceTime: .zero)
 
-        // video
+        // video and sound interleaved, frame by frame (the writer waits for both)
         let frames = Int(seconds * Double(fps))
         let base = colors[(cam - 1) % colors.count]
+        let total = Int(seconds * sr)
+        let perFrame = Int(sr) / fps
+        let level: Float = cam == 1 ? 1 : 0.45
+        var pos = 0
         for i in 0..<frames {
-            while !v.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
-            guard let pool = adaptor.pixelBufferPool else { break }
-            var pbOut: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pbOut)
-            guard let pb = pbOut else { continue }
-            draw(into: pb, cam: cam, t: Double(i) / Double(fps), base: base, brightness: brightness, blue: blue)
-            adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
+            var spins = 0
+            while !v.isReadyForMoreMediaData && spins < 2000 { try await Task.sleep(nanoseconds: 1_000_000); spins += 1 }
+            if let pool = adaptor.pixelBufferPool {
+                var pbOut: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pbOut)
+                if let pb = pbOut {
+                    draw(into: pb, cam: cam, t: Double(i) / Double(fps), base: base, brightness: brightness, blue: blue)
+                    adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps)))
+                }
+            }
+            let end = i == frames - 1 ? total : min(total, (i + 1) * perFrame)
+            if end > pos {
+                spins = 0
+                while !a.isReadyForMoreMediaData && spins < 2000 { try await Task.sleep(nanoseconds: 1_000_000); spins += 1 }
+                var samples = [Int16](repeating: 0, count: end - pos)
+                for j in 0..<samples.count {
+                    let t = Double(pos + j) / sr - soundOffset
+                    var s = music(t) * level
+                    if cam != 1 { s += Float.random(in: -0.01...0.01) }   // room noise
+                    samples[j] = Int16(max(-1, min(1, s)) * 32_000)
+                }
+                if let sb = makeAudioSample(samples, at: pos, sr: sr) { a.append(sb) }
+                pos = end
+            }
         }
         v.markAsFinished()
-
-        // sound, written in 0.1 s pieces
-        let total = Int(seconds * sr)
-        let chunk = 4800
-        var pos = 0
-        let level: Float = cam == 1 ? 1 : 0.45
-        while pos < total {
-            while !a.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
-            let n = min(chunk, total - pos)
-            var samples = [Int16](repeating: 0, count: n)
-            for j in 0..<n {
-                let t = Double(pos + j) / sr - soundOffset
-                var s = music(t) * level
-                if cam != 1 { s += Float.random(in: -0.01...0.01) }   // room noise
-                samples[j] = Int16(max(-1, min(1, s)) * 32_000)
-            }
-            if let sb = makeAudioSample(samples, at: pos, sr: sr) { a.append(sb) }
-            pos += n
-        }
         a.markAsFinished()
         await writer.finishWriting()
         if writer.status != .completed { throw writer.error ?? CaptureError.writer("demo") }
@@ -192,8 +194,14 @@ enum Demo {
             Task {
                 let p: Project
                 if let existing = store.projects.first(where: { $0.name.hasPrefix("Demo") }) { p = existing }
-                else if let made = try? await Demo.makeProject(store: store) { p = made }
-                else { return }
+                else {
+                    do { p = try await Demo.makeProject(store: store) }
+                    catch {
+                        let f = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("demo-error.txt")
+                        try? "\(error)".write(to: f, atomically: true, encoding: .utf8)
+                        return
+                    }
+                }
                 await MainActor.run {
                     router.demoTab = mode
                     router.screen = .editor(p.id)
