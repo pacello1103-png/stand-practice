@@ -185,6 +185,15 @@ private struct PicturePanel: View {
                             Text(clip.width >= 3000 ? "Recorded in 4K: zooming up to 2× stays sharp in a 1080p film." : "Zooming a 1080p recording softens it — Tutti adds detail back, but 4K recordings zoom better.")
                                 .font(.system(size: 12)).foregroundStyle(Theme.muted)
                         }
+                        if let moves = clip.moves, !moves.isEmpty {
+                            HStack {
+                                Label("\(moves.count) framing move\(moves.count == 1 ? "" : "s") from the director", systemImage: "scope")
+                                    .font(.system(size: 13)).foregroundStyle(Theme.ink)
+                                Spacer()
+                                Button("Remove") { model.setClip(cam: currentCam) { $0.moves = nil } }
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                        }
                         Button("Reset this camera") { model.setClip(cam: currentCam) { $0.look = CamLook(); $0.framing = Framing() } }
                             .font(.system(size: 14, weight: .semibold))
                     }

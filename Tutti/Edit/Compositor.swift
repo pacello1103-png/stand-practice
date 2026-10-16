@@ -6,6 +6,7 @@ import simd
 struct CamRender {
     var rotation: Int
     var framing: Framing
+    var moves: [FramingKey]
     var gains: SIMD3<Double>      // auto colour match × manual warmth/tint
     var exposure: Double          // auto × manual
     var steadyTimes: [Double]
@@ -58,7 +59,7 @@ final class RenderPlan {
             gains.x *= 1 + 0.10 * c.look.warmth
             gains.z *= 1 - 0.10 * c.look.warmth
             gains.y *= 1 - 0.07 * c.look.tint
-            cams[c.cam] = CamRender(rotation: c.rotation, framing: c.framing, gains: gains, exposure: exposure,
+            cams[c.cam] = CamRender(rotation: c.rotation, framing: c.framing, moves: c.moves ?? [], gains: gains, exposure: exposure,
                                     steadyTimes: times, steadyGains: steady, clipStart: c.start)
         }
         return RenderPlan(size: size, cams: cams, picture: pic)
@@ -170,13 +171,14 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
         let src = img.extent.size
         guard src.width > 0, src.height > 0 else { return nil }
 
-        // fill the frame, then the camera's own framing (zoom + position)
-        let zoom = CGFloat(max(1, c.framing.zoom))
+        // fill the frame, then the camera's own framing (zoom + position), following the director's moves
+        let fr = c.moves.isEmpty ? c.framing : Framing.at(t - c.clipStart, base: c.framing, moves: c.moves)
+        let zoom = CGFloat(max(1, fr.zoom))
         let scale = max(out.width / src.width, out.height / src.height) * zoom
         let w = src.width * scale, h = src.height * scale
         let spareX = (w - out.width) / 2, spareY = (h - out.height) / 2
-        let tx = (out.width - w) / 2 - CGFloat(c.framing.x) * spareX
-        let ty = (out.height - h) / 2 + CGFloat(c.framing.y) * spareY
+        let tx = (out.width - w) / 2 - CGFloat(fr.x) * spareX
+        let ty = (out.height - h) / 2 + CGFloat(fr.y) * spareY
 
         // Lanczos keeps fine detail when scaling (much better than the default bilinear)
         img = img.clampedToExtent()

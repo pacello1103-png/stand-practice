@@ -20,6 +20,21 @@ final class RemoteCam: ObservableObject, Identifiable {
     var frameTime: Double = 0          // director clock time of the shown frame
     var decoding = false
 
+    // virtual camera operator
+    @Published var target = Framing()            // where the current move ends
+    var moveFrom = Framing()
+    var moveStart = 0.0                          // director clock
+    var moveDuration = 0.0
+    var moves: [FramingKey] = []
+    var recordBase = Framing()
+
+    /// Framing right now (mid-move if one is running).
+    func framing(at now: Double) -> Framing {
+        guard moveDuration > 0, now < moveStart + moveDuration else { return target }
+        return Framing.blend(moveFrom, target, max(0, (now - moveStart) / moveDuration))
+    }
+    var moving: Bool { moveDuration > 0 && Clock.now < moveStart + moveDuration }
+
     init(id: String, peer: MCPeerID?, index: Int, name: String, isLocal: Bool = false) {
         self.id = id
         self.peer = peer
@@ -55,6 +70,8 @@ final class DirectorModel: ObservableObject {
     @Published private(set) var cutCount = 0
     @Published var useThisDevice = false { didSet { if useThisDevice != oldValue { toggleLocal() } } }
     @Published var notice: String?
+    @Published var controlled: RemoteCam?        // camera open in the operator panel
+    @Published var moveSpeed = 2.0               // seconds per framing move
 
     private(set) var cuts: [Cut] = []
     private var sessionID = ""
@@ -211,6 +228,41 @@ final class DirectorModel: ObservableObject {
         c.status.zoom = display
     }
 
+    /// Lens zoom with a chosen speed (doublings per second).
+    func lensZoom(_ c: RemoteCam, to display: Double, speed: Double) {
+        if c.isLocal { localEngine?.setZoom(display: display, speed: speed) }
+        else if let p = c.peer { link.send(WireMsg(t: Msg.zoom, zoom: display, speed: speed), to: [p]) }
+        c.status.zoom = display
+    }
+
+    /// A smooth virtual camera move: reframe inside the full picture (zoom in on a subject, pan left/right…).
+    /// Recorded as keyframes and rendered later from the full-quality file.
+    func frame(_ c: RemoteCam, to f: Framing, duration: Double? = nil) {
+        let now = Clock.now
+        let d = max(0, duration ?? moveSpeed)
+        c.moveFrom = c.framing(at: now)
+        c.moveStart = now
+        c.moveDuration = d
+        c.target = f
+        if phase == .recording {
+            c.moves.append(FramingKey(time: max(0, now - recordStart), framing: f, duration: d))
+        }
+        if let p = c.peer { link.send(WireMsg(t: Msg.frame, frame: f, duration: d), to: [p]) }
+        objectWillChange.send()
+    }
+
+    /// Centre on a point of the picture (0…1, y down) and zoom by a factor of the current zoom.
+    func aim(_ c: RemoteCam, at point: CGPoint, zoomBy k: Double) {
+        let now = c.framing(at: Clock.now)
+        frame(c, to: Framing(zoom: now.zoom * k, center: point))
+    }
+
+    func pan(_ c: RemoteCam, dx: Double, dy: Double) {
+        let now = c.framing(at: Clock.now)
+        let ctr = now.center
+        frame(c, to: Framing(zoom: now.zoom, center: CGPoint(x: ctr.x + dx, y: ctr.y + dy)))
+    }
+
     func moveCam(_ c: RemoteCam, to index: Int) {
         guard phase == .ready, index != c.index else { return }
         if let other = cams.first(where: { $0.index == index }) { other.index = c.index; if let p = other.peer { link.send(WireMsg(t: Msg.assign, cam: other.index), to: [p]) } }
@@ -273,6 +325,8 @@ final class DirectorModel: ObservableObject {
         cuts = [Cut(time: 0, cam: program, kind: .cut, length: 0)]
         cutCount = 0
         for c in cams {
+            c.recordBase = c.framing(at: start)
+            c.moves = []
             c.clip = nil
             c.received = false
             c.failed = c.connected ? nil : "Not connected"
@@ -382,8 +436,12 @@ final class DirectorModel: ObservableObject {
             let file = "cam\(c.index).mov"
             let exists = FileManager.default.fileExists(atPath: store.folder(id).appendingPathComponent(file).path)
             if let info = c.clip, c.received, exists {
-                clips.append(Clip(cam: c.index, device: info.device, file: file, start: info.start - recordStart,
-                                  duration: info.duration, hasAudio: info.hasAudio, audioName: info.audioName))
+                var clip = Clip(cam: c.index, device: info.device, file: file, start: info.start - recordStart,
+                                duration: info.duration, hasAudio: info.hasAudio, audioName: info.audioName)
+                clip.framing = c.recordBase
+                // moves were timed from the start of the recording; the clip's own clock starts at its first frame
+                clip.moves = c.moves.isEmpty ? nil : c.moves.map { FramingKey(time: $0.time - clip.start, framing: $0.framing, duration: $0.duration) }
+                clips.append(clip)
             } else if c.clip != nil || c.failed != nil {
                 clips.append(Clip(cam: c.index, device: c.name, file: nil, start: 0, duration: 0, missing: true))
             }

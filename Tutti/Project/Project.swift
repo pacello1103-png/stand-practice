@@ -8,6 +8,49 @@ struct Framing: Codable, Equatable {
     var y: Double = 0
 }
 
+extension Framing {
+    /// Centre of the visible window in the full picture (0…1, y down).
+    var center: CGPoint {
+        let spare = (1 - 1 / max(1, zoom)) / 2
+        return CGPoint(x: 0.5 + x * spare, y: 0.5 + y * spare)
+    }
+
+    init(zoom: Double, center: CGPoint) {
+        let z = max(1, min(3, zoom))
+        let spare = (1 - 1 / z) / 2
+        self.zoom = z
+        self.x = spare > 0.0001 ? max(-1, min(1, (Double(center.x) - 0.5) / spare)) : 0
+        self.y = spare > 0.0001 ? max(-1, min(1, (Double(center.y) - 0.5) / spare)) : 0
+    }
+
+    /// A smooth camera move: zoom changes evenly (log scale), the centre glides in a straight line.
+    static func blend(_ a: Framing, _ b: Framing, _ p: Double) -> Framing {
+        let q = p * p * (3 - 2 * p)
+        let z = exp(log(max(1, a.zoom)) * (1 - q) + log(max(1, b.zoom)) * q)
+        let ca = a.center, cb = b.center
+        let c = CGPoint(x: ca.x + (cb.x - ca.x) * q, y: ca.y + (cb.y - ca.y) * q)
+        return Framing(zoom: z, center: c)
+    }
+
+    /// Framing at time t, starting from `base` and following timed moves.
+    static func at(_ t: Double, base: Framing, moves: [FramingKey]) -> Framing {
+        var current = base
+        for m in moves.sorted(by: { $0.time < $1.time }) {
+            if t >= m.time + m.duration { current = m.framing; continue }
+            if t <= m.time { break }
+            return blend(current, m.framing, (t - m.time) / max(0.001, m.duration))
+        }
+        return current
+    }
+}
+
+/// A camera move made by the director while recording (time on the project timeline).
+struct FramingKey: Codable, Equatable {
+    var time: Double
+    var framing: Framing
+    var duration: Double
+}
+
 struct CamLook: Codable, Equatable {
     var exposure: Double = 0     // EV
     var warmth: Double = 0       // -1…1
@@ -42,6 +85,7 @@ struct Clip: Codable, Identifiable, Equatable {
     var syncNote: String?
     var loudness: Double?        // LUFS of the raw microphone
     var framing = Framing()
+    var moves: [FramingKey]?     // director's camera moves during the take
     var look = CamLook()
     var auto: AutoLook?
     var missing = false          // never arrived from the camera

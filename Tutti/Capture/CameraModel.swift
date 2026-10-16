@@ -16,6 +16,9 @@ final class CameraModel: ObservableObject {
     @Published private(set) var sendProgress: Double?
     @Published private(set) var message: String?
     @Published var dimmed = false
+    /// Where the director is framing this camera (shown as a guide rectangle).
+    @Published private(set) var guide = Framing()
+    @Published private(set) var guideDuration = 0.0
 
     private var settings = CaptureSettings()
     private var timers: [Timer] = []
@@ -108,7 +111,12 @@ final class CameraModel: ObservableObject {
             let at = m.at.map { $0 - clock.offset }
             engine.stopRecording(atHost: at)
         case Msg.zoom:
-            if let z = m.zoom { engine.setZoom(display: z) }
+            if let z = m.zoom { engine.setZoom(display: z, speed: m.speed ?? 3) }
+        case Msg.frame:
+            if let f = m.frame {
+                guideDuration = m.duration ?? 0
+                guide = f
+            }
         case Msg.lock:
             engine.lockLook(m.lock ?? false, kelvin: m.kelvin)
         case Msg.tally:

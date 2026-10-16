@@ -53,6 +53,9 @@ struct WireMsg: Codable {
     var kelvin: Double? = nil
     var program: Int? = nil
     var text: String? = nil
+    var frame: Framing? = nil       // director's framing (virtual camera move)
+    var duration: Double? = nil     // how long the move takes
+    var speed: Double? = nil        // lens zoom speed
 }
 
 enum Msg {
@@ -70,4 +73,5 @@ enum Msg {
     static let tally = "tally"          // director → camera: program cam
     static let resend = "resend"        // director → camera: session
     static let error = "error"          // camera → director: text
+    static let frame = "frame"          // director → camera: framing, duration (shown as a guide)
 }

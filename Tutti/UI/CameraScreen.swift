@@ -94,6 +94,16 @@ private struct CameraContent: View {
                 }
                 .onEnded { _ in pinchStart = nil })
 
+            // the director's framing, as a guide for whoever holds the phone
+            GeometryReader { g in
+                GuideRect(framing: model.guide, color: Theme.cam(max(1, model.cam)))
+                    .aspectRatio(g.size.width >= g.size.height ? 16 / 9 : 9 / 16, contentMode: .fit)
+                    .frame(width: g.size.width, height: g.size.height)
+            }
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: max(0.15, model.guideDuration)), value: model.guide)
+            .allowsHitTesting(false)
+
             if let p = focusPoint {
                 RoundedRectangle(cornerRadius: 6).stroke(Theme.warn, lineWidth: 1.5)
                     .frame(width: 74, height: 74)

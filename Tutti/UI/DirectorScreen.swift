@@ -50,6 +50,7 @@ struct DirectorScreen: View {
         }
         .background(keyboardShortcuts)
         .sheet(isPresented: $showSettings) { CaptureSettingsSheet(model: model).tuttiSheetBackground() }
+        .sheet(item: $model.controlled) { cam in OperatorPanel(model: model, cam: cam).tuttiSheetBackground() }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             if ProcessInfo.processInfo.arguments.contains("director") { model.addDemoCameras() } else { model.begin() }
@@ -160,12 +161,52 @@ private struct ProgramMonitor: View {
 private struct ProgramImage: View {
     @ObservedObject var cam: RemoteCam
     var body: some View {
-        ZStack {
-            Color.black
-            if let img = cam.image {
-                Image(uiImage: img).resizable().scaledToFit()
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !cam.moving)) { _ in
+            FramedImage(image: cam.image, framing: cam.framing(at: Clock.now))
+        }
+    }
+}
+
+/// The picture as the director frames it: zoomed and positioned inside the full camera image.
+struct FramedImage: View {
+    let image: UIImage?
+    let framing: Framing
+    var body: some View {
+        GeometryReader { g in
+            let z = CGFloat(max(1, framing.zoom))
+            let c = framing.center
+            ZStack {
+                Color.black
+                if let image {
+                    Image(uiImage: image).resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: g.size.width, height: g.size.height)
+                        .scaleEffect(z)
+                        .offset(x: (0.5 - c.x) * g.size.width * z, y: (0.5 - c.y) * g.size.height * z)
+                }
+            }
+            .frame(width: g.size.width, height: g.size.height)
+            .clipped()
+        }
+    }
+}
+
+/// Rectangle showing what the director's framing keeps of the full picture.
+struct GuideRect: View {
+    let framing: Framing
+    var color: Color = .white
+    var body: some View {
+        GeometryReader { g in
+            let z = CGFloat(max(1, framing.zoom))
+            if z > 1.01 {
+                let c = framing.center
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(color, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                    .frame(width: g.size.width / z, height: g.size.height / z)
+                    .position(x: c.x * g.size.width, y: c.y * g.size.height)
             }
         }
+        .allowsHitTesting(false)
     }
 }
 
@@ -197,6 +238,7 @@ private struct CameraTile: View {
                 if let img = cam.image {
                     Image(uiImage: img).resizable().scaledToFill()
                 }
+                GuideRect(framing: cam.target, color: Theme.cam(cam.index))
                 if !cam.connected {
                     Color.black.opacity(0.6)
                     Label("Disconnected", systemImage: "wifi.slash").font(.system(size: 12, weight: .semibold))
@@ -209,6 +251,14 @@ private struct CameraTile: View {
                         Spacer(minLength: 0)
                         if cam.status.locked { Image(systemName: "lock.fill").font(.system(size: 10)).foregroundStyle(.white.opacity(0.8)) }
                         battery
+                        Button { model.controlled = cam } label: {
+                            Image(systemName: "scope")
+                                .font(.system(size: 12, weight: .bold))
+                                .frame(width: 26, height: 22)
+                                .foregroundStyle(.white)
+                                .background(Capsule().fill(Theme.accent))
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(6)
                     .background(LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom))

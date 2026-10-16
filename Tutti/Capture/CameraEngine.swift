@@ -313,16 +313,17 @@ final class CameraEngine: NSObject, ObservableObject {
     }
 
     /// Zoom as people know it: 0.5, 1, 2, 5…
-    func setZoom(display: Double, ramp: Bool = true) {
-        sessionQueue.async { self.setFactor(CGFloat(display) * self.wideFactor, ramp: ramp) }
+    /// `speed`: how fast a smooth zoom travels, in doublings per second (0.3 slow … 4 fast).
+    func setZoom(display: Double, ramp: Bool = true, speed: Double = 3) {
+        sessionQueue.async { self.setFactor(CGFloat(display) * self.wideFactor, ramp: ramp, rate: Float(speed)) }
     }
 
-    private func setFactor(_ f: CGFloat, ramp: Bool) {
+    private func setFactor(_ f: CGFloat, ramp: Bool, rate: Float = 3) {
         guard let d = device else { return }
         let factor = max(d.minAvailableVideoZoomFactor, min(f, maxZoomFactor > 1 ? maxZoomFactor : d.maxAvailableVideoZoomFactor))
         do {
             try d.lockForConfiguration()
-            if ramp { d.ramp(toVideoZoomFactor: factor, withRate: 6) } else { d.videoZoomFactor = factor }
+            if ramp { d.ramp(toVideoZoomFactor: factor, withRate: max(0.1, rate)) } else { d.videoZoomFactor = factor }
             d.unlockForConfiguration()
         } catch { return }
         let display = Double(factor / wideFactor)

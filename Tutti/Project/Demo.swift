@@ -24,6 +24,9 @@ enum Demo {
             p.clips.append(Clip(cam: i + 1, device: ["iPad", "iPhone A", "iPhone B"][i], file: "cam\(i + 1).mov",
                                 start: Double(i) * 0.02, duration: 14, audioName: i == 0 ? "USB Audio" : "iPhone Microphone"))
         }
+        // camera 2: the director zoomed in on the player and then glided back out
+        p.clips[1].moves = [FramingKey(time: 3.6, framing: Framing(zoom: 1.6, center: CGPoint(x: 0.5, y: 0.45)), duration: 2),
+                            FramingKey(time: 6.0, framing: Framing(), duration: 1.5)]
         p.cuts = [Cut(time: 0, cam: 1),
                   Cut(time: 3.2, cam: 2, kind: .dissolve, length: 0.8),
                   Cut(time: 6.5, cam: 3, kind: .push, length: 0.6),
