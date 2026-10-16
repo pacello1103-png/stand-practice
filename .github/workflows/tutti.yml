@@ -1,0 +1,53 @@
+name: Build Tutti (IPA)
+
+on:
+  push:
+    branches: [tutti]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build (unsigned)
+        shell: bash
+        run: |
+          xcodebuild -project Tutti.xcodeproj -target Tutti -configuration Release -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            build > build.log 2>&1 || { grep -E "error:" build.log | sort -u | head -n 150; tail -n 30 build.log; exit 1; }
+          grep -E "warning:" build.log | grep -v "deprecated" | sort -u | head -n 60 || true
+          tail -n 3 build.log
+
+      - name: Package IPA
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Release-iphoneos/Tutti.app Payload/
+          zip -qry Tutti.ipa Payload
+          ls -lh Tutti.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tutti-ipa
+          path: Tutti.ipa
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tutti-1.${{ github.run_number }}
+          name: Tutti 1.${{ github.run_number }}
+          make_latest: false
+          target_commitish: tutti
+          files: Tutti.ipa
+          body: |
+            Tutti for iPhone and iPad. Download **Tutti.ipa** and install it with Sideloadly on every device you want to film with.

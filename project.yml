@@ -1,0 +1,56 @@
+name: Tutti
+options:
+  bundleIdPrefix: com.paulo
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+targets:
+  Tutti:
+    type: application
+    platform: iOS
+    sources:
+      - path: Tutti
+    info:
+      path: Tutti/Info.plist
+      properties:
+        CFBundleDisplayName: Tutti
+        CFBundleName: Tutti
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: Tutti films with this camera. Recordings stay on your devices.
+        NSMicrophoneUsageDescription: Tutti records sound with every camera, so the angles can be synced and mixed. Recordings stay on your devices.
+        NSLocalNetworkUsageDescription: Tutti connects your iPhones and iPads nearby so they can record together.
+        NSPhotoLibraryAddUsageDescription: Tutti saves your finished videos to Photos.
+        NSPhotoLibraryUsageDescription: Tutti can import videos from Photos to edit them together.
+        NSBonjourServices:
+          - _tutti-cams._tcp
+          - _tutti-cams._udp
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.paulo.tutti
+        PRODUCT_NAME: Tutti
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
