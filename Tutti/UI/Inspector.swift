@@ -115,7 +115,7 @@ struct TransitionChips: View {
     let selected: TransitionKind
     let pick: (TransitionKind) -> Void
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], spacing: 6) {
             ForEach(TransitionKind.allCases) { k in
                 Chip(label: k.label, symbol: k.symbol, selected: selected == k) { pick(k) }
             }
@@ -282,7 +282,7 @@ private struct SoundPanel: View {
             Card(padding: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionTitle(text: "Sound")
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], spacing: 6) {
                         ForEach(["Natural", "Concert", "Intimate", "Church", "Voice"], id: \.self) { name in
                             Chip(label: name, selected: s.preset == name) { model.applyPreset(name) }
                         }
@@ -383,7 +383,7 @@ private struct MicRow: View {
             }
             HStack(spacing: 6) {
                 ForEach(MicRole.allCases, id: \.self) { r in
-                    Chip(label: r.label, selected: mic.role == r, tint: r == .main ? Theme.accent : (r == .room ? Theme.sunk2 : Theme.rec.opacity(0.7))) {
+                    Chip(label: r.label, selected: mic.role == r, tint: r == .main ? Theme.accent : (r == .room ? Theme.accent.opacity(0.55) : Theme.rec.opacity(0.7))) {
                         update { m in
                             m.role = r
                         }

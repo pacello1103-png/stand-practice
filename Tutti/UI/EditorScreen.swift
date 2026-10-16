@@ -66,12 +66,13 @@ struct EditorScreen: View {
                                 ProgramPlayer(model: model)
                                 TransportBar(model: model)
                                 AnglesStrip(model: model, height: 92)
+                                TimelineStrip(model: model)
+                                    .frame(height: 170)
+                                Spacer(minLength: 0)
                             }
                             Inspector(model: model, tab: $tab)
                                 .frame(width: 340)
                         }
-                        TimelineStrip(model: model)
-                            .frame(height: 150)
                     }
                     .padding(14)
                 } else {

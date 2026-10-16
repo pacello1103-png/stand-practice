@@ -50,7 +50,7 @@ struct Chip: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 if let symbol { Image(systemName: symbol).font(.system(size: 13, weight: .semibold)) }
-                Text(label).font(.system(size: 14, weight: .semibold))
+                Text(label).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 34)

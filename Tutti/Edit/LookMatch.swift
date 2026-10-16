@@ -83,7 +83,7 @@ enum LookMatch {
         if !isReference, !ref.isEmpty {
             let camL = median(cam.map(level)), refL = median(ref.map(level))
             if camL > 0.0005, refL > 0.0005 {
-                look.exposure = max(0.55, min(1.8, refL / camL))
+                look.exposure = max(0.45, min(2.2, refL / camL))
             }
             func chroma(_ list: [Sample]) -> SIMD3<Double> {
                 var s = SIMD3<Double>(repeating: 0)
@@ -95,7 +95,9 @@ enum LookMatch {
             }
             let c = chroma(cam), r = chroma(ref)
             var g = SIMD3<Double>(r.x / max(c.x, 1e-4), r.y / max(c.y, 1e-4), r.z / max(c.z, 1e-4))
-            g = simd_clamp(g, SIMD3(repeating: 0.88), SIMD3(repeating: 1.12))
+            // white balance is already shared between cameras, so only a gentle colour nudge
+            // (different backgrounds must not be mistaken for a colour cast)
+            g = simd_clamp(g, SIMD3(repeating: 0.94), SIMD3(repeating: 1.06))
             let norm = 0.2126 * g.x + 0.7152 * g.y + 0.0722 * g.z
             g /= norm
             look.gains = [g.x, g.y, g.z]

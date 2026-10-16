@@ -121,7 +121,7 @@ final class EditorModel: ObservableObject {
         time = t
         let host = Clock.now + 0.15
         let hostCM = Clock.cmTime(host)
-        player.setRate(1, time: Timeline.time(t), atHostTime: hostCM)
+        Self.start(player, at: Timeline.time(t), hostTime: hostCM)
         for (cam, p) in camPlayers { startCam(cam, p, at: t, hostTime: hostCM) }
         mix?.play(from: t, hostTime: Clock.hostTime(host))
         playing = true
@@ -131,10 +131,20 @@ final class EditorModel: ObservableObject {
         guard let c = project.clip(cam: cam) else { return }
         let local = t - c.start
         if local >= 0 && local < c.duration {
-            p.setRate(1, time: CMTime(seconds: local, preferredTimescale: 60_000), atHostTime: hostTime)
+            Self.start(p, at: CMTime(seconds: local, preferredTimescale: 60_000), hostTime: hostTime)
         } else {
             p.pause()
             p.seek(to: .zero)
+        }
+    }
+
+    /// Starts a player at an exact moment, so picture and sound stay locked together.
+    private static func start(_ p: AVPlayer, at time: CMTime, hostTime: CMTime) {
+        if p.currentItem?.status == .readyToPlay {
+            p.setRate(1, time: time, atHostTime: hostTime)
+        } else {
+            p.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            p.play()
         }
     }
 
@@ -153,7 +163,7 @@ final class EditorModel: ObservableObject {
         // cameras that start later than the program join in when their turn comes
         for (cam, p) in camPlayers where p.rate == 0 {
             guard let c = project.clip(cam: cam), t >= c.start, t < c.end else { continue }
-            p.setRate(1, time: CMTime(seconds: t - c.start, preferredTimescale: 60_000), atHostTime: Clock.cmTime(Clock.now + 0.03))
+            Self.start(p, at: CMTime(seconds: t - c.start, preferredTimescale: 60_000), hostTime: Clock.cmTime(Clock.now + 0.03))
         }
     }
 

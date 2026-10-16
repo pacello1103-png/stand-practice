@@ -352,7 +352,7 @@ private struct TransitionPicker: View {
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(text: "Transition when you tap a camera")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 8)], spacing: 8) {
                     ForEach(TransitionKind.allCases) { k in
                         Chip(label: k.label, symbol: k.symbol, selected: model.transition == k) { model.transition = k }
                     }
