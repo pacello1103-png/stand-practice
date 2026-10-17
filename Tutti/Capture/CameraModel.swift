@@ -24,6 +24,8 @@ final class CameraModel: ObservableObject {
     private var timers: [Timer] = []
     private var pingBurstLeft = 0
     private var lastClip: (info: ClipInfo, url: URL)?
+    private var unsent = false
+    private var sendTask = UIBackgroundTaskIdentifier.invalid
     private var sending: Progress?
     private var progressTimer: Timer?
 
@@ -68,6 +70,10 @@ final class CameraModel: ObservableObject {
             clock.reset()
             link.send(WireMsg(t: Msg.hello, name: DeviceName.current), to: [peer])
             pingBurst()
+            // a take that could not be sent goes out as soon as the director is back
+            if unsent, let last = lastClip {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.sendClip(last.info, url: last.url) }
+            }
         case .notConnected:
             if director == peer {
                 director = nil
@@ -121,6 +127,10 @@ final class CameraModel: ObservableObject {
             engine.lockLook(m.lock ?? false, kelvin: m.kelvin)
         case Msg.tally:
             onAir = (m.program ?? 0) == cam && cam > 0
+            // the camera on air sends a sharper, smoother preview
+            engine.previewLongSide = onAir ? 1280 : 640
+            engine.previewQuality = onAir ? 0.72 : 0.6
+            engine.previewFPS = onAir ? 15 : 8
         case Msg.resend:
             if let last = lastClip, last.info.session == m.session { sendClip(last.info, url: last.url) }
         default:
@@ -190,8 +200,17 @@ final class CameraModel: ObservableObject {
 
     private func sendClip(_ info: ClipInfo, url: URL) {
         guard let d = directorPeer else {
-            message = "Saved on this device. It will be sent when the director asks again."
+            unsent = true
+            message = "Saved on this device. It is sent as soon as the director is back."
             return
+        }
+        unsent = false
+        if sendTask == .invalid {
+            sendTask = UIApplication.shared.beginBackgroundTask(withName: "Send take") { [weak self] in
+                guard let self else { return }
+                UIApplication.shared.endBackgroundTask(self.sendTask)
+                self.sendTask = .invalid
+            }
         }
         link.send(WireMsg(t: Msg.clip, clip: info), to: [d])
         sendProgress = 0
@@ -201,7 +220,12 @@ final class CameraModel: ObservableObject {
             self.progressTimer?.invalidate()
             self.sendProgress = nil
             self.sending = nil
-            self.message = error == nil ? "Sent to the director." : "Sending failed — the take is kept on this device."
+            self.unsent = error != nil
+            self.message = error == nil ? "Sent to the director." : "Sending stopped — it continues when the director is back."
+            if self.sendTask != .invalid {
+                UIApplication.shared.endBackgroundTask(self.sendTask)
+                self.sendTask = .invalid
+            }
         }
         progressTimer?.invalidate()
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in

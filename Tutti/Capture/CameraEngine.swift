@@ -64,6 +64,8 @@ final class CameraEngine: NSObject, ObservableObject {
     /// JPEG preview + its local host time. Called on a background queue.
     var onPreviewFrame: ((Data, Double) -> Void)?
     var previewFPS: Double = 10
+    var previewLongSide: CGFloat = 640
+    var previewQuality: CGFloat = 0.6
 
     // recording state — only touched on captureQueue
     private var writer: AVAssetWriter?
@@ -484,7 +486,8 @@ final class CameraEngine: NSObject, ObservableObject {
             let dims = CMVideoFormatDescriptionGetDimensions(fd)
             let fps = settings.fps
             let pixels = Double(dims.width) * Double(dims.height)
-            let bitrate = Int((pixels >= 3840 * 2160 ? 60_000_000 : 24_000_000) * max(1, Double(fps) / 30))
+            // generous bitrates (above the built-in Camera app) — the edit is rendered from these files
+            let bitrate = Int((pixels >= 3840 * 2160 ? 50_000_000 : 20_000_000) * max(1, Double(fps) / 30).squareRoot())
             let compression: [String: Any] = [
                 AVVideoAverageBitRateKey: bitrate,
                 AVVideoExpectedSourceFrameRateKey: fps,
@@ -587,11 +590,11 @@ final class CameraEngine: NSObject, ObservableObject {
         previewQueue.async {
             autoreleasepool {
                 var img = CIImage(cvPixelBuffer: pb).oriented(orientation(for: rotation))
-                let scale = 480 / max(img.extent.width, img.extent.height)
-                img = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                let scale = min(1, self.previewLongSide / max(img.extent.width, img.extent.height))
+                img = img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0])
                 let cs = CGColorSpace(name: CGColorSpace.sRGB)!
                 let q = kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption
-                if let jpeg = self.ci.jpegRepresentation(of: img, colorSpace: cs, options: [q: 0.55]) {
+                if let jpeg = self.ci.jpegRepresentation(of: img, colorSpace: cs, options: [q: self.previewQuality]) {
                     cb(jpeg, host)
                 }
             }

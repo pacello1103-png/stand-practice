@@ -47,9 +47,26 @@ final class Timeline {
         audioTrack = track
     }
 
+    /// Until the mix is ready, the preview plays the main camera's own sound.
+    func addRawAudio(project p: Project, store: ProjectStore) async {
+        let main = p.sound.mics.first { $0.role == .main }?.cam
+        guard let c = p.clips.first(where: { $0.cam == main && !$0.missing }) ?? p.videoClips.first, let f = c.file else { return }
+        let asset = AVURLAsset(url: store.url(p, f))
+        guard let src = try? await asset.loadTracks(withMediaType: .audio).first,
+              let range = try? await src.load(.timeRange),
+              let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return }
+        var srcStart = range.start
+        var at = c.start
+        if at < 0 { srcStart = srcStart + Self.time(-at); at = 0 }
+        let len = CMTimeMinimum(range.end - srcStart, Self.time(max(0, duration - at)))
+        guard len.seconds > 0.05 else { return }
+        try? track.insertTimeRange(CMTimeRange(start: srcStart, duration: len), of: src, at: Self.time(at))
+        audioTrack = track
+    }
+
     /// The program: cuts and transitions as composition instructions.
-    func videoComposition(project p: Project, size: CGSize) -> AVMutableVideoComposition {
-        let plan = RenderPlan.make(project: p, size: size)
+    func videoComposition(project p: Project, size: CGSize, final: Bool) -> AVMutableVideoComposition {
+        let plan = RenderPlan.make(project: p, size: size, final: final)
         let vc = AVMutableVideoComposition()
         vc.customVideoCompositorClass = ProgramCompositor.self
         vc.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, p.fps)))
@@ -114,7 +131,4 @@ final class Timeline {
         }
         return out
     }
-
-    /// 16:9 output size.
-    static func renderSize(uhd: Bool) -> CGSize { uhd ? CGSize(width: 3840, height: 2160) : CGSize(width: 1920, height: 1080) }
 }

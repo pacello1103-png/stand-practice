@@ -182,6 +182,17 @@ struct TimelineStrip: View {
             ctx.fill(path, with: .color(Theme.accentText.opacity(0.75)))
         }
 
+        // outside the film's start / end: dimmed
+        if p.isTrimmed {
+            let shade = Color.black.opacity(0.55)
+            let a = x(p.start), b = x(p.end)
+            if a > 0 { ctx.fill(Path(CGRect(x: 0, y: laneTop - 4, width: min(a, size.width), height: size.height - laneTop + 4)), with: .color(shade)) }
+            if b < size.width { ctx.fill(Path(CGRect(x: max(0, b), y: laneTop - 4, width: size.width - max(0, b), height: size.height - laneTop + 4)), with: .color(shade)) }
+            for edge in [a, b] where edge >= 0 && edge <= size.width {
+                ctx.fill(Path(CGRect(x: edge - 1.5, y: laneTop - 4, width: 3, height: size.height - laneTop + 4)), with: .color(Theme.warn))
+            }
+        }
+
         // playhead
         let ph = x(model.time)
         if ph >= -2 && ph <= size.width + 2 {

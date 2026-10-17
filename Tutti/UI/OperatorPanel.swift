@@ -6,6 +6,7 @@ struct OperatorPanel: View {
     @ObservedObject var model: DirectorModel
     @ObservedObject var cam: RemoteCam
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var hsize
     @State private var aimPoint: CGPoint?
     @State private var lensSpeed = 1.0
     @State private var lensValue: Double = 1
@@ -47,12 +48,13 @@ struct OperatorPanel: View {
                 .font(.system(size: 13)).foregroundStyle(Theme.muted)
             TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !cam.moving)) { _ in
                 let now = cam.framing(at: Clock.now)
-                HStack(alignment: .top, spacing: 12) {
+                let layout = hsize == .compact ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+                layout {
                     // the full camera picture: tap to aim
                     GeometryReader { g in
                         ZStack {
                             Color.black
-                            if let img = cam.image { Image(uiImage: img).resizable().aspectRatio(contentMode: .fill) }
+                            if let img = cam.image { Image(uiImage: img).resizable().aspectRatio(contentMode: .fit) }
                             GuideRect(framing: now, color: Theme.cam(cam.index))
                             if let p = aimPoint {
                                 Circle().stroke(Theme.warn, lineWidth: 2).frame(width: 30, height: 30)
@@ -78,7 +80,7 @@ struct OperatorPanel: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(model.program == cam.index ? Theme.rec : Theme.line, lineWidth: 2))
                         .overlay(alignment: .topLeading) { label(String(format: "Out · %.2f×", now.zoom)) }
-                        .frame(maxWidth: 260)
+                        .frame(maxWidth: hsize == .compact ? .infinity : 260)
                 }
             }
         }
@@ -96,7 +98,7 @@ struct OperatorPanel: View {
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(text: "Framing move")
-                HStack(spacing: 6) {
+                FlowLayout {
                     ForEach(zooms.indices, id: \.self) { i in
                         let z = zooms[i]
                         Chip(label: z.0, selected: false) {
@@ -106,14 +108,14 @@ struct OperatorPanel: View {
                         }
                     }
                 }
-                HStack(spacing: 6) {
-                    Text("Speed").font(.system(size: 13)).foregroundStyle(Theme.muted)
+                FlowLayout {
+                    Text("Speed").font(.system(size: 13)).foregroundStyle(Theme.muted).frame(height: 34)
                     ForEach(speeds.indices, id: \.self) { i in
                         let sp = speeds[i]
                         Chip(label: sp.0, selected: abs(model.moveSpeed - sp.1) < 0.01) { model.moveSpeed = sp.1 }
                     }
                 }
-                HStack(spacing: 18) {
+                HStack(spacing: 10) {
                     padButton("arrow.left") { model.pan(cam, dx: -0.06, dy: 0) }
                     VStack(spacing: 8) {
                         padButton("arrow.up") { model.pan(cam, dx: 0, dy: -0.06) }
@@ -141,7 +143,7 @@ struct OperatorPanel: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .bold))
-                .frame(width: 52, height: 44)
+                .frame(width: 46, height: 42)
                 .foregroundStyle(Theme.ink)
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.sunk))
         }
@@ -155,7 +157,7 @@ struct OperatorPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(text: "Lens zoom (the real camera)")
                 if !cam.status.lenses.isEmpty {
-                    HStack(spacing: 6) {
+                    FlowLayout {
                         ForEach(cam.status.lenses, id: \.self) { z in
                             Chip(label: String(format: "%g×", z), selected: abs(cam.status.zoom - z) < 0.05) {
                                 lensValue = z
@@ -177,8 +179,8 @@ struct OperatorPanel: View {
                         model.lensZoom(cam, to: v, speed: lensSpeed)
                     }
                 }), range: lo...hi, format: { String(format: "%.1f×", $0) }, onEnd: { model.lensZoom(cam, to: lensValue, speed: lensSpeed) })
-                HStack(spacing: 6) {
-                    Text("Speed").font(.system(size: 13)).foregroundStyle(Theme.muted)
+                FlowLayout {
+                    Text("Speed").font(.system(size: 13)).foregroundStyle(Theme.muted).frame(height: 34)
                     Chip(label: "Slow", selected: lensSpeed == 0.3) { lensSpeed = 0.3 }
                     Chip(label: "Medium", selected: lensSpeed == 1) { lensSpeed = 1 }
                     Chip(label: "Fast", selected: lensSpeed == 3) { lensSpeed = 3 }

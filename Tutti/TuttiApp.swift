@@ -59,6 +59,11 @@ struct RootView: View {
             guard !launched else { return }
             launched = true
             Demo.handleLaunch(store: store, router: router)
+            // screenshots: -landscape turns the screen sideways
+            if ProcessInfo.processInfo.arguments.contains("-landscape"),
+               let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { _ in }
+            }
         }
     }
 }

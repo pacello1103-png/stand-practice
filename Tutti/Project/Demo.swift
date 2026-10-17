@@ -9,7 +9,8 @@ import CoreImage
 enum Demo {
     static let colors: [UIColor] = [UIColor(red: 0.20, green: 0.16, blue: 0.12, alpha: 1),
                                     UIColor(red: 0.12, green: 0.18, blue: 0.16, alpha: 1),
-                                    UIColor(red: 0.13, green: 0.15, blue: 0.22, alpha: 1)]
+                                    UIColor(red: 0.13, green: 0.15, blue: 0.22, alpha: 1),
+                                    UIColor(red: 0.20, green: 0.13, blue: 0.17, alpha: 1)]
 
     static func makeProject(store: ProjectStore) async throws -> Project {
         var p = Project(name: "Demo — Trio in the hall")
@@ -18,10 +19,14 @@ enum Demo {
         let offsets = [0.0, 0.12, -0.04]           // sound arrives late / early (seconds)
         let brightness = [1.0, 1.0, 0.62]
         let tint = [1.0, 1.0, 1.25]
-        for i in 0..<3 {
+        for i in 0..<4 {
             let url = store.url(p, "cam\(i + 1).mov")
-            try await writeClip(url: url, cam: i + 1, seconds: 14, soundOffset: offsets[i], brightness: brightness[i], blue: tint[i])
-            p.clips.append(Clip(cam: i + 1, device: ["iPad", "iPhone A", "iPhone B"][i], file: "cam\(i + 1).mov",
+            // camera 4 is an iPhone held upright
+            let portrait = i == 3
+            try await writeClip(url: url, cam: i + 1, seconds: 14, soundOffset: i < 3 ? offsets[i] : 0.05,
+                                brightness: i < 3 ? brightness[i] : 1.1, blue: i < 3 ? tint[i] : 0.95,
+                                width: portrait ? 720 : 1280, height: portrait ? 1280 : 720)
+            p.clips.append(Clip(cam: i + 1, device: ["iPad", "iPhone A", "iPhone B", "iPhone C"][i], file: "cam\(i + 1).mov",
                                 start: Double(i) * 0.02, duration: 14, audioName: i == 0 ? "USB Audio" : "iPhone Microphone"))
         }
         // camera 2: the director zoomed in on the player and then glided back out
@@ -30,7 +35,8 @@ enum Demo {
         p.cuts = [Cut(time: 0, cam: 1),
                   Cut(time: 3.2, cam: 2, kind: .dissolve, length: 0.8),
                   Cut(time: 6.5, cam: 3, kind: .push, length: 0.6),
-                  Cut(time: 9.8, cam: 1, kind: .dip, length: 0.8)]
+                  Cut(time: 9.8, cam: 4, kind: .dip, length: 0.8),
+                  Cut(time: 12.0, cam: 1, kind: .dissolve, length: 0.8)]
         store.save(p)
         return p
     }
@@ -50,9 +56,10 @@ enum Demo {
         return Float(s * env * 0.6)
     }
 
-    private static func writeClip(url: URL, cam: Int, seconds: Double, soundOffset: Double, brightness: Double, blue: Double) async throws {
+    private static func writeClip(url: URL, cam: Int, seconds: Double, soundOffset: Double, brightness: Double, blue: Double,
+                                  width: Int = 1280, height: Int = 720) async throws {
         try? FileManager.default.removeItem(at: url)
-        let w = 1280, h = 720, fps = 25
+        let w = width, h = height, fps = 25
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let v = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h,
@@ -190,6 +197,8 @@ enum Demo {
         switch mode {
         case "director":
             router.screen = .director
+        case "camera":
+            router.screen = .camera
         case "editor", "export", "sound", "picture":
             Task {
                 let p: Project

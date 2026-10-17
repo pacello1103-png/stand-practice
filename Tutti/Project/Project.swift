@@ -89,8 +89,58 @@ struct Clip: Codable, Identifiable, Equatable {
     var look = CamLook()
     var auto: AutoLook?
     var missing = false          // never arrived from the camera
+    var fit: Bool?               // nil = automatic (fit when the shape differs from the film)
+    var proxyFile: String?       // small copy for the angle previews
+    var cleanFile: String?       // noise-reduced sound
+    var cleanLevel: Double?
 
     var end: Double { start + duration }
+
+    /// Width / height as it is seen (after rotation).
+    var displayAspect: Double {
+        let w = Double(max(1, width)), h = Double(max(1, height))
+        return rotation % 180 == 0 ? w / h : h / w
+    }
+
+    /// Fill the frame (crop a little) or fit (show everything, soft background around it).
+    func fills(_ format: ProjectFormat) -> Bool {
+        if let fit { return !fit }
+        return abs(log(displayAspect / format.aspect)) < 0.2
+    }
+}
+
+enum ProjectFormat: String, Codable, CaseIterable, Identifiable {
+    case landscape, portrait, square
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .landscape: return "16:9"
+        case .portrait: return "9:16"
+        case .square: return "1:1"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .landscape: return "rectangle"
+        case .portrait: return "rectangle.portrait"
+        case .square: return "square"
+        }
+    }
+    var aspect: Double {
+        switch self {
+        case .landscape: return 16.0 / 9
+        case .portrait: return 9.0 / 16
+        case .square: return 1
+        }
+    }
+    func size(uhd: Bool) -> CGSize {
+        let long: CGFloat = uhd ? 3840 : 1920, short: CGFloat = uhd ? 2160 : 1080
+        switch self {
+        case .landscape: return CGSize(width: long, height: short)
+        case .portrait: return CGSize(width: short, height: long)
+        case .square: return CGSize(width: short, height: short)
+        }
+    }
 }
 
 enum TransitionKind: String, Codable, CaseIterable, Identifiable {
@@ -142,10 +192,11 @@ struct MicSetting: Codable, Equatable {
     var role: MicRole
     var gain: Double = 0     // dB, on top of automatic level matching
     var pan: Double = 0      // -1…1
+    var denoise: Double?     // 0…1 noise reduction
 }
 
 enum RoomSound: String, Codable, CaseIterable {
-    case none, studio, chamber, hall, church, plate
+    case none, studio, chamber, hall, church, cathedral, plate
     var label: String {
         switch self {
         case .none: return "Dry"
@@ -153,7 +204,19 @@ enum RoomSound: String, Codable, CaseIterable {
         case .chamber: return "Chamber"
         case .hall: return "Hall"
         case .church: return "Church"
+        case .cathedral: return "Cathedral"
         case .plate: return "Plate"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .none: return "Just the microphones"
+        case .studio: return "Small, warm room"
+        case .chamber: return "Recital room"
+        case .hall: return "Concert hall"
+        case .church: return "Stone church"
+        case .cathedral: return "Huge and long"
+        case .plate: return "Bright, smooth"
         }
     }
 }
@@ -168,9 +231,10 @@ struct SoundSettings: Codable, Equatable {
     var air: Double = 0
     var compress: Double = 0.2      // 0…1
     var reverb: RoomSound = .none
-    var reverbAmount: Double = 0.25
+    var reverbAmount: Double = 0.35
     var target: Double = -14        // LUFS
     var preset = "Natural"
+    var reverbSize: Double?         // 0…1, shorter ↔ longer than the style's usual length
 }
 
 struct PictureSettings: Codable, Equatable {
@@ -178,7 +242,7 @@ struct PictureSettings: Codable, Equatable {
     var reference = 1
     var strength: Double = 0.85
     var steady = true
-    var detail: Double = 0.35
+    var detail: Double = 0
     var contrast: Double = 1
     var saturation: Double = 1
     var vibrance: Double = 0
@@ -197,6 +261,30 @@ struct Project: Codable, Identifiable, Equatable {
     var imported = false
     var mixGain: Double?            // dB that brings the mix to the loudness target
     var exportedAt: Date?
+    var format: ProjectFormat?      // nil = from the cameras
+    var trimIn: Double?
+    var trimOut: Double?
+    var fadeIn: Bool?
+    var fadeOut: Bool?
+
+    /// The shape of the film: chosen, or what most cameras filmed.
+    var outputFormat: ProjectFormat {
+        if let format { return format }
+        let v = videoClips
+        guard !v.isEmpty else { return .landscape }
+        let portrait = v.filter { $0.displayAspect < 0.9 }.count
+        let square = v.filter { $0.displayAspect >= 0.9 && $0.displayAspect <= 1.1 }.count
+        if portrait * 2 > v.count { return .portrait }
+        if square * 2 > v.count { return .square }
+        return .landscape
+    }
+
+    var start: Double { max(0, min(trimIn ?? 0, duration)) }
+    var end: Double {
+        let e = trimOut ?? duration
+        return max(start + 0.1, min(e, duration))
+    }
+    var isTrimmed: Bool { start > 0.01 || end < duration - 0.01 }
 
     var videoClips: [Clip] { clips.filter { $0.hasVideo && $0.file != nil && !$0.missing }.sorted { $0.cam < $1.cam } }
     var audioClips: [Clip] { clips.filter { $0.hasAudio && $0.audioFile != nil && !$0.missing } }

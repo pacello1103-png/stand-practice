@@ -17,23 +17,24 @@ enum LookMatch {
         return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
     }
 
-    static func analyze(url: URL, duration: Double, maxSamples: Int = 40) async -> [Sample] {
+    static func analyze(url: URL, duration: Double, maxSamples: Int = 24) async -> [Sample] {
         let asset = AVURLAsset(url: url)
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = false
         gen.maximumSize = CGSize(width: 96, height: 96)
-        let tol = CMTime(seconds: 0.5, preferredTimescale: 600)
+        // generous tolerance: the generator can use the nearest key frame, which is far faster
+        let tol = CMTime(seconds: 1.0, preferredTimescale: 600)
         gen.requestedTimeToleranceBefore = tol
         gen.requestedTimeToleranceAfter = tol
-        let n = max(3, min(maxSamples, Int(duration / 1.5)))
+        let n = max(3, min(maxSamples, Int(duration / 2)))
+        let times = (0..<n).map { CMTime(seconds: duration * (Double($0) + 0.5) / Double(n), preferredTimescale: 600) }
         var out: [Sample] = []
-        for i in 0..<n {
-            let t = duration * (Double(i) + 0.5) / Double(n)
-            guard let img = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image,
-                  let s = stats(img) else { continue }
+        for await result in gen.images(for: times) {
+            guard let img = try? result.image, let s = stats(img) else { continue }
+            let t = (try? result.actualTime.seconds) ?? result.requestedTime.seconds
             out.append(Sample(time: t, mid: s.mid, high: s.high, rgb: s.rgb))
         }
-        return out
+        return out.sorted { $0.time < $1.time }
     }
 
     private static func stats(_ img: CGImage) -> (mid: Double, high: Double, rgb: SIMD3<Double>)? {

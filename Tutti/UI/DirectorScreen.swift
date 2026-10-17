@@ -12,16 +12,41 @@ struct DirectorScreen: View {
 
     var body: some View {
         GeometryReader { geo in
-            let wide = geo.size.width > geo.size.height && geo.size.width > 700
+            let shape = ScreenShape(size: geo.size)
             ZStack {
                 Theme.bg.ignoresSafeArea()
-                if wide {
-                    HStack(spacing: 16) {
-                        VStack(spacing: 14) {
+                if shape.landscape && shape.compactHeight {
+                    // iPhone on its side: big picture left, controls right
+                    HStack(spacing: 12) {
+                        VStack(spacing: 8) {
                             topBar
                             ProgramMonitor(model: model)
-                            CameraGrid(model: model, columns: max(2, min(4, model.cams.count)))
-                            Spacer(minLength: 0)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        ScrollView {
+                            VStack(spacing: 10) {
+                                RecordBar(model: model)
+                                CameraGrid(model: model, columns: 2)
+                                TransitionPicker(model: model)
+                                LookAndOptions(model: model, showSettings: $showSettings)
+                            }
+                        }
+                        .scrollIndicators(.hidden)
+                        .frame(width: min(320, geo.size.width * 0.42))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                } else if shape.landscape {
+                    // iPad on its side
+                    HStack(spacing: 16) {
+                        VStack(spacing: 12) {
+                            topBar
+                            ProgramMonitor(model: model)
+                                .frame(maxHeight: geo.size.height * 0.56)
+                            ScrollView {
+                                CameraGrid(model: model, columns: max(2, min(4, model.cams.count)))
+                            }
+                            .scrollIndicators(.hidden)
                         }
                         SidePanel(model: model, showSettings: $showSettings)
                             .frame(width: 300)
@@ -33,7 +58,7 @@ struct DirectorScreen: View {
                             topBar
                             ProgramMonitor(model: model)
                             RecordBar(model: model)
-                            CameraGrid(model: model, columns: 2)
+                            CameraGrid(model: model, columns: shape.isPad ? 3 : 2)
                             TransitionPicker(model: model)
                             LookAndOptions(model: model, showSettings: $showSettings)
                         }
@@ -179,7 +204,7 @@ struct FramedImage: View {
                 Color.black
                 if let image {
                     Image(uiImage: image).resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .aspectRatio(contentMode: .fit)
                         .frame(width: g.size.width, height: g.size.height)
                         .scaleEffect(z)
                         .offset(x: (0.5 - c.x) * g.size.width * z, y: (0.5 - c.y) * g.size.height * z)
@@ -236,7 +261,8 @@ private struct CameraTile: View {
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(Theme.stage)
                 if let img = cam.image {
-                    Image(uiImage: img).resizable().scaledToFill()
+                    Image(uiImage: img).resizable().scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 GuideRect(framing: cam.target, color: Theme.cam(cam.index))
                 if !cam.connected {

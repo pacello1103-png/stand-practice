@@ -167,3 +167,49 @@ extension View {
         self.presentationBackground(Theme.bg)
     }
 }
+
+/// Lays chips out in rows and wraps to the next line — nothing is ever cut off on a narrow screen.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x > 0 && x + s.width > maxWidth {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            x += s.width + spacing
+            rowHeight = max(rowHeight, s.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + s.width > bounds.maxX {
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+            x += s.width + spacing
+            rowHeight = max(rowHeight, s.height)
+        }
+    }
+}
+
+/// Screen shape helpers.
+struct ScreenShape {
+    let size: CGSize
+    var landscape: Bool { size.width > size.height }
+    var compactHeight: Bool { size.height < 520 }       // iPhone on its side
+    var compactWidth: Bool { size.width < 600 }         // iPhone upright
+    var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+}

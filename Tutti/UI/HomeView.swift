@@ -124,10 +124,17 @@ struct HomeView: View {
     private func importPicked(_ items: [PhotosPickerItem]) {
         busy = "Importing \(items.count) video\(items.count == 1 ? "" : "s")…"
         Task {
-            var urls: [URL] = []
-            for item in items {
-                if let m = try? await item.loadTransferable(type: PickedMovie.self) { urls.append(m.url) }
+            let bg = await BackgroundWork.begin("Import")
+            defer { BackgroundWork.end(bg) }
+            // all videos at the same time, kept in the order they were picked
+            var found: [Int: URL] = [:]
+            await withTaskGroup(of: (Int, URL?).self) { group in
+                for (i, item) in items.enumerated() {
+                    group.addTask { (i, try? await item.loadTransferable(type: PickedMovie.self)?.url) }
+                }
+                for await (i, url) in group { if let url { found[i] = url } }
             }
+            let urls = found.keys.sorted().compactMap { found[$0] }
             await MainActor.run { picked = [] }
             await finishImport(urls, temporary: true)
         }
@@ -140,7 +147,7 @@ struct HomeView: View {
 
     private func finishImport(_ urls: [URL], temporary: Bool) async {
         guard !urls.isEmpty else { await MainActor.run { busy = nil }; return }
-        let p = await Importer.makeProject(from: urls, store: store)
+        let p = await Importer.makeProject(from: urls, store: store, move: temporary)
         if temporary { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
         await MainActor.run {
             busy = nil

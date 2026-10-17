@@ -111,12 +111,49 @@ enum AudioPrep {
         let meter = LoudnessMeter(channels: ch)
         var low: [Float] = []
         var peaks: [Float] = []
-        var lowAcc: Float = 0, lowN = 0
-        var peakAcc: Float = 0, peakN = 0
         let decim = Int(rate / lowRate)       // 6
         let peakEvery = Int(rate / 100)       // 480
         var total = 0
         var interleaved: [Float] = []
+        var monoPending: [Float] = []
+        let lowFilter = [Float](repeating: 1 / Float(decim), count: decim)
+
+        // collect into big blocks: far fewer file writes, and every step runs vectorised
+        let blockFrames = 1 << 16
+        guard let pcm = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(blockFrames)), let dst = pcm.floatChannelData else { return nil }
+        var filled = 0
+
+        func flush() throws {
+            guard filled > 0 else { return }
+            pcm.frameLength = AVAudioFrameCount(filled)
+            try file.write(from: pcm)
+            meter.process((0..<ch).map { UnsafePointer(dst[$0]) }, frames: filled)
+            // mono for syncing and drawing
+            var mono = [Float](repeating: 0, count: filled)
+            mono.withUnsafeMutableBufferPointer { m in
+                for c in 0..<ch { vDSP_vadd(m.baseAddress!, 1, dst[c], 1, m.baseAddress!, 1, vDSP_Length(filled)) }
+                var k = 1 / Float(ch)
+                vDSP_vsmul(m.baseAddress!, 1, &k, m.baseAddress!, 1, vDSP_Length(filled))
+            }
+            monoPending.append(contentsOf: mono)
+            let usable = (monoPending.count / peakEvery) * peakEvery
+            if usable > 0 {
+                monoPending.withUnsafeBufferPointer { mp in
+                    var i = 0
+                    var lowChunk = [Float](repeating: 0, count: peakEvery / decim)
+                    while i < usable {
+                        var m: Float = 0
+                        vDSP_maxmgv(mp.baseAddress! + i, 1, &m, vDSP_Length(peakEvery))
+                        peaks.append(m)
+                        vDSP_desamp(mp.baseAddress! + i, vDSP_Stride(decim), lowFilter, &lowChunk, vDSP_Length(peakEvery / decim), vDSP_Length(decim))
+                        low.append(contentsOf: lowChunk)
+                        i += peakEvery
+                    }
+                }
+                monoPending.removeFirst(usable)
+            }
+            filled = 0
+        }
 
         while let sb = output.copyNextSampleBuffer() {
             guard let block = CMSampleBufferGetDataBuffer(sb) else { continue }
@@ -128,30 +165,21 @@ enum AudioPrep {
                 CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count * 4, destination: raw.baseAddress!)
             }
             guard status == kCMBlockBufferNoErr else { continue }
-            guard let pcm = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)), let dst = pcm.floatChannelData else { continue }
-            pcm.frameLength = AVAudioFrameCount(frames)
-            for c in 0..<ch {
-                let d = dst[c]
-                for i in 0..<frames { d[i] = interleaved[i * ch + c] }
-            }
-            try file.write(from: pcm)
-            let ptrs = (0..<ch).map { UnsafePointer(dst[$0]) }
-            meter.process(ptrs, frames: frames)
-            let inv = 1 / Float(ch)
-            for i in 0..<frames {
-                var m: Float = 0
-                for c in 0..<ch { m += dst[c][i] }
-                m *= inv
-                lowAcc += m
-                lowN += 1
-                if lowN == decim { low.append(lowAcc / Float(decim)); lowAcc = 0; lowN = 0 }
-                let a = abs(m)
-                if a > peakAcc { peakAcc = a }
-                peakN += 1
-                if peakN == peakEvery { peaks.append(peakAcc); peakAcc = 0; peakN = 0 }
+            var done = 0
+            while done < frames {
+                let n = min(frames - done, blockFrames - filled)
+                interleaved.withUnsafeBufferPointer { src in
+                    for c in 0..<ch {
+                        cblas_scopy(Int32(n), src.baseAddress! + done * ch + c, Int32(ch), dst[c] + filled, 1)
+                    }
+                }
+                filled += n
+                done += n
+                if filled == blockFrames { try flush() }
             }
             total += frames
         }
+        try flush()
         if reader.status == .failed { throw reader.error ?? CaptureError.writer("Could not read the sound.") }
         return PreparedAudio(channels: ch, low: low, peaks: peaks, loudness: meter.integrated, duration: Double(total) / rate)
     }

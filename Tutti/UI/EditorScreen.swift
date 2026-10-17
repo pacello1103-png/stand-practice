@@ -55,19 +55,36 @@ struct EditorScreen: View {
 
     var body: some View {
         GeometryReader { geo in
-            let wide = geo.size.width > 900
+            let shape = ScreenShape(size: geo.size)
             ZStack {
                 Theme.bg.ignoresSafeArea()
-                if wide {
-                    VStack(spacing: 12) {
-                        topBar
+                if shape.landscape && shape.compactHeight {
+                    // iPhone on its side
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(spacing: 6) {
+                            topBar(compact: true)
+                            ProgramPlayer(model: model).frame(maxWidth: .infinity, maxHeight: .infinity)
+                            TransportBar(model: model, compact: true)
+                            TimelineStrip(model: model).frame(height: 64)
+                        }
+                        VStack(spacing: 6) {
+                            AnglesStrip(model: model, height: 46)
+                            Inspector(model: model, tab: $tab)
+                        }
+                        .frame(width: min(330, geo.size.width * 0.42))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                } else if shape.landscape {
+                    // iPad on its side
+                    VStack(spacing: 10) {
+                        topBar(compact: false)
                         HStack(alignment: .top, spacing: 14) {
                             VStack(spacing: 10) {
-                                ProgramPlayer(model: model)
-                                TransportBar(model: model)
-                                AnglesStrip(model: model, height: 92)
-                                TimelineStrip(model: model)
-                                    .frame(height: 170)
+                                ProgramPlayer(model: model).frame(maxHeight: max(200, geo.size.height - 400))
+                                TransportBar(model: model, compact: false)
+                                AnglesStrip(model: model, height: 78)
+                                TimelineStrip(model: model).frame(height: 140)
                                 Spacer(minLength: 0)
                             }
                             Inspector(model: model, tab: $tab)
@@ -76,19 +93,21 @@ struct EditorScreen: View {
                     }
                     .padding(14)
                 } else {
-                    VStack(spacing: 10) {
-                        topBar
-                        ProgramPlayer(model: model)
-                        TransportBar(model: model)
-                        AnglesStrip(model: model, height: 64)
-                        TimelineStrip(model: model).frame(height: 120)
+                    // upright: iPhone and iPad
+                    let phone = shape.compactWidth
+                    VStack(spacing: phone ? 8 : 10) {
+                        topBar(compact: phone)
+                        ProgramPlayer(model: model).frame(maxHeight: geo.size.height * (phone ? 0.34 : 0.38))
+                        TransportBar(model: model, compact: phone)
+                        AnglesStrip(model: model, height: phone ? 52 : 76)
+                        TimelineStrip(model: model).frame(height: phone ? 86 : 130)
                         Inspector(model: model, tab: $tab)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 6)
+                    .padding(.horizontal, phone ? 10 : 14)
+                    .padding(.top, 4)
                 }
-                if model.prepProgress != nil || !model.ready {
-                    PrepOverlay(model: model) {
+                if !model.ready {
+                    LoadingOverlay(model: model) {
                         model.saveNow()
                         router.screen = .home
                     }
@@ -107,9 +126,9 @@ struct EditorScreen: View {
             case "sound": tab = .sound
             case "picture": tab = .picture
             case "export":
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
                     showExport = true
-                    model.export(ExportOptions(uhd: false, maxQuality: false))
+                    model.export(ExportOptions(uhd: false, quality: .high))
                 }
             default: break
             }
@@ -118,9 +137,9 @@ struct EditorScreen: View {
         .background(shortcuts)
     }
 
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            RoundIcon(symbol: "chevron.left", size: 38) {
+    private func topBar(compact: Bool) -> some View {
+        HStack(spacing: compact ? 6 : 10) {
+            RoundIcon(symbol: "chevron.left", size: compact ? 34 : 38) {
                 model.saveNow()
                 router.screen = .home
             }
@@ -129,23 +148,30 @@ struct EditorScreen: View {
                 renaming = true
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.project.name).font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.ink).lineLimit(1)
-                    Text("\(model.project.cams.count) cameras · \(formatClock(model.duration)) · \(model.project.fps) fps")
-                        .font(.system(size: 12)).foregroundStyle(Theme.muted)
+                    Text(model.project.name).font(.system(size: compact ? 15 : 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.ink).lineLimit(1)
+                    Text("\(model.project.cams.count) cameras · \(formatClock(model.duration)) · \(model.project.outputFormat.label)")
+                        .font(.system(size: 11)).foregroundStyle(Theme.muted).lineLimit(1)
                 }
             }
             .buttonStyle(.plain)
-            Spacer()
-            RoundIcon(symbol: "arrow.uturn.backward", size: 38) { model.undo() }
+            .layoutPriority(-1)
+            Spacer(minLength: 4)
+            RoundIcon(symbol: "arrow.uturn.backward", size: compact ? 32 : 38) { model.undo() }
                 .disabled(!model.canUndo).opacity(model.canUndo ? 1 : 0.4)
-            RoundIcon(symbol: "arrow.uturn.forward", size: 38) { model.redo() }
+            RoundIcon(symbol: "arrow.uturn.forward", size: compact ? 32 : 38) { model.redo() }
                 .disabled(!model.canRedo).opacity(model.canRedo ? 1 : 0.4)
             Button { showExport = true } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-                    .font(.system(size: 15, weight: .semibold))
-                    .padding(.horizontal, 14).frame(height: 38)
-                    .foregroundStyle(.white)
-                    .background(Capsule().fill(Theme.accent))
+                Group {
+                    if compact {
+                        Image(systemName: "square.and.arrow.up").frame(width: 38, height: 34)
+                    } else {
+                        Label("Export", systemImage: "square.and.arrow.up").padding(.horizontal, 14).frame(height: 38)
+                    }
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .background(Capsule().fill(Theme.accent))
             }
             .buttonStyle(.plain)
             .disabled(!model.ready)
@@ -159,6 +185,8 @@ struct EditorScreen: View {
             Button("") { model.step(frames: 1) }.keyboardShortcut(.rightArrow, modifiers: [])
             Button("") { model.undo() }.keyboardShortcut("z", modifiers: .command)
             Button("") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
+            Button("") { model.setIn() }.keyboardShortcut("i", modifiers: [])
+            Button("") { model.setOut() }.keyboardShortcut("o", modifiers: [])
             ForEach(1..<10) { i in
                 Button("") { if model.project.cams.contains(i) { model.cut(to: i) } }
                     .keyboardShortcut(KeyEquivalent(Character("\(i)")), modifiers: [])
@@ -179,43 +207,55 @@ private struct ProgramPlayer: View {
             let cam = model.project.camera(at: model.time)
             HStack(spacing: 6) {
                 CamBadge(cam: cam)
-                if model.playing {
-                    Text("Tap an angle below to cut").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.8))
+                if let p = model.prepProgress {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini).tint(.white)
+                        Text("\(model.prepText) \(Int(p * 100))%").lineLimit(1)
+                    }
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 8).frame(height: 22)
+                    .background(Capsule().fill(Color.black.opacity(0.6)))
+                } else if !model.cleaning.isEmpty {
+                    Text("Cleaning the sound…").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 8).frame(height: 22)
+                        .background(Capsule().fill(Color.black.opacity(0.6)))
                 }
             }
-            .padding(10)
+            .padding(8)
         }
-        .aspectRatio(16 / 9, contentMode: .fit)
+        .aspectRatio(CGFloat(model.project.outputFormat.aspect), contentMode: .fit)
         .background(Color.black)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.line))
+        .frame(maxWidth: .infinity)
         .onTapGesture { model.togglePlay() }
     }
 }
 
 private struct TransportBar: View {
     @ObservedObject var model: EditorModel
+    var compact: Bool
     var body: some View {
-        HStack(spacing: 14) {
-            Text(formatTimecode(model.time, fps: model.project.fps)).font(Theme.num(15)).foregroundStyle(Theme.ink)
-                .frame(minWidth: 96, alignment: .leading)
-            Spacer()
+        HStack(spacing: compact ? 10 : 14) {
+            Text(formatTimecode(model.time, fps: model.project.fps)).font(Theme.num(compact ? 13 : 15)).foregroundStyle(Theme.ink)
+                .fixedSize()
+            Spacer(minLength: 0)
             Button { model.jumpToCut(next: false) } label: { Image(systemName: "backward.end.fill") }
             Button { model.step(frames: -1) } label: { Image(systemName: "chevron.left") }
             Button { model.togglePlay() } label: {
                 Image(systemName: model.playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .frame(width: 52, height: 44)
+                    .font(.system(size: compact ? 17 : 20, weight: .bold))
+                    .frame(width: compact ? 46 : 52, height: compact ? 38 : 44)
                     .background(Capsule().fill(Theme.accent))
                     .foregroundStyle(.white)
             }
             Button { model.step(frames: 1) } label: { Image(systemName: "chevron.right") }
             Button { model.jumpToCut(next: true) } label: { Image(systemName: "forward.end.fill") }
-            Spacer()
-            Text(formatClock(model.duration)).font(Theme.num(13)).foregroundStyle(Theme.muted)
-                .frame(minWidth: 96, alignment: .trailing)
+            Spacer(minLength: 0)
+            Text(formatClock(model.project.end - model.project.start)).font(Theme.num(compact ? 12 : 13)).foregroundStyle(Theme.muted)
+                .fixedSize()
         }
-        .font(.system(size: 17, weight: .semibold))
+        .font(.system(size: compact ? 15 : 17, weight: .semibold))
         .foregroundStyle(Theme.ink)
         .buttonStyle(.plain)
     }
@@ -233,30 +273,21 @@ private struct AnglesStrip: View {
                 ForEach(model.project.videoClips) { clip in
                     Button { model.cut(to: clip.cam) } label: {
                         ZStack(alignment: .topLeading) {
+                            Rectangle().fill(Color.black)
                             if let p = model.camPlayers[clip.cam] {
-                                PlayerView(player: p, gravity: .resizeAspectFill)
-                            } else {
-                                Rectangle().fill(Theme.stage)
+                                PlayerView(player: p, gravity: .resizeAspect)
+                            } else if let still = model.stills[clip.cam] {
+                                Image(uiImage: still).resizable().scaledToFit()
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
-                            CamBadge(cam: clip.cam).padding(5)
+                            CamBadge(cam: clip.cam).padding(4)
                         }
                         .frame(width: height * 16 / 9, height: height)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(current == clip.cam ? Theme.rec : Theme.cam(clip.cam).opacity(0.4), lineWidth: current == clip.cam ? 3 : 1))
                     }
                     .buttonStyle(.plain)
-                }
-                if model.ready {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: model.transition.symbol)
-                            Text(model.transition.label)
-                        }
-                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
-                        Text("next cut").font(.system(size: 11)).foregroundStyle(Theme.muted)
-                    }
-                    .padding(.horizontal, 10)
                 }
             }
         }
@@ -264,27 +295,19 @@ private struct AnglesStrip: View {
     }
 }
 
-private struct PrepOverlay: View {
+private struct LoadingOverlay: View {
     @ObservedObject var model: EditorModel
     let back: () -> Void
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Theme.bg.opacity(0.92).ignoresSafeArea()
+            Theme.bg.opacity(0.94).ignoresSafeArea()
             RoundIcon(symbol: "chevron.left", size: 38, action: back).padding(14)
-            VStack(spacing: 16) {
-                TuttiMark(size: 64)
-                    .rotationEffect(.degrees((model.prepProgress ?? 0) * 360))
-                    .animation(.easeInOut(duration: 0.6), value: model.prepProgress)
-                Text(model.prepText.isEmpty ? "Opening…" : model.prepText).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
-                if let p = model.prepProgress {
-                    ProgressView(value: p).tint(Theme.accentText).frame(width: 260)
-                    Text("Lining up every camera by its sound and matching the pictures.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
-                } else {
-                    ProgressView()
-                }
+            VStack(spacing: 14) {
+                TuttiMark(size: 56)
+                Text("Opening…").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
+                ProgressView()
                 if let err = model.problem {
-                    Text(err).font(.system(size: 13)).foregroundStyle(Theme.warn)
+                    Text(err).font(.system(size: 13)).foregroundStyle(Theme.warn).multilineTextAlignment(.center)
                 }
             }
             .padding(30)

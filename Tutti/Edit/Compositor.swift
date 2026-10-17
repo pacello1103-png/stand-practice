@@ -1,10 +1,12 @@
 import AVFoundation
 import CoreImage
+import Metal
 import simd
 
 /// Everything the renderer needs about one camera. Immutable, so it is safe on render threads.
 struct CamRender {
     var rotation: Int
+    var fills: Bool
     var framing: Framing
     var moves: [FramingKey]
     var gains: SIMD3<Double>      // auto colour match × manual warmth/tint
@@ -24,22 +26,34 @@ struct CamRender {
         let f = (local - t0) / max(1e-6, t1 - t0)
         return steadyGains[i] * (1 - f) + steadyGains[i + 1] * f
     }
+
+    func framing(at t: Double) -> Framing {
+        moves.isEmpty ? framing : Framing.at(t - clipStart, base: framing, moves: moves)
+    }
 }
 
 final class RenderPlan {
     let size: CGSize
     let cams: [Int: CamRender]
     let picture: PictureSettings
+    let final: Bool               // full quality (export) or fast (preview)
+    let fadeIn: ClosedRange<Double>?
+    let fadeOut: ClosedRange<Double>?
 
-    init(size: CGSize, cams: [Int: CamRender], picture: PictureSettings) {
+    init(size: CGSize, cams: [Int: CamRender], picture: PictureSettings, final: Bool,
+         fadeIn: ClosedRange<Double>?, fadeOut: ClosedRange<Double>?) {
         self.size = size
         self.cams = cams
         self.picture = picture
+        self.final = final
+        self.fadeIn = fadeIn
+        self.fadeOut = fadeOut
     }
 
-    static func make(project p: Project, size: CGSize) -> RenderPlan {
+    static func make(project p: Project, size: CGSize, final: Bool) -> RenderPlan {
         var cams: [Int: CamRender] = [:]
         let pic = p.picture
+        let format = p.outputFormat
         for c in p.videoClips {
             var gains = SIMD3<Double>(1, 1, 1)
             var exposure = pow(2, c.look.exposure)
@@ -55,14 +69,16 @@ final class RenderPlan {
                     steady = a.steadyGains.map { 1 + ($0 - 1) * k }
                 }
             }
-            // manual warmth / tint
             gains.x *= 1 + 0.10 * c.look.warmth
             gains.z *= 1 - 0.10 * c.look.warmth
             gains.y *= 1 - 0.07 * c.look.tint
-            cams[c.cam] = CamRender(rotation: c.rotation, framing: c.framing, moves: c.moves ?? [], gains: gains, exposure: exposure,
-                                    steadyTimes: times, steadyGains: steady, clipStart: c.start)
+            cams[c.cam] = CamRender(rotation: c.rotation, fills: c.fills(format), framing: c.framing, moves: c.moves ?? [],
+                                    gains: gains, exposure: exposure, steadyTimes: times, steadyGains: steady, clipStart: c.start)
         }
-        return RenderPlan(size: size, cams: cams, picture: pic)
+        let len = min(1.2, (p.end - p.start) / 4)
+        let fi: ClosedRange<Double>? = (p.fadeIn ?? false) ? p.start...(p.start + len) : nil
+        let fo: ClosedRange<Double>? = (p.fadeOut ?? false) ? (p.end - len)...p.end : nil
+        return RenderPlan(size: size, cams: cams, picture: pic, final: final, fadeIn: fi, fadeOut: fo)
     }
 }
 
@@ -98,10 +114,16 @@ final class ProgramInstruction: NSObject, AVVideoCompositionInstructionProtocol 
     }
 }
 
-/// Renders the program: framing with high-quality scaling, detail recovery for zoomed shots,
-/// look matching, and the transitions.
+/// Renders the program: framing, fit/fill, look matching, transitions and fades.
+/// The export path uses Lanczos scaling and detail recovery; the preview path is lighter so playback stays smooth.
 final class ProgramCompositor: NSObject, AVVideoCompositing {
-    private static let context = CIContext(options: [.cacheIntermediates: false])
+    private static let context: CIContext = {
+        if let device = MTLCreateSystemDefaultDevice() {
+            return CIContext(mtlDevice: device, options: [.cacheIntermediates: false, .name: "Tutti"])
+        }
+        return CIContext(options: [.cacheIntermediates: false])
+    }()
+    private static let outputSpace = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
     private let queue = DispatchQueue(label: "tutti.compositor", qos: .userInitiated)
     private var cancelled = false
 
@@ -130,8 +152,10 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
                 }
                 let image = Self.render(ins, request: request)
                 let rect = CGRect(origin: .zero, size: ins.plan.size)
-                let cs = CGColorSpace(name: CGColorSpace.itur_709) ?? CGColorSpaceCreateDeviceRGB()
-                Self.context.render(image, to: out, bounds: rect, colorSpace: cs)
+                Self.context.render(image, to: out, bounds: rect, colorSpace: Self.outputSpace)
+                CVBufferSetAttachment(out, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(out, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+                CVBufferSetAttachment(out, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
                 request.finish(withComposedVideoFrame: out)
             }
         }
@@ -156,49 +180,33 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
             let start = ins.timeRange.start.seconds
             let len = max(0.001, ins.timeRange.duration.seconds)
             var p = max(0, min(1, (t - start) / len))
-            p = p * p * (3 - 2 * p)    // ease in and out
+            p = p * p * (3 - 2 * p)
             result = blend(a, b, p: p, kind: ins.kind, rect: rect)
         }
-        result = finish(result, plan: plan)
+        result = finish(result, plan: plan, t: t)
         return result.composited(over: black).cropped(to: rect)
+    }
+
+    private static func scaled(_ img: CIImage, by s: CGFloat, final: Bool) -> CIImage {
+        if final {
+            return img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: s, kCIInputAspectRatioKey: 1.0])
+        }
+        return img.samplingLinear().transformed(by: CGAffineTransform(scaleX: s, y: s))
     }
 
     private static func shot(cam: Int, track: CMPersistentTrackID, request: AVAsynchronousVideoCompositionRequest, t: Double, plan: RenderPlan) -> CIImage? {
         guard let pb = request.sourceFrame(byTrackID: track), let c = plan.cams[cam] else { return nil }
         let out = plan.size
-        var img = CIImage(cvPixelBuffer: pb).oriented(orientation(for: c.rotation))
-        img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
-        let src = img.extent.size
-        guard src.width > 0, src.height > 0 else { return nil }
+        let outRect = CGRect(origin: .zero, size: out)
+        var src = CIImage(cvPixelBuffer: pb).oriented(orientation(for: c.rotation))
+        src = src.transformed(by: CGAffineTransform(translationX: -src.extent.minX, y: -src.extent.minY))
+        let sw = src.extent.width, sh = src.extent.height
+        guard sw > 0, sh > 0 else { return nil }
 
-        // fill the frame, then the camera's own framing (zoom + position), following the director's moves
-        let fr = c.moves.isEmpty ? c.framing : Framing.at(t - c.clipStart, base: c.framing, moves: c.moves)
-        let zoom = CGFloat(max(1, fr.zoom))
-        let scale = max(out.width / src.width, out.height / src.height) * zoom
-        let w = src.width * scale, h = src.height * scale
-        let spareX = (w - out.width) / 2, spareY = (h - out.height) / 2
-        let tx = (out.width - w) / 2 - CGFloat(fr.x) * spareX
-        let ty = (out.height - h) / 2 + CGFloat(fr.y) * spareY
-
-        // Lanczos keeps fine detail when scaling (much better than the default bilinear)
-        img = img.clampedToExtent()
-            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0])
-            .transformed(by: CGAffineTransform(translationX: tx, y: ty))
-            .cropped(to: CGRect(origin: .zero, size: out))
-
-        // Recover crispness lost when a shot is enlarged (zoomed in, or 1080p source in a 4K program).
-        let enlargement = max(0, Double(scale) - 1)
-        let sharp = min(1.4, plan.picture.detail * 0.5 + enlargement * 0.45)
-        if sharp > 0.02 {
-            let radius = 1.2 + min(1.5, enlargement) * 0.8
-            img = img.applyingFilter("CISharpenLuminance", parameters: [kCIInputSharpnessKey: sharp, kCIInputRadiusKey: radius])
-                .cropped(to: CGRect(origin: .zero, size: out))
-        }
-
-        // look: colour match and exposure, in linear light
+        // look: colour match and exposure (Core Image works in linear light)
         let g = c.gains * (c.exposure * c.steady(at: t))
         if abs(g.x - 1) > 0.002 || abs(g.y - 1) > 0.002 || abs(g.z - 1) > 0.002 {
-            img = img.applyingFilter("CIColorMatrix", parameters: [
+            src = src.applyingFilter("CIColorMatrix", parameters: [
                 "inputRVector": CIVector(x: CGFloat(g.x), y: 0, z: 0, w: 0),
                 "inputGVector": CIVector(x: 0, y: CGFloat(g.y), z: 0, w: 0),
                 "inputBVector": CIVector(x: 0, y: 0, z: CGFloat(g.z), w: 0),
@@ -206,10 +214,47 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0),
             ])
         }
-        return img
+
+        let fr = c.framing(at: t)
+        let zoom = CGFloat(max(1, fr.zoom))
+        let base = c.fills ? max(out.width / sw, out.height / sh) : min(out.width / sw, out.height / sh)
+        let scale = base * zoom
+        let w = sw * scale, h = sh * scale
+        let ctr = fr.center
+        var tx = out.width / 2 - CGFloat(ctr.x) * w
+        var ty = out.height / 2 - h * (1 - CGFloat(ctr.y))
+        tx = w >= out.width ? min(0, max(out.width - w, tx)) : (out.width - w) / 2
+        ty = h >= out.height ? min(0, max(out.height - h, ty)) : (out.height - h) / 2
+
+        var img = scaled(src.clampedToExtent(), by: scale, final: plan.final)
+            .transformed(by: CGAffineTransform(translationX: tx, y: ty))
+
+        // Recover crispness lost when a shot is enlarged (zoomed in, or a small source in a big film).
+        let enlargement = max(0, Double(scale) - 1.03)
+        let sharp = min(0.9, plan.picture.detail * 0.6 + enlargement * 0.35)
+        if sharp > 0.02 {
+            img = img.applyingFilter("CISharpenLuminance", parameters: [
+                kCIInputSharpnessKey: sharp, kCIInputRadiusKey: 1.0 + min(1.5, enlargement) * 0.9,
+            ])
+        }
+
+        if c.fills || (w >= out.width - 1 && h >= out.height - 1) {
+            return img.cropped(to: outRect)
+        }
+        // Fit: the whole picture, on a soft, darkened copy of itself (no black bars).
+        let picture = img.cropped(to: CGRect(x: tx, y: ty, width: w, height: h).intersection(outRect))
+        let fillScale = max(out.width / sw, out.height / sh) / 8
+        let small = src.clampedToExtent().samplingLinear().transformed(by: CGAffineTransform(scaleX: fillScale, y: fillScale))
+        let blurred = small.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 6])
+            .transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        let bw = sw * fillScale * 8, bh = sh * fillScale * 8
+        let bg = blurred.transformed(by: CGAffineTransform(translationX: (out.width - bw) / 2, y: (out.height - bh) / 2))
+            .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -0.18, kCIInputSaturationKey: 0.9, kCIInputContrastKey: 0.9])
+            .cropped(to: outRect)
+        return picture.composited(over: bg)
     }
 
-    private static func finish(_ image: CIImage, plan: RenderPlan) -> CIImage {
+    private static func finish(_ image: CIImage, plan: RenderPlan, t: Double) -> CIImage {
         var img = image
         let p = plan.picture
         if abs(p.contrast - 1) > 0.005 || abs(p.saturation - 1) > 0.005 {
@@ -219,6 +264,19 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
         }
         if abs(p.vibrance) > 0.005 {
             img = img.applyingFilter("CIVibrance", parameters: ["inputAmount": p.vibrance])
+        }
+        var fade = 1.0
+        if let r = plan.fadeIn, t < r.upperBound { fade = min(fade, max(0, (t - r.lowerBound) / max(0.01, r.upperBound - r.lowerBound))) }
+        if let r = plan.fadeOut, t > r.lowerBound { fade = min(fade, max(0, (r.upperBound - t) / max(0.01, r.upperBound - r.lowerBound))) }
+        if fade < 0.999 {
+            let k = CGFloat(fade * fade)
+            img = img.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: k, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: k, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            ])
         }
         return img
     }
@@ -247,7 +305,7 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
             let inn = b.transformed(by: CGAffineTransform(translationX: rect.width - dx, y: 0))
             return inn.composited(over: out).cropped(to: rect)
         case .blur:
-            let r = sin(Double.pi * p) * 28 * Double(rect.width / 1920)
+            let r = sin(Double.pi * p) * 28 * Double(max(rect.width, rect.height) / 1920)
             func soft(_ x: CIImage) -> CIImage {
                 r < 0.3 ? x : x.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: r]).cropped(to: rect)
             }

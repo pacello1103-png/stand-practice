@@ -120,6 +120,7 @@ final class DirectorModel: ObservableObject {
             if let c = cams.first(where: { $0.id == key }) {
                 c.peer = peer
                 c.connected = true
+                if phase == .collecting && !c.received { c.failed = nil }
             } else {
                 let c = RemoteCam(id: key, peer: peer, index: nextIndex(), name: key)
                 cams.append(c)
@@ -136,7 +137,7 @@ final class DirectorModel: ObservableObject {
         case .notConnected:
             if let c = cams.first(where: { $0.id == key }) {
                 c.connected = false
-                if phase == .collecting && !c.received { c.failed = "Disconnected" }
+                // while collecting, a camera that drops out is waited for: it re-sends when it is back
                 if phase == .ready && !c.isLocal {
                     // forget it after a while if it does not come back
                     DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
@@ -194,7 +195,9 @@ final class DirectorModel: ObservableObject {
             let c = RemoteCam(id: "local", peer: nil, index: nextIndex(), name: "This \(DeviceName.kind)", isLocal: true)
             cams.append(c)
             cams.sort { $0.index < $1.index }
-            engine.previewFPS = 12
+            engine.previewFPS = 15
+            engine.previewLongSide = 1280
+            engine.previewQuality = 0.75
             engine.onPreviewFrame = { [weak self, weak c, weak engine] jpeg, host in
                 guard let self, let c, let engine else { return }
                 self.decodeQueue.async {

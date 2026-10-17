@@ -23,7 +23,7 @@ final class MixEngine {
     private let sum = AVAudioMixerNode()
     private let tone = AVAudioUnitEQ(numberOfBands: 4)
     private let comp: AVAudioUnitEffect
-    private let reverb = AVAudioUnitReverb()
+    private let reverb: AVAudioUnitEffect          // Apple's Reverb2, with real control over the room length
     private let limiter: AVAudioUnitEffect
     let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
     private(set) var settings = SoundSettings()
@@ -33,6 +33,9 @@ final class MixEngine {
     init(project p: Project, store: ProjectStore) throws {
         comp = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_DynamicsProcessor,
+            componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
+        reverb = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+            componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_Reverb2,
             componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
         limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
@@ -51,7 +54,14 @@ final class MixEngine {
 
         let target = p.sound.target
         for c in p.audioClips {
-            guard let name = c.audioFile,
+            let mic = p.sound.mics.first { $0.cam == c.cam }
+            var name = c.audioFile
+            // the noise-reduced copy, when it matches the chosen amount
+            if let level = mic?.denoise, level > 0.02, let clean = c.cleanFile, let made = c.cleanLevel, abs(made - level) < 0.01,
+               FileManager.default.fileExists(atPath: store.url(p, clean).path) {
+                name = clean
+            }
+            guard let name,
                   let file = try? AVAudioFile(forReading: store.url(p, name), commonFormat: .pcmFormatFloat32, interleaved: false) else { continue }
             let auto = c.loudness.map { max(-18, min(18, (target - 6) - $0)) } ?? 0
             let s = Source(cam: c.cam, file: file, start: c.start + c.audioShift, drift: c.drift, autoGain: auto)
@@ -125,12 +135,20 @@ final class MixEngine {
         setParam(comp, kDynamicsProcessorParam_AttackTime, 0.015)
         setParam(comp, kDynamicsProcessorParam_ReleaseTime, 0.25)
 
-        if s.reverb == .none {
+        if s.reverb == .none || s.reverbAmount < 0.01 {
             reverb.bypass = true
         } else {
             reverb.bypass = false
-            reverb.loadFactoryPreset(Self.preset(s.reverb))
-            reverb.wetDryMix = Float(max(0, min(1, s.reverbAmount)) * 45)
+            let r = Self.room(s.reverb)
+            let size = pow(2.0, ((s.reverbSize ?? 0.5) - 0.5) * 1.4)     // ×0.6 … ×1.6
+            let amount = max(0, min(1, s.reverbAmount))
+            setParam(reverb, kReverb2Param_DryWetMix, Float(pow(amount, 0.8) * 62))
+            setParam(reverb, kReverb2Param_Gain, Float(amount * 2.5))
+            setParam(reverb, kReverb2Param_MinDelayTime, Float(r.pre))
+            setParam(reverb, kReverb2Param_MaxDelayTime, Float(min(1, r.spread * size)))
+            setParam(reverb, kReverb2Param_DecayTimeAt0Hz, Float(r.low * size))
+            setParam(reverb, kReverb2Param_DecayTimeAtNyquist, Float(r.high * size))
+            setParam(reverb, kReverb2Param_RandomizeReflections, Float(r.diffusion))
         }
 
         setParam(limiter, kLimiterParam_AttackTime, 0.004)
@@ -138,14 +156,16 @@ final class MixEngine {
         setParam(limiter, kLimiterParam_PreGain, Float(max(-30, min(30, gainDB))))
     }
 
-    private static func preset(_ r: RoomSound) -> AVAudioUnitReverbPreset {
+    /// Each space: pre-delay, reflection spread, decay of the lows and of the highs (seconds), diffusion.
+    private static func room(_ r: RoomSound) -> (pre: Double, spread: Double, low: Double, high: Double, diffusion: Double) {
         switch r {
-        case .studio: return .mediumRoom
-        case .chamber: return .mediumChamber
-        case .hall: return .largeHall
-        case .church: return .cathedral
-        case .plate: return .plate
-        case .none: return .smallRoom
+        case .studio: return (0.004, 0.022, 0.55, 0.30, 600)
+        case .chamber: return (0.008, 0.035, 1.2, 0.65, 800)
+        case .hall: return (0.016, 0.060, 2.1, 1.05, 1000)
+        case .church: return (0.024, 0.085, 3.8, 1.6, 1000)
+        case .cathedral: return (0.035, 0.120, 6.5, 2.4, 1000)
+        case .plate: return (0.001, 0.012, 1.7, 1.5, 1000)
+        case .none: return (0.008, 0.05, 1, 0.5, 1)
         }
     }
 
@@ -189,16 +209,19 @@ final class MixEngine {
 
     // MARK: - Rendering
 
-    /// Renders the mix offline. With `measureOnly` nothing is written; returns the loudness (LUFS).
-    func render(duration: Double, to url: URL?, progress: ((Double) -> Void)? = nil) throws -> Double? {
+    /// Renders the mix offline, from `start` to `end` on the project timeline, with optional fades.
+    /// With no `url` nothing is written. Returns the loudness (LUFS).
+    func render(from start: Double = 0, to end: Double, fadeIn: Double = 0, fadeOut: Double = 0,
+                to url: URL?, progress: ((Double) -> Void)? = nil) throws -> Double? {
         engine.stop()
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
         defer { engine.stop(); engine.disableManualRenderingMode() }
         try engine.start()
-        schedule(from: 0)
+        schedule(from: start)
         for s in sources { s.player.play() }
 
-        let total = AVAudioFramePosition(duration * format.sampleRate)
+        let sr = format.sampleRate
+        let total = AVAudioFramePosition(max(0, end - start) * sr)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: engine.manualRenderingMaximumFrameCount) else { return nil }
         var out: AVAudioFile?
         if let url {
@@ -207,16 +230,33 @@ final class MixEngine {
         }
         let meter = LoudnessMeter(channels: 2)
         var lastReport = 0.0
+        let fadeInFrames = Double(fadeIn * sr), fadeOutFrames = Double(fadeOut * sr)
         while engine.manualRenderingSampleTime < total {
-            let left = total - engine.manualRenderingSampleTime
+            let pos = engine.manualRenderingSampleTime
+            let left = total - pos
             let n = AVAudioFrameCount(min(Int64(buffer.frameCapacity), left))
             let status = try engine.renderOffline(n, to: buffer)
             switch status {
             case .success:
-                if let out { try out.write(from: buffer) }
                 if let d = buffer.floatChannelData {
-                    meter.process([UnsafePointer(d[0]), UnsafePointer(d[1])], frames: Int(buffer.frameLength))
+                    let len = Int(buffer.frameLength)
+                    if fadeInFrames > 0 || fadeOutFrames > 0 {
+                        for i in 0..<len {
+                            let f = Double(pos) + Double(i)
+                            var g = 1.0
+                            if fadeInFrames > 0 && f < fadeInFrames { g = f / fadeInFrames }
+                            let tail = Double(total) - f
+                            if fadeOutFrames > 0 && tail < fadeOutFrames { g = min(g, max(0, tail / fadeOutFrames)) }
+                            if g < 1 {
+                                let k = Float(g * g)
+                                d[0][i] *= k
+                                d[1][i] *= k
+                            }
+                        }
+                    }
+                    meter.process([UnsafePointer(d[0]), UnsafePointer(d[1])], frames: len)
                 }
+                if let out { try out.write(from: buffer) }
                 let f = Double(engine.manualRenderingSampleTime) / Double(max(1, total))
                 if f - lastReport > 0.01 { lastReport = f; progress?(f) }
             case .insufficientDataFromInputNode, .cannotDoInCurrentContext:

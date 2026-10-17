@@ -11,7 +11,8 @@ struct PickedMovie: Transferable {
             SentTransferredFile(movie.url)
         } importing: { received in
             let dest = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-" + received.file.lastPathComponent)
-            try FileManager.default.copyItem(at: received.file, to: dest)
+            // moving is instant; copy only if the system does not let us move it
+            do { try FileManager.default.moveItem(at: received.file, to: dest) } catch { try FileManager.default.copyItem(at: received.file, to: dest) }
             return PickedMovie(url: dest)
         }
     }
@@ -20,7 +21,7 @@ struct PickedMovie: Transferable {
 /// Videos (and sound files from a separate recorder) filmed elsewhere: they become a project
 /// and get lined up by their sound.
 enum Importer {
-    static func makeProject(from urls: [URL], store: ProjectStore, name: String? = nil) async -> Project {
+    static func makeProject(from urls: [URL], store: ProjectStore, name: String? = nil, move: Bool = false) async -> Project {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
@@ -35,7 +36,10 @@ enum Importer {
             let file = "cam\(cam).\(ext)"
             let dest = store.url(p, file)
             try? FileManager.default.removeItem(at: dest)
-            do { try FileManager.default.copyItem(at: url, to: dest) } catch { continue }
+            do {
+                // files Tutti already copied (from Photos) are moved, not copied twice
+                if move { try FileManager.default.moveItem(at: url, to: dest) } else { try FileManager.default.copyItem(at: url, to: dest) }
+            } catch { continue }
             let asset = AVURLAsset(url: dest)
             let duration = (try? await asset.load(.duration).seconds) ?? 0
             let video = try? await asset.loadTracks(withMediaType: .video).first

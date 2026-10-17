@@ -3,48 +3,90 @@ import AVFoundation
 /// After a recording (or import): prepares the sound, lines everything up by listening,
 /// and measures each camera's look. Runs once per project.
 enum Preparer {
+    private struct Facts: Sendable {
+        var id: UUID
+        var width = 0, height = 0, rotation = 0
+        var duration: Double?
+        var hasVideo = false
+        var audio: PreparedAudio?
+        var audioName = "", peaksName = ""
+        var look: [LookMatch.Sample] = []
+    }
+
+    /// Everything about one clip, read in one go (runs for all clips at the same time).
+    private static func read(_ c: Clip, url: URL, store: ProjectStore, project p: Project) async -> Facts {
+        var f = Facts(id: c.id)
+        let asset = AVURLAsset(url: url)
+        if let v = try? await asset.loadTracks(withMediaType: .video).first {
+            if let size = try? await v.load(.naturalSize) {
+                f.width = Int(abs(size.width))
+                f.height = Int(abs(size.height))
+            }
+            if let tr = try? await v.load(.preferredTransform) {
+                let deg = Int((atan2(Double(tr.b), Double(tr.a)) * 180 / .pi).rounded())
+                f.rotation = ((Int((Double(deg) / 90).rounded()) * 90) % 360 + 360) % 360
+            }
+            if let r = try? await v.load(.timeRange) { f.duration = r.duration.seconds }
+            f.hasVideo = true
+        } else if let d = try? await asset.load(.duration) {
+            f.duration = d.seconds
+        }
+        let hasVideo = f.hasVideo
+        let length = f.duration ?? c.duration
+        async let look: [LookMatch.Sample] = hasVideo ? LookMatch.analyze(url: url, duration: length) : []
+        f.audioName = "cam\(c.cam)-sound.caf"
+        f.peaksName = "cam\(c.cam).peaks"
+        let audioURL = store.url(p, f.audioName)
+        f.audio = try? await Task.detached(priority: .userInitiated) { try await AudioPrep.prepare(from: url, to: audioURL) }.value
+        if let a = f.audio { AudioPrep.savePeaks(a.peaks, to: store.url(p, f.peaksName)) }
+        f.look = await look
+        return f
+    }
+
     static func run(_ input: Project, store: ProjectStore, progress: @escaping (Double, String) -> Void) async -> Project {
+        let bg = await BackgroundWork.begin("Prepare")
+        defer { BackgroundWork.end(bg) }
         var p = input
         let clips = p.clips.filter { !$0.missing && $0.file != nil }
-        let steps = Double(max(1, clips.count * 2 + 1))
-        var done = 0.0
-        func step(_ text: String) { progress(min(0.99, done / steps), text); done += 1 }
+        progress(0.02, "Reading \(clips.count) camera\(clips.count == 1 ? "" : "s")…")
 
-        // 1. video facts + sound copies
-        var lows: [Int: [Float]] = [:]
-        for c in clips {
-            guard let i = p.clips.firstIndex(where: { $0.id == c.id }), let f = c.file else { continue }
-            step("Reading camera \(c.cam)…")
-            let url = store.url(p, f)
-            let asset = AVURLAsset(url: url)
-            if let v = try? await asset.loadTracks(withMediaType: .video).first {
-                if let size = try? await v.load(.naturalSize) {
-                    p.clips[i].width = Int(abs(size.width))
-                    p.clips[i].height = Int(abs(size.height))
-                }
-                if let tr = try? await v.load(.preferredTransform) {
-                    let deg = Int((atan2(Double(tr.b), Double(tr.a)) * 180 / .pi).rounded())
-                    p.clips[i].rotation = ((Int((Double(deg) / 90).rounded()) * 90) % 360 + 360) % 360
-                }
-                if let r = try? await v.load(.timeRange) { p.clips[i].duration = r.duration.seconds }
-                p.clips[i].hasVideo = true
-            } else {
-                p.clips[i].hasVideo = false
-                if let d = try? await asset.load(.duration) { p.clips[i].duration = d.seconds }
+        // 1. video facts, sound copies and picture measurements — all clips in parallel
+        var facts: [UUID: Facts] = [:]
+        let snapshot = p
+        await withTaskGroup(of: Facts.self) { group in
+            for c in clips {
+                let url = store.url(snapshot, c.file!)
+                group.addTask { await read(c, url: url, store: store, project: snapshot) }
             }
-            let audioName = "cam\(c.cam)-sound.caf"
-            if let prepared = try? await AudioPrep.prepare(from: url, to: store.url(p, audioName)) {
+            var done = 0
+            for await f in group {
+                facts[f.id] = f
+                done += 1
+                progress(0.05 + 0.8 * Double(done) / Double(max(1, clips.count)), "Read \(done) of \(clips.count)…")
+            }
+        }
+        var lows: [Int: [Float]] = [:]
+        var looks: [Int: [LookMatch.Sample]] = [:]
+        for i in p.clips.indices {
+            guard let f = facts[p.clips[i].id] else { continue }
+            if f.hasVideo {
+                p.clips[i].width = f.width
+                p.clips[i].height = f.height
+                p.clips[i].rotation = f.rotation
+            }
+            p.clips[i].hasVideo = f.hasVideo
+            if let d = f.duration { p.clips[i].duration = d }
+            if let a = f.audio {
                 p.clips[i].hasAudio = true
-                p.clips[i].audioFile = audioName
-                p.clips[i].loudness = prepared.loudness
-                let peaks = "cam\(c.cam).peaks"
-                AudioPrep.savePeaks(prepared.peaks, to: store.url(p, peaks))
-                p.clips[i].peaksFile = peaks
-                lows[c.cam] = prepared.low
-                if !p.clips[i].hasVideo { p.clips[i].duration = prepared.duration }
+                p.clips[i].audioFile = f.audioName
+                p.clips[i].peaksFile = f.peaksName
+                p.clips[i].loudness = a.loudness
+                lows[p.clips[i].cam] = a.low
+                if !f.hasVideo { p.clips[i].duration = a.duration }
             } else {
                 p.clips[i].hasAudio = false
             }
+            looks[p.clips[i].cam] = f.look
         }
 
         // default sound routing: the best microphone is main, the rest are room
@@ -55,7 +97,7 @@ enum Preparer {
         }
 
         // 2. sync by sound
-        step("Lining up the sound…")
+        progress(0.9, "Lining up the sound…")
         let mainCam = p.sound.mics.first { $0.role == .main }?.cam ?? p.clips.first(where: { $0.hasAudio })?.cam
         if let mainCam, let ref = p.clips.first(where: { $0.cam == mainCam }), let refLow = lows[mainCam] {
             for i in p.clips.indices where p.clips[i].cam != mainCam {
@@ -66,15 +108,10 @@ enum Preparer {
 
         // 3. look
         if let refCam = p.cams.contains(p.picture.reference) ? p.picture.reference : p.cams.first {
-            var samples: [Int: [LookMatch.Sample]] = [:]
-            for c in p.videoClips {
-                step("Measuring the picture of camera \(c.cam)…")
-                samples[c.cam] = await LookMatch.analyze(url: store.url(p, c.file!), duration: c.duration)
-            }
             p.picture.reference = refCam
             for i in p.clips.indices where p.clips[i].hasVideo && !p.clips[i].missing {
                 let cam = p.clips[i].cam
-                p.clips[i].auto = LookMatch.match(cam: samples[cam] ?? [], ref: samples[refCam] ?? [], isReference: cam == refCam)
+                p.clips[i].auto = LookMatch.match(cam: looks[cam] ?? [], ref: looks[refCam] ?? [], isReference: cam == refCam)
             }
         }
 
