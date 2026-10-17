@@ -249,7 +249,8 @@ final class ProgramCompositor: NSObject, AVVideoCompositing {
             .transformed(by: CGAffineTransform(scaleX: 8, y: 8))
         let bw = sw * fillScale * 8, bh = sh * fillScale * 8
         let bg = blurred.transformed(by: CGAffineTransform(translationX: (out.width - bw) / 2, y: (out.height - bh) / 2))
-            .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -0.18, kCIInputSaturationKey: 0.9, kCIInputContrastKey: 0.9])
+            .applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: -0.9])
+            .applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: 0, kCIInputSaturationKey: 0.85, kCIInputContrastKey: 0.92])
             .cropped(to: outRect)
         return picture.composited(over: bg)
     }

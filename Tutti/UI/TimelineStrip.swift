@@ -136,8 +136,9 @@ struct TimelineStrip: View {
                 ctx.stroke(block, with: .color(.white), lineWidth: 2)
             }
             if r.width > 46 {
+                let inset: CGFloat = (i > 0 && c.kind != .cut && c.length > 0) ? max(20, CGFloat(c.length) * scale + 6) : 8
                 ctx.draw(Text("CAM \(c.cam)").font(Theme.num(11, .bold)).foregroundColor(Color.black.opacity(0.75)),
-                         at: CGPoint(x: max(r.minX, 0) + 8, y: r.midY), anchor: .leading)
+                         at: CGPoint(x: max(r.minX, 0) + inset, y: r.midY), anchor: .leading)
             }
             // transition: a soft ramp from the previous camera's colour
             if i > 0, c.kind != .cut, c.length > 0 {
