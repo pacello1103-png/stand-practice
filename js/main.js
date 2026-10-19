@@ -4439,7 +4439,7 @@ function drawLink() {
     : st === 'offline' ? 'Could not reach the internet to find the iPhone. Check the connection and try again.'
       : st === 'lost' ? 'The iPhone went away. Open Camera for iPad on it again.'
         : code ? 'On your iPhone, open Stand, tap Camera for iPad, then Use a code, and type this code.'
-          : host.code ? 'Open Stand on your iPhone and tap Camera for iPad. It connects by itself on the same Wi-Fi. If it does not (for example on the iPhone’s hotspot), tap Use a code on the iPhone and type:' : 'Open Stand on your iPhone and tap Camera for iPad. It connects by itself on the same Wi-Fi.';
+          : host.code ? 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves. If they do not, tap Use a code on the iPhone and type:' : 'Open Stand on your iPhone and tap Camera for iPad. Keep the two near each other: they connect by themselves.';
   $('#linkOn').hidden = !linked;
   if (linked) {
     $$('#linkFacing button').forEach((b) => b.classList.toggle('on', b.dataset.f === (info.facing || 'environment')));

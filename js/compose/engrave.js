@@ -425,7 +425,9 @@ function drawSpans(ctx, lay, sys, hitStaves) {
   const spans = score.spans || []; if (!spans.length) return;
   const mA = sys.measures[0].m, mB = sys.measures[sys.measures.length - 1].end ?? sys.measures[sys.measures.length - 1].m;
   const contentX = sys.x0 + sys.head;
-  for (const sp of spans) {
+  for (const q of hitStaves) q.slurTops = [];
+  // slurs and hairpins first, endings last (an ending goes above any slur under it)
+  for (const sp of [...spans].sort((p, q) => (p.kind === 'volta') - (q.kind === 'volta'))) {
     if (sp.b.m < mA || sp.a.m > mB) continue;
     const hs = sp.kind === 'volta' ? hitStaves[0] : hitStaves.find((q) => q.st.id === sp.st);
     if (!hs) continue;
@@ -488,6 +490,7 @@ function drawSpans(ctx, lay, sys, hitStaves) {
       let y = hsTop.y - 3.2;
       for (let m = Math.max(sp.a.m - 1, 0); m <= sp.b.m; m++) { const ms = score.measures[m]; if (ms && (ms.jump || ms.mark)) y = Math.min(y, hsTop.y - 5.6); }
       for (const q of hsTop.measures.filter((q) => q.m >= sp.a.m && q.m <= sp.b.m).flatMap((q) => q.events || [])) for (const n of q.notes) y = Math.min(y, n.y - (q.up ? STEM_LEN + 1.0 : 2.0));
+      for (const t of hsTop.slurTops || []) if (t.x1 > vx0 && t.x0 < vx1) y = Math.min(y, t.y - 0.9);
       ctx.save(); ctx.lineWidth = 0.14; ctx.beginPath();
       if (startsHere) { ctx.moveTo(vx0, y + 2); ctx.lineTo(vx0, y); } else ctx.moveTo(vx0, y);
       ctx.lineTo(vx1, y); if (endsHere && sp.closed !== false) ctx.lineTo(vx1, y + 2);
@@ -534,6 +537,7 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
         xb = b.x + HEAD_W + 0.15;
       }
     }
+    if (!startsHere && xb - xa < 2.2) return;   // only a stub left before the dynamic that ends it
     if (xb - xa < 1.2) xb = xa + 1.2;
     const open = 0.75;
     // across a line break the opening continues where it left off
@@ -606,6 +610,8 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
   }
   A.y += dir * shift; B.y += dir * shift;
   drawSlur(ctx, A.x, A.y, B.x, B.y, above, h);
+  // remembered, so endings (voltas) above go over the slur instead of through it
+  if (above) (hs.slurTops = hs.slurTops || []).push({ x0: Math.min(A.x, B.x), x1: Math.max(A.x, B.x), y: Math.min(A.y, B.y) - h - 0.2 });
 }
 // segno and coda signs, D.C. / D.S. / To Coda / Fine
 const JUMP_TEXT = { dc: 'D.C.', dcfine: 'D.C. al Fine', dccoda: 'D.C. al Coda', ds: 'D.S.', dsfine: 'D.S. al Fine', dscoda: 'D.S. al Coda', tocoda: 'To Coda', fine: 'Fine' };
