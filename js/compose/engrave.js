@@ -506,7 +506,8 @@ function evAt(hs, at, v) {
   let best = null; for (const q of list) if (q.pos <= at.pos) best = q;
   return best || list[0] || null;
 }
-const lowestOf = (q) => { let h = 0; for (const n of q.notes) h = Math.max(h, -n.p / 2 + (!q.up ? STEM_LEN : 0.5)); return h; };
+// how far a note reaches below the staff (with a tuplet number under its stem)
+const lowestOf = (q) => { let h = 0; for (const n of q.notes) h = Math.max(h, -n.p / 2 + (!q.up ? STEM_LEN + (q.tup ? 2.3 : 0) : 0.5)); return h; };
 // A slur or a hairpin over any number of notes, across bars and from one line to the next.
 function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX) {
   const v = sp.v || 1;
@@ -887,7 +888,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     }
     if (c) ctx.restore();
     const hx = e.ev.rest ? e.x : e.x;
-    const ev = { id: e.ev.id, m, pos: e.pos, len: e.len, x: hx, staff: s.k, y: s.y + (e.ev.rest ? (e.restDy || 0) / 2 : 0), up: e.up, voice: opts.voice2 ? 2 : 1, notes: e.notes.map((n) => ({ p: n.p, y: yOf(s.y, n.p), s: n.src.s })), rest: !!e.ev.rest };
+    const ev = { id: e.ev.id, m, pos: e.pos, len: e.len, x: hx, staff: s.k, y: s.y + (e.ev.rest ? (e.restDy || 0) / 2 : 0), up: e.up, voice: opts.voice2 ? 2 : 1, notes: e.notes.map((n) => ({ p: n.p, y: yOf(s.y, n.p), s: n.src.s })), rest: !!e.ev.rest, tup: !!e.ev.tup };
     e.hitRef = ev;
     hm.events.push(ev); hit.events.push(ev);
   }
@@ -976,7 +977,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
 // "C#m7/Bb" with real sharp and flat signs
 export const prettyChord = (c) => c.replace(/([A-G])#/g, '$1♯').replace(/([A-G])b/g, '$1♭').replace(/maj/i, 'maj').replace(/\bo\b/, '°');
 const highestAbove = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, (n.p - 8) / 2 + (e.up ? STEM_LEN : 0.5)); return h; };
-const lowestBelow = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, -n.p / 2 + (!e.up ? STEM_LEN : 0.5)); const near = (e.ev.art || []).filter((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)).length; if (near && e.up) h += near * 1.0; return h; };
+const lowestBelow = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, -n.p / 2 + (!e.up ? STEM_LEN + (e.ev.tup ? 2.3 : 0) : 0.5)); const near = (e.ev.art || []).filter((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)).length; if (near && e.up) h += near * 1.0; return h; };
 function slurY(e, sy, above) {
   const ns = e.notes; if (!ns.length) return sy;
   if (above) { const top = ns[ns.length - 1]; return yOf(sy, top.p) - (e.up ? STEM_LEN + 0.6 : 1.0); }
