@@ -135,9 +135,15 @@ export function makeImpulse(ctx, room) {
       d[i] = lp * env * fadeIn * 3;
     }
     // a few early reflections
-    for (const [ms, g] of [[11, 0.5], [17, 0.35], [23, 0.3], [31, 0.22], [43, 0.16]]) {
-      const i = pre + Math.round((ms * (1 + ch * 0.07) * room.decay ** 0.3) * sr / 1000);
-      if (i < len) d[i] += g * (ch ? -1 : 1) * 0.6;
+    // early reflections: walls, floor and ceiling, getting denser and softer, different in each ear
+    let rs = 31 + ch * 17; const rr = () => { rs = (rs * 1103515245 + 12345) & 0x7fffffff; return rs / 0x7fffffff; };
+    const span = 18 + room.decay * 22;
+    for (let r = 0; r < 18; r++) {
+      const ms = 4 + Math.pow(rr(), 1.3) * span;
+      const gg = 0.55 * Math.exp(-ms / (span * 0.7)) * (0.6 + rr() * 0.4);
+      const i = pre + Math.round(ms * sr / 1000);
+      // each reflection is a little blurred (a few samples), as from a real surface
+      for (let q = -2; q <= 2; q++) if (i + q < len && i + q > 0) d[i + q] += gg * (rr() < 0.5 ? -1 : 1) * (1 - Math.abs(q) * 0.3) * 0.5;
     }
   }
   // normalise energy so all rooms sit at a similar level
@@ -303,8 +309,18 @@ export class Player {
     const v = this.video; if (!v || !this.playing) return;
     const t = this.currentPos();
     if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
-    if (Math.abs(v.playbackRate - this.rate) > 1e-3) v.playbackRate = this.rate;
-    if (Math.abs(v.currentTime - t) > 0.12) v.currentTime = t;
+    // A small drift is corrected by speeding up or slowing down the picture a little: jumping the
+    // time (setting currentTime) is what makes the picture stutter. Only a big gap is jumped over.
+    const d = t - v.currentTime;
+    if (Math.abs(d) > 0.6) { v.currentTime = t; if (Math.abs(v.playbackRate - this.rate) > 1e-3) v.playbackRate = this.rate; return; }
+    // Changing the speed itself costs a frame on iPad, so it changes rarely: nothing while the
+    // picture is within 60 ms, then a fixed 2% (or 5% for a bigger gap) until it is back in step.
+    const ad = Math.abs(d);
+    let k = this._vk || 0;
+    if (ad < 0.02) k = 0; else if (ad > 0.06) k = Math.sign(d) * (ad > 0.25 ? 0.05 : 0.02);
+    this._vk = k;
+    const target = this.rate * (1 + k);
+    if (Math.abs(v.playbackRate - target) > 1e-3) v.playbackRate = target;
   }
   async setRate(r) {
     if (Math.abs(r - this.rate) < 1e-4) return;

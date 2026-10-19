@@ -2,6 +2,8 @@
 // composer from a PDF, and finding a clean gap between systems for half-page turns.
 import * as pdfjsLib from '../vendor/pdf.min.mjs';
 import { loadMusicFont } from './ink.js';
+import { paintCover } from './covers.js';
+import { drawNotebookPage, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 const PDF_OPTS = {
@@ -107,10 +109,16 @@ function drawPaper(ctx, tpl, pageIndex, w, h) {
 export async function openDocument(file) {
   if (file.kind === 'paper') {
     await loadMusicFont();
-    const pages = file.pages || 1;
+    const cover = file.cover ? 1 : 0;
+    const pages = (file.pages || 1) + cover;
     return {
-      pages, sizes: Array.from({ length: pages }, () => [PAPER_W, PAPER_H]), paper: true,
-      async render(i, canvas, w, h) { canvas.width = Math.round(w); canvas.height = Math.round(h); drawPaper(canvas.getContext('2d'), file.template, i, canvas.width, canvas.height); },
+      pages, sizes: Array.from({ length: pages }, () => [NB_W, NB_H]), paper: true, cover: !!cover,
+      async render(i, canvas, w, h) {
+        canvas.width = Math.round(w); canvas.height = Math.round(h);
+        const g = canvas.getContext('2d');
+        if (cover && i === 0) await paintCover(g, file, canvas.width, canvas.height);
+        else drawNotebookPage(g, file, i - cover, canvas.width, canvas.height);
+      },
       destroy() {},
     };
   }
@@ -138,25 +146,36 @@ export async function openDocument(file) {
   // never holds every full-size photo in memory.
   const sizes = [];
   for (const blob of file.data) { const b = await createImageBitmap(blob); sizes.push([b.width, b.height]); if (b.close) b.close(); }
+  // A few decoded pages are kept; one is only closed when no drawing is still using it (closing
+  // a picture in use left pages or thumbnails blank now and then).
   const lru = new Map();
-  const bitmap = (i) => {
-    if (lru.has(i)) { const v = lru.get(i); lru.delete(i); lru.set(i, v); return v; }
-    const v = createImageBitmap(file.data[i]);
-    lru.set(i, v);
-    while (lru.size > 3) { const [k, old] = lru.entries().next().value; lru.delete(k); old.then((b) => b.close && b.close(), () => {}); }
-    return v;
+  const drop = (e) => { e.gone = true; if (!e.uses) e.p.then((b) => b.close && b.close(), () => {}); };
+  const take = (i) => {
+    let e = lru.get(i);
+    if (e) { lru.delete(i); lru.set(i, e); }
+    else {
+      e = { p: createImageBitmap(file.data[i]), uses: 0, gone: false };
+      lru.set(i, e);
+      while (lru.size > 3) { const [k, old] = lru.entries().next().value; lru.delete(k); drop(old); }
+    }
+    e.uses++;
+    return e;
   };
+  const give = (e) => { e.uses--; if (e.gone && !e.uses) e.p.then((b) => b.close && b.close(), () => {}); };
   return {
     pages: sizes.length, sizes,
     async render(i, canvas, w, h) {
-      const bmp = await bitmap(i);
-      canvas.width = Math.round(w); canvas.height = Math.round(h);
-      const c = canvas.getContext('2d', { alpha: false });
-      c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
-      c.imageSmoothingQuality = 'high';
-      c.drawImage(bmp, 0, 0, w, h);
+      const e = take(i);
+      try {
+        const bmp = await e.p;
+        canvas.width = Math.round(w); canvas.height = Math.round(h);
+        const c = canvas.getContext('2d', { alpha: false });
+        c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
+        c.imageSmoothingQuality = 'high';
+        c.drawImage(bmp, 0, 0, w, h);
+      } finally { give(e); }
     },
-    destroy() { for (const v of lru.values()) v.then((b) => b.close && b.close(), () => {}); lru.clear(); },
+    destroy() { for (const e of lru.values()) drop(e); lru.clear(); },
   };
 }
 
@@ -274,18 +293,91 @@ export function findSplit(curCanvas, nextCanvas) {
 }
 
 // ---------- page order (deleted pages are hidden, never destroyed) ----------
-export function mapDoc(doc, map) {
-  if (!map) return { ...doc, orig: (i) => i };
-  const valid = map.filter((i) => i >= 0 && i < doc.pages);
+// A page can also be cut into pieces (cuts: heights 0..1 where it is cut); each piece shows as
+// its own page. Markings stay with the original page, so nothing is lost.
+export function mapDoc(doc, map, cuts, glue) {
+  const order = (map || [...Array(doc.pages).keys()]).filter((i) => i >= 0 && i < doc.pages);
+  const pieces = [];
+  for (const o of order) {
+    const ys = [0, ...((cuts && cuts[o]) || []).filter((y) => y > 0.02 && y < 0.98).sort((a, b) => a - b), 1];
+    for (let k = 0; k < ys.length - 1; k++) pieces.push({ o, box: ys.length > 2 ? { x: 0, y: ys[k], w: 1, h: ys[k + 1] - ys[k] } : null });
+  }
+  // lines glued from the next page onto the end of this one, so a turn falls where it should
+  let glued = false;
+  if (glue) {
+    for (let i = 0; i + 1 < pieces.length; i++) {
+      const p = pieces[i], q = pieces[i + 1], g = glue[p.o];
+      if (!g || p.box || q.box || q.o !== g.next || !(g.cut > 0.03 && g.cut < 0.97)) continue;
+      p.parts = [{ o: p.o, y0: 0, y1: Math.min(1, Math.max(0.2, g.end || 1)) }, { o: q.o, y0: g.top || 0, y1: g.cut }];
+      q.box = { x: 0, y: g.cut, w: 1, h: 1 - g.cut };
+      glued = true;
+    }
+  }
+  if (!map && !glued && !pieces.some((p) => p.box)) return { ...doc, orig: (i) => i, piece: () => null, composite: () => false };
+  const sizeOf = (p) => {
+    if (!p.parts) return doc.sizes[p.o];
+    const [w0] = doc.sizes[p.parts[0].o];
+    let h = 0; for (const q of p.parts) { const [pw, ph] = doc.sizes[q.o]; h += (q.y1 - q.y0) * ph * (w0 / pw); }
+    return [w0, h];
+  };
   return {
     ...doc,
-    pages: valid.length,
-    sizes: valid.map((i) => doc.sizes[i]),
-    render: (i, canvas, w, h) => doc.render(valid[i], canvas, w, h),
-    orig: (i) => valid[i],
+    pages: pieces.length,
+    sizes: pieces.map(sizeOf),
+    render: async (i, canvas, w, h) => {
+      const p = pieces[i];
+      if (!p.parts) return doc.render(p.o, canvas, w, h);
+      // draw each part one under the other at the width of the page
+      canvas.width = Math.round(w); canvas.height = Math.round(h);
+      const g = canvas.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
+      const [W0, H0] = sizeOf(p); const k = canvas.width / W0;
+      let y = 0;
+      for (const q of p.parts) {
+        const [pw, ph] = doc.sizes[q.o];
+        const tmp = document.createElement('canvas');
+        const tw = canvas.width, th = Math.round(tw * ph / pw);
+        await doc.render(q.o, tmp, tw, th);
+        const sy = q.y0 * tmp.height, sh = (q.y1 - q.y0) * tmp.height;
+        g.drawImage(tmp, 0, sy, tmp.width, sh, 0, y, canvas.width, sh * (canvas.width / tmp.width));
+        y += sh * (canvas.width / tmp.width);
+        tmp.width = tmp.height = 0;
+      }
+      void H0; void k;
+    },
+    orig: (i) => pieces[i].o,
+    piece: (i) => pieces[i].box,
+    composite: (i) => !!pieces[i].parts,
+    gluedFrom: (i) => (pieces[i].parts ? pieces[i].parts[1].o : null),
     destroy: () => doc.destroy(),
     base: doc,
   };
+}
+
+// Blank rows across the width of a page (0..1), for cutting between systems.
+export function pageGaps(canvas) {
+  const rows = 500;
+  const prof = inkProfile(canvas, rows);
+  const gaps = [];
+  let start = -1;
+  for (let y = 0; y <= rows; y++) {
+    const blank = y < rows && prof[y] < 0.01;
+    if (blank && start < 0) start = y;
+    if (!blank && start >= 0) { if (y - start >= 3) gaps.push({ mid: (start + y - 1) / 2 / rows, len: (y - start) / rows }); start = -1; }
+  }
+  return gaps;
+}
+// Places where both pages are blank, for half-page turns that stay between the systems.
+export function commonGaps(curCanvas, nextCanvas) {
+  const rows = 400;
+  const a = inkProfile(curCanvas, rows), b = inkProfile(nextCanvas, rows);
+  const out = [];
+  let start = -1;
+  for (let y = 0; y <= rows; y++) {
+    const blank = y < rows && a[y] < 0.012 && b[y] < 0.012;
+    if (blank && start < 0) start = y;
+    if (!blank && start >= 0) { if (y - start >= 2) out.push({ mid: (start + y - 1) / 2 / rows, len: (y - start) / rows }); start = -1; }
+  }
+  return out.filter((g) => g.mid > 0.08 && g.mid < 0.92);
 }
 
 // ---------- trim white margins ----------

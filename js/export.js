@@ -1,6 +1,6 @@
 // Export a score as a PDF, with or without the markings. Original PDF pages are copied as
 // vectors, so the music stays sharp; markings are laid on top as a transparent image.
-import { drawItem, loadItems, loadMusicFont, setPaperColor } from './ink.js';
+import { drawItem, loadItems, loadMusicFont, setPaperColor, preloadAssets } from './ink.js';
 
 let lib = null;
 async function pdfLib() { if (!lib) lib = await import('../vendor/pdf-lib.mjs'); return lib; }
@@ -21,9 +21,10 @@ async function inkPng(items, wPx, hPx) {
 async function settleMasks(items) {
   const srcs = items.filter((s) => s.t === 'mask').map((s) => s.d);
   await Promise.all(srcs.map((src) => new Promise((res) => { const i = new Image(); i.onload = i.onerror = res; i.src = src; })));
+  await preloadAssets(items);
 }
 
-export async function exportPdf({ score, file, doc, withInk, onProgress }) {
+export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf }) {
   const { PDFDocument } = await pdfLib();
   setPaperColor('#ffffff');
   await loadMusicFont();
@@ -40,6 +41,8 @@ export async function exportPdf({ score, file, doc, withInk, onProgress }) {
     const items = withInk ? (await loadItems(score.id + ':' + orig)).filter((s) => s.t !== 'passage') : [];
     if (items.length) await settleMasks(items);
     let page = null, W, H;
+    const bx = boxOf ? boxOf(i) : null;
+    const cropped = bx && !(bx.x < 0.002 && bx.y < 0.002 && bx.w > 0.998 && bx.h > 0.998);
     if (src) {
       const sp = src.getPage(orig);
       const rot = (sp.getRotation().angle || 0) % 360;
@@ -52,6 +55,11 @@ export async function exportPdf({ score, file, doc, withInk, onProgress }) {
           const png = await inkPng(items, Math.round(box.width * 3), Math.round(box.height * 3));
           if (png) { const im = await out.embedPng(png); page.drawImage(im, { x: box.x, y: box.y, width: box.width, height: box.height }); }
         }
+        if (cropped) {
+          // show only the cropped part (or this piece of a cut page)
+          const X = box.x + bx.x * box.width, Y = box.y + (1 - bx.y - bx.h) * box.height, Wc = bx.w * box.width, Hc = bx.h * box.height;
+          page.setMediaBox(X, Y, Wc, Hc); page.setCropBox(X, Y, Wc, Hc);
+        }
         continue;
       }
     }
@@ -63,10 +71,16 @@ export async function exportPdf({ score, file, doc, withInk, onProgress }) {
     await doc.render(i, c, cw, ch);
     const g = c.getContext('2d');
     for (const s of items) drawItem(g, s, c.width, c.height, false);
-    const jpg = await canvasToBytes(c, 'image/jpeg', 0.9);
-    c.width = c.height = 0;
+    let cc = c, fw = 1, fh = 1;
+    if (cropped) {
+      cc = document.createElement('canvas'); cc.width = Math.round(c.width * bx.w); cc.height = Math.round(c.height * bx.h);
+      cc.getContext('2d').drawImage(c, Math.round(bx.x * c.width), Math.round(bx.y * c.height), cc.width, cc.height, 0, 0, cc.width, cc.height);
+      fw = bx.w; fh = bx.h;
+    }
+    const jpg = await canvasToBytes(cc, 'image/jpeg', 0.9);
+    c.width = c.height = 0; cc.width = cc.height = 0;
     const im = await out.embedJpg(jpg);
-    const ptW = file.kind === 'images' ? 595 : pw, ptH = file.kind === 'images' ? (595 * ph) / pw : ph;
+    const ptW = (file.kind === 'images' ? 595 : pw) * fw, ptH = (file.kind === 'images' ? (595 * ph) / pw : ph) * fh;
     page = out.addPage([ptW, ptH]);
     page.drawImage(im, { x: 0, y: 0, width: ptW, height: ptH });
   }

@@ -6,18 +6,56 @@ const TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/web
 
 export class VideoRecorder {
   constructor() { this.stream = null; this.rec = null; this.recording = false; }
-  async open(facing = 'user') {
+  // The picture goes through a canvas in the shape the iPad is held (landscape when it lies on its
+  // side), turning the camera's frames if they come the other way round.
+  async open(facing = 'user', shape = window.innerWidth > window.innerHeight ? 'landscape' : 'portrait') {
+    // already open the same way (opened ahead of time): start at once
+    if (this.cam && this.facing === facing && this.shape === shape && this.cam.getVideoTracks().every((t) => t.readyState === 'live')) return this.stream;
     this.close();
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+    const land = shape === 'landscape';
+    this.cam = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width: { ideal: land ? 1280 : 720 }, height: { ideal: land ? 720 : 1280 }, frameRate: { ideal: 30, max: 30 } },
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
     });
+    this.shape = shape; this.facing = facing;
+    // the camera's own picture, kept in the page (iOS slows down videos that are not on the page)
+    const v = this.src = document.createElement('video'); v.muted = true; v.playsInline = true; v.setAttribute('playsinline', '');
+    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1';
+    document.body.append(v);
+    v.srcObject = new MediaStream(this.cam.getVideoTracks());
+    await v.play().catch(() => {});
+    if (!v.videoWidth) await new Promise((r) => { const t = setTimeout(r, 1500); v.addEventListener('loadedmetadata', () => { clearTimeout(t); r(); }, { once: true }); });
+    const vw = v.videoWidth, vh = v.videoHeight;
+    // When the camera already gives the picture the right way round, it is recorded directly: no
+    // copying of frames, so nothing on screen can make the video stutter.
+    if (!vw || (vw > vh) === land || !(document.createElement('canvas').captureStream)) {
+      this.direct = true;
+      this.stream = new MediaStream([...this.cam.getVideoTracks(), ...this.cam.getAudioTracks()]);
+      return this.stream;
+    }
+    this.direct = false;
+    const c = this.canvas = document.createElement('canvas');
+    c.width = land ? 960 : 540; c.height = land ? 540 : 960;   // smaller frames keep the rotated picture smooth on an iPad
+    const g = c.getContext('2d', { alpha: false });
+    const draw = () => {
+      if (!this.cam) return;
+      const w = v.videoWidth, h = v.videoHeight;
+      if (w && h) {
+        g.save(); g.translate(c.width / 2, c.height / 2); g.rotate(Math.PI / 2);
+        const k = Math.max(c.height / w, c.width / h); g.drawImage(v, -w * k / 2, -h * k / 2, w * k, h * k);
+        g.restore();
+      }
+      if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else this.raf = requestAnimationFrame(draw);
+    };
+    draw();
+    const out = c.captureStream(30);
+    this.stream = new MediaStream([...out.getVideoTracks(), ...this.cam.getAudioTracks()]);
     return this.stream;
   }
   start() {
     const type = (window.MediaRecorder && TYPES.find((t) => MediaRecorder.isTypeSupported(t))) || '';
     this.chunks = [];
-    this.rec = new MediaRecorder(this.stream, { mimeType: type || undefined, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 192_000 });
+    this.rec = new MediaRecorder(this.stream, { mimeType: type || undefined, videoBitsPerSecond: 3_500_000, audioBitsPerSecond: 192_000 });
     this.mime = this.rec.mimeType || type || 'video/mp4';
     this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
     this.rec.start(1000);
@@ -36,8 +74,12 @@ export class VideoRecorder {
     });
   }
   close() {
+    cancelAnimationFrame(this.raf); clearInterval(this.timer);
+    if (this.cam) this.cam.getTracks().forEach((t) => t.stop());
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
-    this.stream = null;
+    if (this.src) { this.src.srcObject = null; this.src.remove(); this.src = null; }
+    this.facing = null;
+    this.stream = null; this.cam = null;
   }
 }
 

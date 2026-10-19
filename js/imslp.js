@@ -1,6 +1,21 @@
 // Find works on IMSLP and rank their PDFs. Uses IMSLP's public MediaWiki API through JSONP
 // (it does not allow cross-site fetch), a built-in composer index, and Wikidata as a fallback.
+import { db } from './db.js';
 const API = 'https://imslp.org/api.php';
+
+// Answers are kept on the iPad, so a piece looked up before opens at once (and is refreshed
+// quietly in the background when it is older than a few days).
+async function cached(key, maxAge, fetcher) {
+  let hit = null;
+  try { hit = await db.get('kv', 'imslp:' + key); } catch {}
+  const fresh = hit && Date.now() - hit.v.t < maxAge;
+  if (hit && !fresh) fetcher().then((v) => db.put('kv', { k: 'imslp:' + key, v: { t: Date.now(), d: v } })).catch(() => {});
+  if (hit) return hit.v.d;
+  const v = await fetcher();
+  db.put('kv', { k: 'imslp:' + key, v: { t: Date.now(), d: v } }).catch(() => {});
+  return v;
+}
+const DAY = 864e5;
 let cbn = 0;
 
 export function jsonp(params, timeout = 15000) {
@@ -102,8 +117,15 @@ export async function parseQuery(q) {
 }
 
 const worksCache = new Map();
-export async function composerWorks(cat) {
-  if (worksCache.has(cat)) return worksCache.get(cat);
+export function composerWorks(cat) {
+  if (!worksCache.has(cat)) {
+    const p = cached('cat:' + cat, 20 * DAY, () => fetchWorks(cat));
+    worksCache.set(cat, p);
+    p.catch(() => worksCache.delete(cat));
+  }
+  return worksCache.get(cat);
+}
+async function fetchWorks(cat) {
   const out = [];
   let cont = null, guard = 0;
   do {
@@ -113,9 +135,14 @@ export async function composerWorks(cat) {
     for (const m of d.query.categorymembers) out.push(m.title);
     cont = d.continue && d.continue.cmcontinue;
   } while (cont && ++guard < 8);
-  worksCache.set(cat, out);
   return out;
 }
+// Load the works of the composers people look for most, while nothing else is happening.
+export async function warmUp(cats) {
+  for (const c of cats) { try { await composerWorks(c); } catch { return; } await new Promise((r) => setTimeout(r, 400)); }
+}
+// The editions of the first few results, fetched ahead so they open at once.
+export function prefetchWorks(titles) { for (const t of titles) workFiles(t).catch(() => {}); }
 
 export function splitTitle(t) {
   const m = t.match(/^(.*) \(([^()]*)\)$/);
@@ -141,11 +168,17 @@ function scoreTitle(title, words) {
   return s / n;
 }
 
-export async function searchWorks(q) {
+// onEarly(results) gets a first answer straight away when the full one takes longer.
+export async function searchWorks(q, onEarly) {
   const pq = await parseQuery(q);
   let results = [];
+  // IMSLP's own search runs at the same time; it is used when the composer's list is not enough
+  const quick = nativeSearch(q).catch(() => []);
   if (pq.composer) {
-    const works = await composerWorks(pq.composer.c);
+    let arrived = false;
+    const wp = composerWorks(pq.composer.c).then((w) => { arrived = true; return w; });
+    if (onEarly) quick.then((ts) => { if (!arrived && ts.length) onEarly({ composer: pq.composer, results: ts.map((t) => ({ title: t, score: 0.2 })), browse: false, early: true }); });
+    const works = await wp;
     if (!pq.words.length) {
       results = works.map((t) => ({ title: t, score: 0.5 }));
       results.sort((a, b) => a.title.localeCompare(b.title));
@@ -155,7 +188,7 @@ export async function searchWorks(q) {
       .filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 30);
   }
   if (!pq.composer || results.length < 3) {
-    const extra = await nativeSearch(q).catch(() => []);
+    const extra = await quick;
     const seen = new Set(results.map((r) => r.title));
     for (const t of extra) if (!seen.has(t)) { seen.add(t); results.push({ title: t, score: 0.2 }); }
   }
@@ -197,10 +230,17 @@ async function wikidataSearch(q) {
 // ---------- work page ----------
 const TABS = { tabScore1: 'Full scores', tabScore2: 'Parts', tabScore3: 'Vocal scores', tabArrTrans: 'Arrangements', tabScore5: 'Other' };
 
-export async function workFiles(title) {
-  const d = await jsonp({ action: 'parse', page: title, prop: 'text', redirects: '1' }, 25000);
-  if (!d.parse) throw new Error('missing');
-  return { title: d.parse.title, ...parseWorkHtml(d.parse.text['*']) };
+const workMem = new Map();
+export function workFiles(title) {
+  if (!workMem.has(title)) {
+    const p = cached('work:' + title, 10 * DAY, async () => {
+      const d = await jsonp({ action: 'parse', page: title, prop: 'text', redirects: '1' }, 25000);
+      if (!d.parse) throw new Error('missing');
+      return { title: d.parse.title, ...parseWorkHtml(d.parse.text['*']) };
+    });
+    workMem.set(title, p); p.catch(() => workMem.delete(title));
+  }
+  return workMem.get(title);
 }
 
 export function parseWorkHtml(html) {

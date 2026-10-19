@@ -6,6 +6,8 @@
 //   mask        a precise whiteout of printed shapes found by the smart eraser
 import { getStroke } from '../vendor/perfect-freehand.mjs';
 import { db } from './db.js';
+import { strokeOptions, paintKind, drawNib, drawPicture, drawTextBox, tbHeight, setAssetReady, PEN_WIDTH, drawTape, tapeBounds, tapeHit, drawShape, drawBackground } from './inkx.js';
+export { preloadAssets } from './inkx.js';
 
 export const COLORS = ['#16181d', '#5b616e', '#d12f2f', '#ea7a17', '#e6b800', '#2f9e55', '#0f8f8f', '#2b6fd6', '#1f3a8f', '#7b3fc4', '#d23c8f', '#7a4b2a'];
 
@@ -68,7 +70,7 @@ function smoothPoints(pts) {
 
 const maskImages = new Map();
 let onMaskReady = null;
-export function setMaskReadyHandler(fn) { onMaskReady = fn; }
+export function setMaskReadyHandler(fn) { onMaskReady = fn; setAssetReady(fn); }
 function maskImage(src) {
   let m = maskImages.get(src);
   if (!m) {
@@ -128,21 +130,31 @@ export function drawItem(ctx, s, W, H, live) {
     ctx.restore();
     return;
   }
+  if (s.t === 'img') { drawPicture(ctx, s, W, H); ctx.restore(); return; }
+  if (s.t === 'tb') { drawTextBox(ctx, s, W, H); ctx.restore(); return; }
+  if (s.t === 'tape') { drawTape(ctx, s, W, H); ctx.restore(); return; }
+  if (s.t === 'shape') { drawShape(ctx, s, W, H); ctx.restore(); return; }
+  if (s.t === 'bg') { drawBackground(ctx, s, W, H); ctx.restore(); return; }
   const raw = s.p.map((p) => [p[0] * W, p[1] * H, p[2] ?? 0.5]);
   if (!raw.length) { ctx.restore(); return; }
-  const pts = s.t === 'pen' ? smoothPoints(raw) : raw;
+  const kind = s.t === 'pen' ? s.pk || 'fountain' : null;
+  const pts = s.t === 'pen' && !s.sh ? smoothPoints(raw) : raw;
   const size = Math.max(1, s.s * W);
   const hasPressure = s.t === 'pen' && pts.some((p) => Math.abs(p[2] - 0.5) > 0.01);
-  const outline = getStroke(pts, {
-    size,
-    thinning: s.t === 'pen' ? (hasPressure ? 0.55 : 0.3) : 0,
-    smoothing: 0.62,
-    streamline: s.t === 'pen' ? 0.42 : 0.55,
-    simulatePressure: s.t === 'pen' && !hasPressure,
-    easing: (t) => t,
-    start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 },
-    last: !live,
-  });
+  if (kind === 'calli') { drawNib(ctx, pts, size, s.c, s.a ?? 1); ctx.restore(); return; }
+  let opts;
+  if (s.t === 'pen') {
+    opts = strokeOptions(kind, size, hasPressure, live);
+    if (s.sh) { opts.smoothing = 0.2; opts.streamline = 0; opts.thinning = Math.min(opts.thinning, 0.2); opts.simulatePressure = false; }
+  } else {
+    opts = { size, thinning: 0, smoothing: 0.62, streamline: 0.55, simulatePressure: false, easing: (t) => t, start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }, last: !live };
+  }
+  const outline = getStroke(pts, opts);
+  if (s.t === 'pen') {
+    // a neat shape can be filled with a light wash of its colour
+    if (s.sh && s.fill && pts.length > 2) { ctx.save(); ctx.globalAlpha = (s.a ?? 1) * 0.22; ctx.fillStyle = s.c; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const p of pts) ctx.lineTo(p[0], p[1]); ctx.closePath(); ctx.fill(); ctx.restore(); }
+    paintKind(ctx, kind, s.c, s.a ?? 1, () => outlinePath(ctx, outline), size, pts); ctx.restore(); return;
+  }
   ctx.fillStyle = s.t === 'white' ? paperColor : s.c;
   ctx.globalAlpha = s.t === 'white' ? 1 : (s.a ?? 1);
   if (s.t === 'hl') ctx.globalCompositeOperation = 'multiply';
@@ -152,7 +164,7 @@ export function drawItem(ctx, s, W, H, live) {
 }
 
 function drawStamp(ctx, s, W, H) {
-  const def = s.k === 'txt' ? { label: s.txt || '', font: 'words' } : STAMP_BY_KEY[s.k] || { label: s.k, font: 'finger' };
+  const def = s.k === 'txt' ? { label: s.txt || '', font: 'words' } : s.k === 'emo' ? { label: s.e || '⭐', font: 'emoji' } : s.k === 'mus' ? { label: s.e || '', font: 'music' } : STAMP_BY_KEY[s.k] || { label: s.k, font: 'finger' };
   const size = s.s * W;
   const x = s.x * W, y = s.y * H;
   ctx.fillStyle = s.c; ctx.strokeStyle = s.c; ctx.globalAlpha = s.a ?? 1;
@@ -218,11 +230,31 @@ export function itemBounds(s) {
   }
   if (s.t === 'stamp') { const r = s.s * 1.2; return { x0: s.x - r, y0: s.y - r * 0.8, x1: s.x + r, y1: s.y + r * 0.8 }; }
   if (s.t === 'mask') return { x0: s.x, y0: s.y, x1: s.x + s.w, y1: s.y + s.h };
+  if (s.t === 'img') {
+    // a white border or instant-photo frame is part of what you select
+    const m = Math.min(s.w, s.h * 1.414), pad = s.fr === 'white' || s.fr === 'polaroid' ? m * 0.045 : 0, bot = s.fr === 'polaroid' ? m * 0.2 : pad;
+    if (!pad) return rotBounds(s.x, s.y, s.w, s.h, s.rot || 0);
+    const dy = (bot - pad) / 2 / 1.414, c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+    return rotBounds(s.x - sn * dy * 1.414, s.y + c * dy, s.w + pad * 2, s.h + (pad + bot) / 1.414, s.rot || 0);
+  }
+  if (s.t === 'tb') { const h = s.h || 0.04; return s.rot ? rotBounds(s.x + s.w / 2, s.y + h / 2, s.w, h, s.rot) : { x0: s.x, y0: s.y, x1: s.x + s.w, y1: s.y + h }; }
+  if (s.t === 'tape') return tapeBounds(s);
+  if (s.t === 'shape') return rotBounds(s.x, s.y, s.w, s.h, s.rot || 0);
+  if (s.t === 'bg') return { x0: 0, y0: 0, x1: 1, y1: 1 };
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
   for (const p of s.p) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
   const r = s.s / 2;
   return { x0: x0 - r, y0: y0 - r, x1: x1 + r, y1: y1 + r };
 }
+// the box around a rotated rectangle given by its centre (page fractions; the page is about 1:1.41)
+function rotBounds(cx, cy, w, h, rot) {
+  if (!rot) return { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+  const A = 1.414, c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+  const hw = (w / 2) * c + (h * A / 2) * s, hh = ((w / 2) * s) / A + (h / 2) * c;
+  return { x0: cx - hw, y0: cy - hh, x1: cx + hw, y1: cy + hh };
+}
+// the height of a text box at the shape of the page
+export function measureTextBox(s, W = 1000, H = 1414) { return { ...s, h: +tbHeight(s, W, H).toFixed(5) }; }
 function inPoly(x, y, poly) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -238,6 +270,10 @@ export function itemsInLasso(items, poly) {
     if (s.t === 'passage') return;
     if (s.t === 'stamp') { if (inPoly(s.x, s.y, poly)) sel.push(i); return; }
     if (s.t === 'mask') { if (inPoly(s.x + s.w / 2, s.y + s.h / 2, poly)) sel.push(i); return; }
+    if (s.t === 'bg' || s.lock) return;
+    if (s.t === 'shape') { if (inPoly(s.x, s.y, poly)) sel.push(i); return; }
+    if (s.t === 'tape') { if (inPoly((s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2, poly)) sel.push(i); return; }
+    if (s.t === 'img' || s.t === 'tb') { const b = itemBounds(s); if (inPoly((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, poly)) sel.push(i); return; }
     let n = 0; for (const p of s.p) if (inPoly(p[0], p[1], poly)) n++;
     if (n >= Math.max(1, s.p.length * 0.5)) sel.push(i);
   });
@@ -249,6 +285,11 @@ export function transformItem(s, dx, dy, k, ox, oy) {
   if (s.t === 'passage') return { ...s, x0: tx(s.x0), y0: ty(s.y0), x1: tx(s.x1), y1: ty(s.y1) };
   if (s.t === 'stamp') return { ...s, x: tx(s.x), y: ty(s.y), s: s.s * k };
   if (s.t === 'mask') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
+  if (s.t === 'img') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
+  if (s.t === 'shape') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
+  if (s.t === 'bg') return s;
+  if (s.t === 'tape') return { ...s, x0: tx(s.x0), y0: ty(s.y0), x1: tx(s.x1), y1: ty(s.y1), w: s.w * k };
+  if (s.t === 'tb') return measureTextBox({ ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, fs: s.fs * k });
   return { ...s, s: s.s * k, p: s.p.map((p) => [+tx(p[0]).toFixed(5), +ty(p[1]).toFixed(5), p[2]]) };
 }
 
@@ -257,6 +298,10 @@ export function itemHit(s, x, y, r, W, H) {
   if (s.t === 'stamp' && s.k === 'txt') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
   if (s.t === 'stamp') { const d = Math.hypot((s.x - x) * W, (s.y - y) * H); return d < Math.max(r * W, s.s * W); }
   if (s.t === 'mask') return x >= s.x - r && x <= s.x + s.w + r && y >= s.y - r && y <= s.y + s.h + r;
+  if (s.t === 'img' || s.t === 'tb') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
+  if (s.t === 'tape') return tapeHit(s, x, y, r, W, H);
+  if (s.t === 'bg') return false;
+  if (s.t === 'shape') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
   const rr = r + (s.s || 0) / 2;
   return s.p.some((p) => Math.hypot((p[0] - x) * W, (p[1] - y) * H) < rr * W);
 }
@@ -265,7 +310,7 @@ export function itemHit(s, x, y, r, W, H) {
 // Finds the printed shapes under a scribble (connected dark pixels) and returns a mask item
 // that covers exactly those shapes. Shapes connected to staff lines or large note groups are
 // left alone, so the music itself is never erased by accident.
-export function smartMask(art, stroke) {
+export function smartMask(art, stroke, spread = 3) {
   const W = art.width, H = art.height;
   const g = art.getContext('2d', { willReadFrequently: true });
   const img = g.getImageData(0, 0, W, H).data;
@@ -282,7 +327,7 @@ export function smartMask(art, stroke) {
       const t = steps === 1 ? 1 : k / steps;
       const x = Math.round((i ? stroke[i - 1][0] + (px - stroke[i - 1][0]) * t : px) * W);
       const y = Math.round((i ? stroke[i - 1][1] + (py - stroke[i - 1][1]) * t : py) * H);
-      for (let oy = -3; oy <= 3; oy += 3) for (let ox = -3; ox <= 3; ox += 3) seeds.push([x + ox, y + oy]);
+      for (const oy of [-spread, 0, spread]) for (const ox of [-spread, 0, spread]) seeds.push([x + ox, y + oy]);
     }
   }
   for (const [sx, sy] of seeds) {
@@ -353,32 +398,59 @@ export class InkLayer {
       db.put('ink', { key: this.key, items: this.items }).catch(() => {});
     }, 300);
   }
+  // The canvas can hold the whole page, or (zoomed in) only the part on screen at full sharpness:
+  // view is that part as page fractions { x, y, w, h }.
+  get fullW() { return this.canvas.width / (this.view ? this.view.w : 1); }
+  get fullH() { return this.canvas.height / (this.view ? this.view.h : 1); }
+  prep(ctx) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (this.view) ctx.translate(-this.view.x * this.fullW, -this.view.y * this.fullH);
+  }
   redraw(hide) {
     const c = this.canvas, ctx = c.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    this.items.forEach((s, i) => { if (!hide || !hide.has(i)) drawItem(ctx, s, c.width, c.height, false); });
+    const W = this.fullW, H = this.fullH;
+    this.prep(ctx);
+    const v = this.view;
+    this.items.forEach((s, i) => {
+      if (hide && hide.has(i)) return;
+      // zoomed in: what is off the part on show is not drawn at all
+      if (v && s.t !== 'bg' && s.t !== 'passage') { const b = itemBounds(s); if (b && (b.x1 < v.x - 0.02 || b.x0 > v.x + v.w + 0.02 || b.y1 < v.y - 0.02 || b.y0 > v.y + v.h + 0.02)) return; }
+      drawItem(ctx, s, W, H, false);
+    });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
-  resize(w, h) { if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
+  resize(w, h) { const had = !!this.view; this.view = null; if (had || this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
+  setView(view, w, h) { this.view = view; this.canvas.width = Math.max(1, Math.round(w)); this.canvas.height = Math.max(1, Math.round(h)); this.redraw(); }
   commit(item) {
     this.items = [...this.items, item];
-    drawItem(this.canvas.getContext('2d'), item, this.canvas.width, this.canvas.height, false);
+    const ctx = this.canvas.getContext('2d');
+    this.prep(ctx); drawItem(ctx, item, this.fullW, this.fullH, false); ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.save();
   }
   // Erases like a real eraser: the part of a pen or highlighter stroke under the eraser goes,
   // the rest of the stroke stays. Symbols, words and whiteouts go as a whole.
-  eraseAt(x, y, r) {
-    const W = this.canvas.width, H = this.canvas.height;
-    let changed = false;
-    const out = [];
-    for (const s of this.items) {
-      if (!itemHit(s, x, y, r, W, H)) { out.push(s); continue; }
-      changed = true;
-      if (!s.p || s.p.length < 2) continue;
-      for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * 0.35, W, H)) out.push({ ...s, p: part });
+  eraseAt(x, y, r, whole) { return this.eraseMany([[x, y]], r, whole); }
+  flushErase() {}
+  // Rub out along several points at once (one redraw for a whole move of the Pencil).
+  eraseMany(pts, r, whole) {
+    const W = this.fullW, H = this.fullH;
+    let changed = false, items = this.items;
+    for (const [x, y] of pts) {
+      let hit = false; const out = [];
+      for (const s of items) {
+        if (s.t === 'img' || s.t === 'tb' || s.t === 'shape' || s.t === 'bg' || s.lock || !itemHit(s, x, y, r, W, H)) { out.push(s); continue; }
+        hit = true;
+        if (whole || !s.p || s.p.length < 2) continue;
+        for (const part of cutStroke(s.p, x, y, r + (s.s || 0) * 0.35, W, H)) out.push({ ...s, p: part });
+      }
+      if (hit) { items = out; changed = true; }
     }
-    if (changed) { this.items = out; this.redraw(); this.save(); }
+    if (changed) { this.items = items; this.redraw(); this.save(); }
     return changed;
   }
+  flushErase() { if (!this.erasing) return; this.erasing = false; this.redraw(); this.save(); }
   setItems(items) { this.items = items; this.redraw(); this.save(); }
 }
 

@@ -139,6 +139,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.websiteDataStore = .default()
 
         webView = WKWebView(frame: .zero, configuration: config)
+        // the direct iPhone–iPad link: messages, live picture and files (StandNativeExtras.swift)
+        StandNativeExtras.shared.install(on: webView)
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = false
@@ -537,11 +539,22 @@ final class FaceTurner: NSObject, ARSessionDelegate {
     private var lastLevels: TimeInterval = 0
     private var smoothL: Float?
     private var smoothR: Float?
+    // A hand in front of the eyes covers them, and the covered eye can look closed: no page turns
+    // while a hand is over the eyes (and for a moment after). Only a hand over the eyes counts, so
+    // a violinist's left hand beside the face changes nothing.
+    private let faceQueue = DispatchQueue(label: "stand.face")
+    private let handQueue = DispatchQueue(label: "stand.hand")
+    private var handUntil: TimeInterval = 0
+    private var handBusy = false
+    private var frameCount = 0
+    private lazy var handRequest: VNDetectHumanHandPoseRequest = {
+        let r = VNDetectHumanHandPoseRequest(); r.maximumHandCount = 2; return r
+    }()
 
     override init() {
         super.init()
         session.delegate = self
-        session.delegateQueue = DispatchQueue(label: "stand.face")
+        session.delegateQueue = faceQueue
     }
     func start() {
         guard Self.supported, !running else { return }
@@ -558,6 +571,49 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         candidate = nil
         locked = false
         smoothL = nil; smoothR = nil
+        handUntil = 0
+    }
+    // About ten times a second: is a hand over the eyes? (Vision on the camera picture, off the face queue.)
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        frameCount += 1
+        guard frameCount % 3 == 0, !handBusy,
+              let face = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first, face.isTracked else { return }
+        // where the eyes are in the camera picture (0...1, Vision's way: origin at the bottom left)
+        let size = frame.camera.imageResolution
+        func project(_ t: simd_float4x4) -> CGPoint {
+            let w = face.transform * t
+            let p = frame.camera.projectPoint(simd_float3(w.columns.3.x, w.columns.3.y, w.columns.3.z), orientation: .landscapeRight, viewportSize: size)
+            return CGPoint(x: p.x / size.width, y: 1 - p.y / size.height)
+        }
+        let l = project(face.leftEyeTransform), r = project(face.rightEyeTransform)
+        let d = max(0.04, hypot(l.x - r.x, l.y - r.y))
+        let eyes = CGRect(x: min(l.x, r.x) - d * 0.7, y: min(l.y, r.y) - d * 0.7, width: abs(l.x - r.x) + d * 1.4, height: abs(l.y - r.y) + d * 1.4)
+        handBusy = true
+        let buffer = frame.capturedImage
+        handQueue.async { [weak self] in
+            guard let self = self else { return }
+            var over = false
+            let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
+            if (try? handler.perform([self.handRequest])) != nil, let hands = self.handRequest.results {
+                for h in hands {
+                    guard let pts = try? h.recognizedPoints(.all) else { continue }
+                    let good = pts.values.filter { $0.confidence > 0.3 }
+                    // fingers or the palm inside the eye area
+                    if good.filter({ eyes.contains($0.location) }).count >= 2 { over = true; break }
+                    if good.count >= 6 {
+                        let xs = good.map { $0.location.x }, ys = good.map { $0.location.y }
+                        let box = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+                        let i = box.intersection(eyes)
+                        if !i.isNull && i.width * i.height > eyes.width * eyes.height * 0.3 { over = true; break }
+                    }
+                }
+            }
+            let until = CACurrentMediaTime() + 0.8
+            self.faceQueue.async {
+                if over { self.handUntil = until; self.candidate = nil }
+                self.handBusy = false
+            }
+        }
     }
     // Called for every camera frame (about 30 times a second). A wink is one eye closing while the
     // other stays comparatively open. It is judged by the difference between the two eyes rather
@@ -572,10 +628,13 @@ final class FaceTurner: NSObject, ARSessionDelegate {
         smoothR = smoothR == nil ? rawR : smoothR! * 0.3 + rawR * 0.7
         let left = smoothL!, right = smoothR!
         let now = CACurrentMediaTime()
+        let handOver = now < handUntil
         if test && now - lastLevels > 0.07 {
             lastLevels = now
-            emit(["type": "levels", "l": Double(left), "r": Double(right)])
+            emit(["type": "levels", "l": Double(left), "r": Double(right), "hand": handOver])
         }
+        // a hand over the eyes: nothing counts (the detector stays ready for when it moves away)
+        if handOver { candidate = nil; return }
         // Sensitivity 0...1 (higher = easier). At the default the closing eye needs to reach about
         // 0.16 and be about 0.26 more closed than the other eye; at maximum about 0.11 and 0.19.
         let s = min(1, max(0, sensitivity))
