@@ -1,0 +1,19 @@
+Instrument sounds in Stand
+
+violin, viola, cellosec, bass, strings, tremolo, pizz, flute, oboe, clarinet, bassoon, piccolo,
+horn, trumpet, trombone, tuba, harp, glockenspiel, marimba, xylophone:
+  VS Chamber Orchestra: Community Edition (VSCO-2-CE) by Versilian Studios — CC0 1.0 (public domain)
+  https://github.com/sgossner/VSCO-2-CE
+
+piano:
+  Salamander Grand Piano V3 by Alexander Holm — CC BY 3.0
+  https://archive.org/details/SalamanderGrandPianoV3
+
+cello (solo):
+  "Real cello notes" by flcellogrl, Freesound pack 12408, via tonejs-instruments — CC BY 3.0
+  https://freesound.org  ·  https://github.com/nbrosowsky/tonejs-instruments
+
+all other instruments:
+  MusyngKite soundfont (as before).
+
+Samples were trimmed, loudness-matched, looped and encoded for Stand.

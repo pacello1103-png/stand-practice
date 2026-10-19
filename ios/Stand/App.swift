@@ -139,6 +139,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.websiteDataStore = .default()
 
         webView = WKWebView(frame: .zero, configuration: config)
+        // iCloud practice sync and the direct iPhone–iPad link (StandNativeExtras.swift)
+        StandNativeExtras.shared.install(on: webView)
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = false

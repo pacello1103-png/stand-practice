@@ -27,6 +27,32 @@ export function getCtx() {
 
 export function master() { getCtx(); return masterGain; }
 
+// Sound must really be running before a metronome or a tuner starts. iOS can leave the sound
+// system suspended (the first tap of the day) or "interrupted" (after a call, Siri, or when the
+// microphone opens). Wake it; if it will not wake, make a new one (the old one is dead).
+export async function ensureRunning(timeout = 500) {
+  const c = getCtx();
+  if (c.state === 'running') return c;
+  try { await Promise.race([c.resume(), new Promise((r) => setTimeout(r, timeout))]); } catch {}
+  if (c.state === 'running') return c;
+  try { c.close(); } catch {}
+  ctx = null;
+  const n = getCtx();
+  // anyone using the microphone hears it again through the new sound system
+  if (micStream) { try { micSource = n.createMediaStreamSource(micStream); } catch {} }
+  try { await Promise.race([n.resume(), new Promise((r) => setTimeout(r, timeout))]); } catch {}
+  window.dispatchEvent(new Event('stand-audio-new'));
+  return n;
+}
+// The first touch anywhere wakes the sound (iOS only allows it inside a touch), and so does
+// coming back to the app.
+if (typeof document !== 'undefined') {
+  const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); };
+  document.addEventListener('pointerdown', wake, true);
+  document.addEventListener('touchend', wake, true);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
+}
+
 // Call from a user gesture; iOS needs a sound to start inside a tap.
 export function unlock() {
   const c = getCtx();
@@ -47,6 +73,13 @@ export async function acquireMic() {
     }).then((stream) => {
       micStream = stream;
       micSource = c.createMediaStreamSource(stream);
+      // iOS can take the microphone away (a call, Siri, another app): forget it, so the next one
+      // to ask opens it afresh, and tell everyone listening
+      for (const t of stream.getAudioTracks()) t.addEventListener('ended', () => {
+        if (micStream !== stream) return;
+        micStream = null; micSource = null;
+        window.dispatchEvent(new Event('stand-mic-lost'));
+      });
       return micSource;
     }).catch((e) => { micUsers = 0; setSession('playback'); throw e; })
       .finally(() => { micPending = null; });

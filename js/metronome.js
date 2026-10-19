@@ -1,5 +1,5 @@
 // Sample-accurate metronome: Web Audio lookahead scheduler with a smooth or stepped tempo ramp.
-import { getCtx, master } from './audio.js';
+import { getCtx, master, ensureRunning } from './audio.js';
 
 const LOOKAHEAD = 0.12;      // seconds scheduled ahead
 const TICK_MS = 25;          // scheduler wake-up
@@ -73,7 +73,7 @@ export class Metronome {
 
   _ensureBuffers() {
     const ctx = getCtx();
-    const key = this.sound + ctx.sampleRate;
+    const key = this.sound + ctx.sampleRate + (ctx._id || (ctx._id = Math.random()));
     if (this._bufKey === key) return;
     if (!VOICES[this.sound]) this.sound = 'click';
     const p = PITCH[this.sound];
@@ -83,6 +83,8 @@ export class Metronome {
 
   _out() {
     const ctx = getCtx();
+    // a new sound system (after iOS dropped the old one): new connections
+    if (this._gain && this._gain.context !== ctx) this._gain = null;
     if (!this._gain) { this._gain = ctx.createGain(); this._gain.connect(master()); }
     this._gain.gain.setTargetAtTime(this.volume, ctx.currentTime, 0.02);
     return this._gain;
@@ -123,6 +125,7 @@ export class Metronome {
 
   start(opts = {}) {
     const ctx = getCtx();
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
     if (this.running) this.stop(true);
     this._ensureBuffers();
     this._out();
@@ -132,10 +135,21 @@ export class Metronome {
     this._countIn = opts.countInBars ? opts.countInBars * this.beats : 0;
     this._onCountIn = opts.onCountInDone || null;
     this._stopAfterCountIn = !!opts.stopAfterCountIn;
-    this._next = opts.at && opts.at > ctx.currentTime + 0.02 ? opts.at : ctx.currentTime + 0.08;
+    // a context that is still waking up (first start) needs a little more time before the first beat
+    this._next = opts.at && opts.at > ctx.currentTime + 0.02 ? opts.at : ctx.currentTime + (ctx.state === 'running' ? 0.08 : 0.35);
     this._queue = [];
     this._tick();
     this._timer = setInterval(() => this._tick(), TICK_MS);
+    // if the sound system has not woken within a moment, wake it (or replace it) and start again
+    // from the next beat, so the first start always plays
+    const ctx0 = ctx, myStart = this._startId = (this._startId || 0) + 1;
+    if (ctx0.state !== 'running') ensureRunning().then((c) => {
+      if (!this.running || this._startId !== myStart) return;
+      if (c !== ctx0 || this._next < c.currentTime) {
+        this._ensureBuffers(); this._out();
+        this._next = c.currentTime + 0.12; this._queue = [];
+      }
+    });
     const loop = () => { this._drain(); if (this.running || this._queue.length) this._raf = requestAnimationFrame(loop); };
     cancelAnimationFrame(this._raf);
     this._raf = requestAnimationFrame(loop);
@@ -151,6 +165,8 @@ export class Metronome {
 
   _tick() {
     const ctx = getCtx();
+    // fell behind (the sound system stalled): carry on from now instead of a burst of clicks
+    if (this.running && this._next < ctx.currentTime - 0.25) this._next = ctx.currentTime + 0.05;
     while (this.running && this._next < ctx.currentTime + LOOKAHEAD) {
       const inCountIn = this._countIn > 0;
       const bc = this._beatCount;

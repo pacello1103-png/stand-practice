@@ -2,7 +2,7 @@ name: Build iPad app (IPA)
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'stand-2*']
   workflow_dispatch:
 
 permissions:
@@ -18,6 +18,7 @@ jobs:
         run: |
           mkdir -p ios/Stand/www
           cp -R index.html manifest.webmanifest css js vendor icons ios/Stand/www/
+          if [ -d covers ]; then cp -R covers ios/Stand/www/; fi
 
       - name: Generate Xcode project
         run: |
@@ -48,6 +49,7 @@ jobs:
           path: ios/Stand.ipa
 
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.${{ github.run_number }}

@@ -1,6 +1,6 @@
 // Chromatic tuner (McLeod pitch method via FFT autocorrelation), overtone analysis,
 // harmonic-series playback and an intonation drone.
-import { getCtx, master, acquireMic, releaseMic } from './audio.js';
+import { getCtx, master, acquireMic, releaseMic, ensureRunning } from './audio.js';
 import { NOTE_NAMES, centsOffset } from './temperament.js';
 import { playNote, holdNote, pluckTanpura } from './synth.js';
 export { NOTE_NAMES };
@@ -43,12 +43,12 @@ function fft(re, im, inverse) {
 }
 
 // McLeod Pitch Method. buf: mono samples. Returns {freq, clarity} or null.
-export function detectPitch(buf, sr) {
+export function detectPitch(buf, sr, minRms = 0.003) {
   const N = buf.length;
   let ms = 0;
   for (let i = 0; i < N; i++) ms += buf[i] * buf[i];
   const rms = Math.sqrt(ms / N);
-  if (rms < 0.003) return null;
+  if (rms < minRms) return null;
   const M = 1 << Math.ceil(Math.log2(2 * N));
   const re = new Float64Array(M), im = new Float64Array(M);
   for (let i = 0; i < N; i++) re[i] = buf[i];
@@ -120,8 +120,8 @@ export class PitchTracker {
   constructor() { this.floor = 0.002; this.reset(); }
   reset() { this.cur = 0; this.hist = []; this.cand = null; this.lastHeard = 0; }
   feed(r, rms, now) {
-    const gate = Math.max(0.0035, this.floor * 2.8);
-    const valid = r && r.rms > gate && r.clarity >= (this.cur ? 0.7 : 0.85);
+    const gate = Math.max(0.0022, this.floor * 2.2);
+    const valid = r && r.rms > gate && r.clarity >= (this.cur ? 0.68 : 0.8);
     if (!valid) {
       this.floor = 0.97 * this.floor + 0.03 * Math.max(0.0008, Math.min(0.05, rms));
       if (this.cur && now - this.lastHeard < 1100) return { f: this.cur, held: true, clarity: 0 };
@@ -142,7 +142,7 @@ export class PitchTracker {
       }
       // a jump: only believe it when it repeats (octave jumps need more proof)
       const octave = Math.abs(Math.abs(d) - 1200) < 70 || Math.abs(Math.abs(d) - 1902) < 70;
-      const need = octave && r.clarity < 0.95 ? 6 : 3;
+      const need = octave ? (r.clarity < 0.95 ? 5 : 3) : r.clarity >= 0.9 ? 2 : 3;
       if (this.cand && Math.abs(1200 * Math.log2(f / this.cand.f)) < 45) this.cand.n++; else this.cand = { f, n: 1 };
       if (this.cand.n >= need) { this.cur = this.cand.f; this.hist = [this.cand.f]; this.cand = null; return { f: this.cur, held: false, clarity: r.clarity }; }
       return { f: this.cur, held: false, clarity: r.clarity };
@@ -162,8 +162,17 @@ export class Tuner {
     this.trace = []; // {t, cents, name}
     this.lastBuf = null; this.lastF0 = 0;
     this.tracker = new PitchTracker();
+    // Playing with others: the instrument is the loudest thing near the microphone, and it can only
+    // play in its own range. Sounds well below the loudest recent level, or outside the range, are
+    // left out, so the tuner stays on you.
+    this.focus = true; this.range = null; this.peak = 0;
   }
+  // the lowest and highest pitch the instrument plays (Hz), or null for any
+  setRange(lo, hi) { this.range = lo && hi ? [lo, hi] : null; if (this.hp) this.hp.frequency.value = this.range ? Math.max(30, lo * 0.7) : 30; }
+  // on, or on its way (the microphone is still opening)
+  get active() { return this.running || !!this._starting; }
   start() {
+    this._cancel = false;                 // a start after a stop that came while opening still counts
     if (this.running) return Promise.resolve();
     if (!this._starting) {
       this._cancel = false;
@@ -172,15 +181,18 @@ export class Tuner {
     return this._starting;
   }
   async _start() {
-    const ctx = getCtx();
+    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) this.restart(); }); }
+    await ensureRunning();
     const src = await acquireMic();
+    const ctx = src.context || getCtx();
     if (this._cancel) { releaseMic(); return; }   // stopped while the microphone was opening
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 4096;
     this.analyser.smoothingTimeConstant = 0;
-    this.hp = ctx.createBiquadFilter(); this.hp.type = 'highpass'; this.hp.frequency.value = 30; this.hp.Q.value = 0.6;
+    this.hp = ctx.createBiquadFilter(); this.hp.type = 'highpass'; this.hp.frequency.value = this.range ? Math.max(30, this.range[0] * 0.7) : 30; this.hp.Q.value = 0.6;
     src.connect(this.hp).connect(this.analyser);
-    this.buf = new Float32Array(this.analyser.fftSize);
+    // a shorter window answers faster (quick passages); only very low notes need the long one
+    this.buf = new Float32Array(this.long ? 4096 : 2048);
     this.tracker.reset(); this.running = true; this.wasNull = true;
     const loop = () => {
       if (!this.running) return;
@@ -191,7 +203,15 @@ export class Tuner {
   }
   // Which target are we aiming at? Open string (pure fifths) when close, else the tempered note.
   _target(f) {
-    const n = freqToNote(f, this.ref);
+    let n = freqToNote(f, this.ref);
+    // Hold on to the note you are on until you are clearly on the next one, so a note near a
+    // quarter tone (or with wide vibrato) does not flip the display between two notes.
+    const mf = 69 + 12 * Math.log2(f / this.ref);
+    if (this.lastMidi !== undefined && n.midi !== this.lastMidi && Math.abs(mf - this.lastMidi) < 0.68) {
+      const m = this.lastMidi;
+      n = { midi: m, pc: ((m % 12) + 12) % 12, name: NOTE_NAMES[((m % 12) + 12) % 12], octave: Math.floor(m / 12) - 1, cents: (mf - m) * 100 };
+    }
+    this.lastMidi = n.midi;
     for (const s of this.strings) {
       const c = 1200 * Math.log2(f / s.freq);
       if (Math.abs(c) < 45) return { ...n, cents: c, target: s.freq, string: s.label };
@@ -204,10 +224,29 @@ export class Tuner {
     this.analyser.getFloatTimeDomainData(this.buf);
     let ms = 0; for (let i = 0; i < this.buf.length; i++) ms += this.buf[i] * this.buf[i];
     const rms = Math.sqrt(ms / this.buf.length);
-    const r = rms > 0.0012 ? detectPitch(this.buf, sr) : null;
+    // Kept alive: a sound system that was interrupted is woken up, and a microphone that went
+    // silent for good (a call, another app took it) is opened again.
+    if (rms === 0) {
+      this._zero = (this._zero || 0) + 1;
+      const ctx = getCtx();
+      if (ctx.state !== 'running' && this._zero % 30 === 0) ensureRunning().catch(() => {});
+      if (this._zero > 150) { this._zero = 0; this.restart(); return; }
+    } else this._zero = 0;
+    // the loudest level of the last seconds (falls slowly)
+    this.peak = Math.max(rms, this.peak * 0.993);
+    const quietOther = this.focus && this.peak > 0.01 && rms < this.peak * 0.28;
+    let r = rms > 0.0009 && !quietOther ? detectPitch(this.buf, sr) : null;
+    // a low note the short window cannot hold: look again with the long one
+    if (!r && !quietOther && !this.long && rms > 0.0009) { if (!this.big) this.big = new Float32Array(4096); this.analyser.getFloatTimeDomainData(this.big); r = detectPitch(this.big, sr); }
+    // outside what the instrument can play: someone else (or an octave slip of the detector)
+    if (r && this.range) {
+      const [lo, hi] = this.range;
+      if (r.freq < lo * 0.94) { const f2 = r.freq * 2; r = f2 >= lo * 0.94 && f2 <= hi ? { ...r, freq: f2 } : null; }
+      else if (r.freq > hi * 1.06) r = null;
+    }
     const now = performance.now();
     const out = this.tracker.feed(r, rms, now);
-    if (!out) { if (!this.wasNull) { this.wasNull = true; this.onReading && this.onReading(null); } return; }
+    if (!out) { this.lastMidi = undefined; if (!this.wasNull) { this.wasNull = true; this.onReading && this.onReading(null); } return; }
     this.wasNull = false;
     const t = this._target(out.f);
     if (!out.held) {
@@ -216,6 +255,11 @@ export class Tuner {
       while (this.trace.length && now - this.trace[0].t > 10000) this.trace.shift();
     }
     this.onReading && this.onReading({ freq: out.f, held: out.held, ...t });
+  }
+  async restart() {
+    if (!this.running) return;
+    this.stop(); this._cancel = false; this.peak = 0;
+    try { await this.start(); } catch {}
   }
   harmonics(n = 10) { return this.lastBuf ? harmonicProfile(this.lastBuf, this.lastSr, this.lastF0, n) : null; }
   stop() {
@@ -341,6 +385,15 @@ export class Drone {
     this.voices = [{ stop: () => clearInterval(timer) }];
   }
   _stopVoices() { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now); this.voices = []; }
+  // move to another note while sounding: the new note fades in as the old one fades out
+  change(pc) {
+    this.pc = pc;
+    if (!this.running || this.sound === 'tanpura') { this.refresh(); return; }
+    const ctx = getCtx(), now = ctx.currentTime, old = this.voices;
+    const f0 = noteFreq(this.midi, this.ref), out = this._out();
+    this.voices = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62, now + 0.05));
+    for (const v of old) v.stop(now + 0.25);
+  }
   stop() {
     if (!this.running) return;
     this._stopVoices(); this.running = false;

@@ -135,9 +135,15 @@ export function makeImpulse(ctx, room) {
       d[i] = lp * env * fadeIn * 3;
     }
     // a few early reflections
-    for (const [ms, g] of [[11, 0.5], [17, 0.35], [23, 0.3], [31, 0.22], [43, 0.16]]) {
-      const i = pre + Math.round((ms * (1 + ch * 0.07) * room.decay ** 0.3) * sr / 1000);
-      if (i < len) d[i] += g * (ch ? -1 : 1) * 0.6;
+    // early reflections: walls, floor and ceiling, getting denser and softer, different in each ear
+    let rs = 31 + ch * 17; const rr = () => { rs = (rs * 1103515245 + 12345) & 0x7fffffff; return rs / 0x7fffffff; };
+    const span = 18 + room.decay * 22;
+    for (let r = 0; r < 18; r++) {
+      const ms = 4 + Math.pow(rr(), 1.3) * span;
+      const gg = 0.55 * Math.exp(-ms / (span * 0.7)) * (0.6 + rr() * 0.4);
+      const i = pre + Math.round(ms * sr / 1000);
+      // each reflection is a little blurred (a few samples), as from a real surface
+      for (let q = -2; q <= 2; q++) if (i + q < len && i + q > 0) d[i + q] += gg * (rr() < 0.5 ? -1 : 1) * (1 - Math.abs(q) * 0.3) * 0.5;
     }
   }
   // normalise energy so all rooms sit at a similar level
