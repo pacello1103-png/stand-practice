@@ -3214,17 +3214,29 @@ function renderPagesPanel() {
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     const tick = el('span', 'pick'); tick.append(icon('i-check')); frame.append(tick);
     b.append(frame, el('span', 'num', String(i + 1)));
-    // a notebook page has its own delete button (it can be put back below)
+    // each page sits in its own cell; in a notebook the cell also has a delete button of its own
+    // (a real button next to the page, not inside it, so a tap on it can never open the page instead)
+    const cell = el('div', 'pcell'); cell.append(b);
     if (NBK() && !PG.selecting && map.length > 1) {
-      const del = el('span', 'pdel'); del.setAttribute('role', 'button'); del.setAttribute('aria-label', 'Delete page ' + (i + 1)); del.append(icon('i-trash'));
-      del.addEventListener('click', async (e) => { e.stopPropagation(); await setPageMap(map.filter((x) => x !== o)); toast('Page deleted. Put it back below.', 2600); });
-      frame.append(del);
+      const del = el('button', 'pdel'); del.type = 'button'; del.setAttribute('aria-label', 'Delete page ' + (i + 1)); del.append(icon('i-trash'));
+      let busy = false;
+      const go = async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (busy) return; busy = true;
+        const cur = V.score.pageMap || [...Array(V.base.pages).keys()];
+        if (cur.length <= 1) { toast('A notebook keeps at least one page.'); return; }
+        await setPageMap(cur.filter((x) => x !== o));
+        toast('Page deleted. You can put it back below.', 2600);
+      };
+      del.addEventListener('pointerdown', (e) => e.stopPropagation());
+      del.addEventListener('click', go);
+      cell.append(del);
     }
     b.addEventListener('click', () => {
       if (!PG.selecting) { hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k); return; }
       PG.sel.has(o) ? PG.sel.delete(o) : PG.sel.add(o); b.classList.toggle('picked', PG.sel.has(o)); syncPageDelete(map);
     });
-    grid.append(b);
+    grid.append(cell);
   });
   const gone = all.filter((o) => !map.includes(o));
   $('#pgTrash').hidden = !gone.length;

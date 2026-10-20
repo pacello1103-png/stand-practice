@@ -513,8 +513,11 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .pthumb.picked .pick svg { opacity: 1; }
 .pthumb.picked .num { color: var(--rec); }
 .pthumb.gone canvas { opacity: .45; }
-.pthumb .pdel { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 15px; background: rgba(255, 255, 255, .94); color: var(--rec); display: grid; place-items: center; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; }
-.pthumb .pdel svg { width: 16px; height: 16px; }
+.pcell { position: relative; min-width: 0; }
+.pcell .pthumb { width: 100%; }
+.pcell .pdel { position: absolute; top: 4px; right: 4px; z-index: 2; width: 36px; height: 36px; border-radius: 18px; padding: 0; background: rgba(255, 255, 255, .96); color: var(--rec); display: grid; place-items: center; box-shadow: 0 1px 5px rgba(0,0,0,.25); cursor: pointer; touch-action: manipulation; }
+.pcell .pdel svg { width: 17px; height: 17px; }
+.pcell .pdel:active { transform: scale(.92); }
 #pgDelete { position: sticky; bottom: 0; }
 .pthumb.gone .num { color: var(--accent-text); font-weight: 600; }
 .page-grid.small { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
