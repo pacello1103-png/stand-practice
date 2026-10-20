@@ -2,7 +2,7 @@
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, voiceView,
-  WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore,
+  WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
 } from './model.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -255,8 +255,29 @@ export async function toMXL(score) {
   ]);
 }
 
+// One part on its own, as a score: that instrument's staves and the lines that belong to them.
+export function partScore(score, pi) {
+  const part = score.parts[pi];
+  const ids = new Set(part.staves.map((st) => st.id));
+  return { ...score, parts: [part], spans: (score.spans || []).filter((sp) => !sp.st || ids.has(sp.st)) };
+}
+// The score and every part, each as its own .mxl, together in one .zip.
+export async function toPartsZip(score, base = 'Score') {
+  const clean = (t) => String(t || '').replace(/[\\/:*?"<>|]+/g, '').trim() || 'Part';
+  const files = [];
+  const blobBytes = async (b) => new Uint8Array(await b.arrayBuffer());
+  files.push({ name: clean(base) + ' (score).mxl', data: await blobBytes(await toMXL(score)) });
+  const used = new Set();
+  for (let i = 0; i < score.parts.length; i++) {
+    let n = clean(base) + ' - ' + clean(score.parts[i].name); while (used.has(n)) n += ' ' + (i + 1); used.add(n);
+    files.push({ name: n + '.mxl', data: await blobBytes(await toMXL(partScore(score, i))) });
+  }
+  const z = await zipFiles(files);
+  return new Blob([z], { type: 'application/zip' });
+}
+
 // ---------- import ----------
-async function unzip(buf) {
+export async function unzip(buf) {
   const dv = new DataView(buf); const files = {};
   let eocd = buf.byteLength - 22; while (eocd >= 0 && dv.getUint32(eocd, true) !== 0x06054b50) eocd--;
   if (eocd < 0) throw new Error('Not a zip file');
@@ -341,7 +362,13 @@ export function fromMusicXML(xmlText) {
         const tag = el.tagName;
         if (tag === 'attributes') {
           if (q(el, 'divisions')) divisions = +txt(el, 'divisions') || 1;
-          if (q(el, 'key fifths') && pi === 0) ms.key = +txt(el, 'key fifths');
+          if (q(el, 'key fifths') && pi === 0) {
+            // a transposing first part (clarinet, horn…) writes its own key: the score keeps the sounding key
+            const t = q(el, 'transpose') ? { steps: +txt(el, 'transpose diatonic') || 0, semis: +txt(el, 'transpose chromatic') || 0 } : tr;
+            let k = +txt(el, 'key fifths') + ((t.steps || t.semis) ? fifthsOfInterval(t.steps, t.semis) : 0);
+            while (k > 7) k -= 12; while (k < -7) k += 12;
+            ms.key = k;
+          }
           if (q(el, 'time beats') && pi === 0) { time = [+txt(el, 'time beats') || 4, +txt(el, 'time beat-type') || 4]; ms.time = time.slice(); const sym = q(el, 'time') && q(el, 'time').getAttribute('symbol'); if (sym === 'common' || sym === 'cut') ms.timeSym = sym; }
           else if (q(el, 'time beats')) time = [+txt(el, 'time beats') || 4, +txt(el, 'time beat-type') || 4];
           for (const c of el.querySelectorAll('clef')) {

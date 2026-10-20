@@ -182,6 +182,15 @@ export function layoutScore(score, opts = {}) {
     }
     systems.push({ groups: list, indent, head, avail, used, first });
   }
+  // don't leave one bar alone on the last line: bring the bar before it down too
+  if (systems.length > 1) {
+    const last = systems[systems.length - 1], prev = systems[systems.length - 2];
+    const g = prev.groups[prev.groups.length - 1], c = g && cols[g.m];
+    if (last.groups.length === 1 && prev.groups.length >= 3 && !g.multi && !last.groups[0].multi && c && !c.timeChange && !c.keyChange && !c.clefChange && !cols[last.groups[0].m].timeChange && !cols[last.groups[0].m].keyChange) {
+      prev.groups.pop(); prev.used -= g.w;
+      last.groups.unshift(g); last.used += g.w;
+    }
+  }
   // justify each system
   for (const [si, sy] of systems.entries()) {
     const fixed = sy.head;
@@ -294,7 +303,7 @@ function staffExtent(score, s, sy, concert) {
     if (sp.st !== s.st.id) continue;
     if (['trill', '8va', '15ma', 'rit', 'accel'].includes(sp.kind)) above += 2.6;
     if (['8vb', '15mb', 'ped', 'cresc', 'dim'].includes(sp.kind)) below += 2.8;
-    if (sp.kind === 'hairpin') { below = Math.max(below, 3.2); }
+    if (sp.kind === 'hairpin') { below = Math.max(below, 3.2); hasDyn = true; }
     if (sp.kind === 'slur') { above = Math.max(above, 1.4); below = Math.max(below, 1.2); }
   }
   for (let m = mA; m <= mB; m++) { const ms = score.measures[m]; if (ms && (ms.mark || ms.jump)) above = Math.max(above, 3.2); }
@@ -302,6 +311,8 @@ function staffExtent(score, s, sy, concert) {
   let lyr = 0;
   if (hasLyr) { lyr = Math.max(4.2, notesBelow + 2.6, hasDyn ? Math.max(3.0, notesBelow + 2.9) + 2.6 : 0); below = Math.max(below, lyr + 1.2); }
   s.lyr = lyr;
+  // dynamics and hairpins sit under the lowest note, so they need that room as well
+  if (hasDyn) below = Math.max(below, Math.max(3.0, notesBelow + 2.9) + 0.9);
   return { above: above + 0.8, below: below + 0.8, lyr };
 }
 
@@ -390,9 +401,18 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts);
   }
   // one level for the dynamics and hairpins of each staff on this line
-  for (const hs of hitStaves) {
+  for (const [i, hs] of hitStaves.entries()) {
     let low = 0; for (const hm of hs.measures) low = Math.max(low, hm.dynLow || 0);
     hs.dynLine = Math.max(3.0, low + 2.9);
+    // the upper staff of a piano (or harp, organ…): dynamics go in the middle, between the two staves
+    const next = hitStaves[i + 1];
+    if (next && next.part === hs.part) {
+      const gap = next.y - (hs.y + 4);
+      hs.dynLine = Math.max(hs.dynLine, gap / 2 + 0.75);
+      // …unless that would reach into the staff below; then they stay just under the notes
+      if (hs.dynLine > gap - 0.6) hs.dynLine = Math.max(3.0, low + 2.9);
+      hs.dynMax = Math.max(hs.dynLine, gap - 1.2);
+    }
     for (const hm of hs.measures) for (const d of hm.dyns || []) {
       if (d.c) { ctx.save(); ctx.fillStyle = d.c; }
       glyph(ctx, DYN_LETTERS(d.dyn), d.x, hs.y + 4 + hs.dynLine);
@@ -518,6 +538,7 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
   if (sp.kind === 'hairpin') {
     let dyn = hs.dynLine || 3.0;
     for (const q of evs) if (q.notes.length) dyn = Math.max(dyn, lowestOf(q) + 2.9);
+    if (hs.dynMax) dyn = Math.min(dyn, hs.dynMax);   // never into the staff below (piano)
     const yy = hs.y + 4 + dyn - 0.55;
     const f = a ? findEv(lay.score, a.id) : null;
     let xa = a ? a.x + (f && f.dyn ? 3.6 : 0) : contentX - 0.4;

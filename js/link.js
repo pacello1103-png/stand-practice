@@ -67,7 +67,7 @@ export async function directSendFile(blob, meta, onProgress) {
   const ext = /mp4/.test(blob.type) ? 'mp4' : /webm/.test(blob.type) ? 'webm' : /quicktime/.test(blob.type) ? 'mov' : 'bin';
   const H = window.webkit.messageHandlers.standPeer;
   H.postMessage({ op: 'fileBegin', id, ext, meta: { ...meta, mime: blob.type } });
-  const PIECE = 384 * 1024;
+  const PIECE = 1024 * 1024;
   for (let o = 0; o < blob.size; o += PIECE) {
     H.postMessage({ op: 'fileChunk', id, data: await b64Of(blob.slice(o, o + PIECE)) });
     if (onProgress) onProgress(0.15 * Math.min(1, (o + PIECE) / blob.size));   // handing it to the app: the first part of the bar
@@ -415,6 +415,7 @@ export class CameraPhone {
   _route() {
     if (this.recording || !this.cam) return;            // the picture source never changes mid-take
     const raw = !this._needsCanvas();
+    if (!raw && !this.canvasOut) return;               // the canvas is not made yet (a resize can come first)
     if (raw === this.raw && this.out) return;
     this.raw = raw;
     const track = raw ? this.cam.getVideoTracks()[0] : this.canvasOut.getVideoTracks()[0];
@@ -550,15 +551,16 @@ export class CameraPhone {
       if (!this.direct || this.state === 'off') { clearInterval(this._pumpT); return; }
       const now = performance.now();
       if (this._waitAck && now - sentAt < 700) return;
-      if (this.recording && now - sentAt < 110) return;           // a little calmer while recording
+      // while recording the iPhone's work goes to the video: a smaller, calmer picture for the iPad
+      if (this.recording && now - sentAt < 160) return;
       const v = this.src; if (!v || !v.videoWidth) return;
-      const long = 480, k = long / Math.max(v.videoWidth, v.videoHeight);
+      const long = this.recording ? 360 : 480, k = long / Math.max(v.videoWidth, v.videoHeight);
       const w = Math.round(v.videoWidth * k), h = Math.round(v.videoHeight * k);
       if (this.pc2.width !== w || this.pc2.height !== h) { this.pc2.width = w; this.pc2.height = h; }
       // the picture as it is recorded (with the brightness and zoom of the canvas, when it is used)
       this.pg2.drawImage(this.raw === false && this.canvas ? this.canvas : v, 0, 0, w, h);
       this._waitAck = true; sentAt = now;
-      this.pc2.toBlob((b) => { if (!b) { this._waitAck = false; return; } const r = new FileReader(); r.onload = () => directFrame(String(r.result).split(',')[1] || ''); r.readAsDataURL(b); }, 'image/jpeg', 0.6);
+      this.pc2.toBlob((b) => { if (!b) { this._waitAck = false; return; } const r = new FileReader(); r.onload = () => directFrame(String(r.result).split(',')[1] || ''); r.readAsDataURL(b); }, 'image/jpeg', this.recording ? 0.5 : 0.6);
     }, 66);
   }
   _lost() { this.ch = null; this._set('lost'); if (!this.left) { this.retry = setTimeout(() => this.find(), 2500); } }
@@ -582,7 +584,9 @@ export class CameraPhone {
     if (this.recording) return true;
     if (!window.MediaRecorder || !this.out) { this.send({ t: 'error', msg: 'This iPhone cannot record video here.' }); this.onState && this.onState('error', 'This iPhone cannot record video here.'); return false; }
     const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm', ''].filter((t) => !t || MediaRecorder.isTypeSupported(t));
-    const rate = this.s.quality === 'hd' ? 6_000_000 : 12_000_000;
+    // enough for a sharp picture of a player, and light enough that the iPhone keeps up and the
+    // file crosses to the iPad quickly
+    const rate = this.s.quality === 'hd' ? 5_000_000 : 8_000_000;
     const withAudio = [...this.out.getVideoTracks(), ...(this.mic ? this.mic.getAudioTracks().filter((t) => t.readyState === 'live') : [])];
     // some iPhones refuse one way of recording and accept another: try them in turn
     const tries = [];

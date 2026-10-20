@@ -1567,8 +1567,10 @@ $('#inkDone').addEventListener('click', () => setInking(false));
 function layerFor(key) { const p = V.pages.find((x) => x.layer && x.layer.key === key); return p && p.layer; }
 function applyItems(key, items) { const L = layerFor(key); if (L) L.setItems(items.slice()); else saveItems(key, items); }
 function pushUndo(key, before, after) { const pgNo = +String(key).split(':').pop(); if (!isNaN(pgNo)) PG.edited.add(pgNo); V.undo.push({ key, before, after }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
-function undo() { clearSelection(); const u = V.undo.pop(); if (!u) return; applyItems(u.key, u.before); V.redo.push(u); syncInkBar(); }
-function redo() { clearSelection(); const u = V.redo.pop(); if (!u) return; applyItems(u.key, u.after); V.undo.push(u); syncInkBar(); }
+// a change to two pages at once (something moved from one page to the other) undoes in one step
+function pushUndoGroup(list) { for (const x of list) { const pgNo = +String(x.key).split(':').pop(); if (!isNaN(pgNo)) PG.edited.add(pgNo); } V.undo.push({ group: list }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
+function undo() { clearSelection(); const u = V.undo.pop(); if (!u) return; for (const x of u.group || [u]) applyItems(x.key, x.before); V.redo.push(u); syncInkBar(); }
+function redo() { clearSelection(); const u = V.redo.pop(); if (!u) return; for (const x of u.group || [u]) applyItems(x.key, x.after); V.undo.push(u); syncInkBar(); }
 $('#inkUndo').addEventListener('click', undo);
 $('#inkRedo').addEventListener('click', redo);
 
@@ -1731,12 +1733,17 @@ function makeSelection(entry, idx) {
     drag.out = shaped(drag, P);
     if (!drag.hid) { entry.layer.redraw(new Set(Sel.idx)); drag.hid = true; }
     clearLive();
-    for (const it of drag.out) drawLiveItem(entry, it, null, false);
+    // dragged onto the other page of the spread: it is drawn there, where it will land
+    const other = drag.mode === 'move' ? otherPageAt(entry, drag.cx, drag.cy) : null;
+    drag.to = other;
+    for (const it of drag.out) { if (other) drawLiveItem(other, toOtherPage(entry, other, it), null, false); else drawLiveItem(entry, it, null, false); }
+    if (Sel.el) Sel.el.style.visibility = other ? 'hidden' : '';
     let bb = null; for (const it of drag.out) { const q = itemBounds(it); bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
     Sel.box = bb; placeSelection();
   };
   box.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    drag.cx = e.clientX; drag.cy = e.clientY;
     const P = pagePx(e, drag.r);
     if (Math.hypot(P[0] - drag.p0[0], P[1] - drag.p0[1]) > 2) drag.moved = true;
     if (!drag.moved) return;
@@ -1753,12 +1760,38 @@ function makeSelection(entry, idx) {
       if (d.mode === 'move' && tb && NBK() && Sel.idx.length === 1) { const i = Sel.idx[0]; clearSelection(); startTextBox(entry, null, i); }
       return;
     }
+    if (d.to && d.to.layer && d.to.layer.ready) {
+      // onto the other page: taken off this one and put on that one, in the same place on screen
+      const to = d.to, moved = d.out.map((it) => toOtherPage(entry, to, it));
+      const b1 = entry.layer.items.slice(), a1 = b1.filter((_, i) => !Sel.idx.includes(i));
+      const b2 = to.layer.items.slice(), a2 = [...b2, ...moved];
+      entry.layer.setItems(a1); to.layer.setItems(a2);
+      pushUndoGroup([{ key: entry.layer.key, before: b1, after: a1.slice() }, { key: to.layer.key, before: b2, after: a2.slice() }]);
+      clearSelection(); lastEntry = to;
+      makeSelection(to, moved.map((_, k) => b2.length + k));
+      return;
+    }
     const before = entry.layer.items.slice();
     const after = before.slice(); Sel.idx.forEach((i, k) => { after[i] = d.out[k]; });
     entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
     Sel.box = selectionBox(entry, Sel.idx); placeSelection();
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+}
+// The other page of a two-page spread under a point (not the page the thing came from).
+function otherPageAt(entry, x, y) {
+  if (x == null) return null;
+  const p = entryAt(x, y);
+  return p && p !== entry && p.inner && p.layer ? p : null;
+}
+// An item from one page, in the coordinates of another page, so it stays where it is on screen.
+function toOtherPage(from, to, it) {
+  const r1 = from.inner.getBoundingClientRect(), r2 = to.inner.getBoundingClientRect();
+  const P1 = pageSize(r1), P2 = pageSize(r2);
+  const k = P1[0] / P2[0];
+  const [ox, oy] = fracOf(r1.left, r1.top, r2);   // where page one's corner is, on page two
+  if (TURN()) return it;                           // never two pages when turned
+  return transformItem(it, ox, oy, k, 0, 0);
 }
 // Trim a photo from one corner: the picture stays where it is on the page, only less of it shows.
 function cropPicture(s, c, dxp, dyp, PS) {
@@ -1871,7 +1904,7 @@ let CLIP = null;
 function copySelection() {
   const entry = Sel.entry; if (!entry) return;
   CLIP = Sel.idx.map((i) => JSON.parse(JSON.stringify(entry.layer.items[i])));
-  inkHint('Copied. Paste it from the photo button, on any page.', 2200);
+  inkHint('Copied. Hold a finger on any page to paste it.', 2200);
 }
 function editSelection(fn, keepBox) {
   const entry = Sel.entry; if (!entry) return;
@@ -1900,6 +1933,7 @@ function deleteSelection() {
 
 // ---------- notebooks: photos, text boxes, pens ----------
 const NBK = () => !!(V.file && V.file.kind === 'paper');
+window.__nbCount = () => V.pages.map((p) => (p.layer ? p.layer.items.filter((x) => x.t !== 'bg').map((x) => x.t).join('+') || '-' : '?')).join(' , ');
 // the page in the middle of the screen
 let lastEntry = null;
 function centreEntry() {
@@ -2126,7 +2160,7 @@ const LAYOUTS = [
   ] },
   { k: 'bloom', label: 'Photo poster', make: () => [
     { t: 'bg', c: '#f6f0ea', pat: '', a: 1 },
-    { t: 'img', id: null, x: 0.5, y: 0.4, w: 0.8, h: 0.52, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'bloom', word: 'BLOOM', wf: 'condensed' },
+    { t: 'img', id: null, x: 0.5, y: 0.4, w: 0.8, h: 0.52, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'bloom', word: 'ENCORE', wf: 'condensed' },
     tb('elegant', 0.1, 0.71, 'Spring recital', { w: 0.8, c: '#2f4156', fs: 0.044 }),
     { t: 'shape', k: 'e:divline', x: 0.5, y: 0.79, w: 0.4, h: 0.4 / (100 / 12) / 1.414, f: '#567c8d', a: 1, rot: 0 },
     tb('body', 0.15, 0.82, 'Saturday · seven o’clock · the small hall', { w: 0.7, al: 'center', c: '#567c8d' }),
@@ -2267,7 +2301,7 @@ $('#insPlace').addEventListener('change', async (e) => {
 $('#insPhoto').addEventListener('click', () => { closeInkPops(); $('#insFile').click(); });
 // a place for a photo that shows through big letters and stripes; then choose the photo
 $('#insWord').addEventListener('click', () => {
-  const entry = addItems([{ t: 'img', id: null, x: 0.5, y: 0.42, w: 0.78, h: 0.5, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'bloom', word: 'BLOOM', wf: 'condensed' }]);
+  const entry = addItems([{ t: 'img', id: null, x: 0.5, y: 0.42, w: 0.78, h: 0.5, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'bloom', word: 'ENCORE', wf: 'condensed' }]);
   if (entry) { placeFor = { entry, i: entry.layer.items.length - 1 }; $('#insPlace').click(); inkHint('Choose a photo. Change the word in Style.', 3000); }
 });
 // a glass card with words on it, ready to type
@@ -2564,7 +2598,7 @@ const PICX = { before: null, t: 0 };
 function syncPicWord(s) {
   const on = !!s && (s.mask === 'word' || s.mask === 'bloom');
   $('#picWordRow').hidden = !on; if (!on) return;
-  if (document.activeElement !== $('#picWord')) $('#picWord').value = s.word || (s.mask === 'bloom' ? 'BLOOM' : 'MUSIC');
+  if (document.activeElement !== $('#picWord')) $('#picWord').value = s.word || (s.mask === 'bloom' ? 'ENCORE' : 'MUSIC');
   $$('#picWordFonts button').forEach((b) => b.classList.toggle('on', b.dataset.v === (s.wf || 'condensed')));
 }
 $('#picWord').addEventListener('input', (e) => picEdit((s) => ({ ...s, word: e.target.value })));
@@ -2882,7 +2916,60 @@ function showEraserDot(e, entry) {
 }
 function hideEraserDot() { if (eraserDot) eraserDot.hidden = true; }
 
-function startNav(e) { GS = { kind: 'nav', id: e.pointerId, x: e.clientX, y: e.clientY, t0: now(), zx: Z.x, zy: Z.y, moved: false }; }
+function startNav(e) {
+  GS = { kind: 'nav', id: e.pointerId, x: e.clientX, y: e.clientY, t0: now(), zx: Z.x, zy: Z.y, moved: false };
+  // a finger held still on a page (notebooks and markings): copy, paste and the like
+  if (e.pointerType === 'touch' && (V.inking || NBK()) && !V.perform && entryAt(e.clientX, e.clientY)) {
+    const g = GS;
+    g.holdT = setTimeout(() => { if (GS === g && !g.moved && touches().length === 1) { g.held = true; openHoldMenu(g.x, g.y); } }, 520);
+  }
+}
+// ---------- press and hold: copy, cut, paste, duplicate, delete ----------
+function closeHoldMenu() { const m = $('#holdMenu'); if (m) m.remove(); }
+function openHoldMenu(x, y) {
+  closeHoldMenu();
+  const entry = entryAt(x, y); if (!entry || !entry.layer || !entry.layer.ready) return;
+  if (!V.inking) setInking(true);
+  const hit = objectAt(x, y, true);
+  const inSel = Sel.entry === entry && hit && Sel.idx.includes(hit.i);
+  if (hit && !inSel) { INK.tool = 'select'; syncInkBar(); makeSelection(entry, [hit.i]); }
+  if (!hit) clearSelection();
+  const has = !!(Sel.entry && Sel.idx.length);
+  const r = entry.inner.getBoundingClientRect(), at = fracOf(x, y, r);
+  const menu = el('div', 'hold-menu'); menu.id = 'holdMenu'; menu.setAttribute('role', 'menu');
+  const add = (label, fn) => { const b = el('button', '', label); b.setAttribute('role', 'menuitem'); b.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); ev.preventDefault(); }); b.addEventListener('click', (ev) => { ev.stopPropagation(); closeHoldMenu(); fn(); }); menu.append(b); };
+  if (has) {
+    add('Copy', copySelection);
+    add('Cut', () => { copySelection(); deleteSelection(); inkHint('Cut. Hold a finger on a page to paste it.', 2200); });
+  }
+  if (CLIP && CLIP.length) add('Paste', () => pasteAt(entry, at));
+  if (has) {
+    add('Duplicate', duplicateSelection);
+    add('Delete', deleteSelection);
+  }
+  if (!has && !(CLIP && CLIP.length)) add('Paste from other apps', () => pasteFromClipboard());
+  document.body.append(menu);
+  const mr = menu.getBoundingClientRect();
+  menu.style.left = clamp(x - mr.width / 2, 8, innerWidth - mr.width - 8) + 'px';
+  menu.style.top = (y - mr.height - 18 > 8 ? y - mr.height - 18 : y + 22) + 'px';
+  if (navigator.vibrate) try { navigator.vibrate(8); } catch {}
+  setTimeout(() => window.addEventListener('pointerdown', function off(ev) { if (!ev.target.closest || !ev.target.closest('#holdMenu')) { closeHoldMenu(); window.removeEventListener('pointerdown', off, true); } }, true), 0);
+}
+// paste what was copied where the finger is (the copy keeps its shape and size)
+function pasteAt(entry, at) {
+  if (!CLIP || !CLIP.length) return;
+  let bb = null; for (const it of CLIP) { const q = itemBounds(it); if (q && isFinite(q.x0)) bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
+  const cx = bb ? (bb.x0 + bb.x1) / 2 : 0.5, cy = bb ? (bb.y0 + bb.y1) / 2 : 0.5;
+  // centred on the finger, but kept on the page
+  const hw = bb ? Math.min(0.5, (bb.x1 - bb.x0) / 2) : 0, hh = bb ? Math.min(0.5, (bb.y1 - bb.y0) / 2) : 0;
+  const tx = clamp(at[0], hw, 1 - hw), ty = clamp(at[1], hh, 1 - hh);
+  const moved = CLIP.map((x) => transformItem(JSON.parse(JSON.stringify(x)), tx - cx, ty - cy, 1, 0, 0));
+  if (!V.inking) setInking(true);
+  const before = entry.layer.items.slice(), after = [...before, ...moved];
+  entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
+  INK.tool = 'select'; syncInkBar(); lastEntry = entry;
+  makeSelection(entry, moved.map((_, i) => before.length + i));
+}
 function startPinch() {
   const t = touches(); if (t.length < 2) return;
   const [a, b] = t;
@@ -2909,6 +2996,7 @@ stage.addEventListener('pointerdown', (e) => {
   const n = touches().length;
   if (n >= 2 && V.perform) { GS = { kind: 'wait' }; return; }
   if (n >= 2) {
+    if (GS && GS.holdT) clearTimeout(GS.holdT);
     if (GS && (GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase' || GS.kind === 'lasso' || GS.kind === 'tape')) {
       // a second finger means zoom: drop a stroke that has only just started
       const young = now() - GS.t0 < 350 || (GS.item && GS.item.p.length < 8);
@@ -2940,7 +3028,7 @@ window.addEventListener('pointermove', (e) => {
   }
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
     const dx = e.clientX - GS.x, dy = e.clientY - GS.y;
-    if (Math.hypot(dx, dy) > 8) GS.moved = true;
+    if (Math.hypot(dx, dy) > 8) { GS.moved = true; clearTimeout(GS.holdT); }
     if (Z.s !== 1 && GS.moved) { Z.x = GS.zx + dx; Z.y = GS.zy + dy; applyZoom(); }
   }
 });
@@ -2965,6 +3053,8 @@ function pointerEnd(e) {
   if (GS.kind === 'wait') { if (!touches().length) GS = null; return; }
   if (GS.kind === 'nav' && GS.id === e.pointerId) {
     const g = GS; GS = null;
+    clearTimeout(g.holdT);
+    if (g.held) return;   // the hold menu is open
     if (!p || e.type === 'pointercancel') return;
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
     if (Z.s !== 1) {
@@ -3111,6 +3201,8 @@ async function runThumbs() {
 function renderPagesPanel() {
   const all = [...Array(V.base.pages).keys()];
   const map = V.score.pageMap || all;
+  // cropping, cutting and moving lines are for printed scores, not notebook pages
+  $('#panel-pages .tool-list').hidden = NBK();
   PG.sel = new Set([...PG.sel].filter((o) => map.includes(o)));
   const grid = $('#pageGrid'); grid.textContent = '';
   grid.classList.toggle('selecting', !!PG.selecting);
@@ -3122,6 +3214,12 @@ function renderPagesPanel() {
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     const tick = el('span', 'pick'); tick.append(icon('i-check')); frame.append(tick);
     b.append(frame, el('span', 'num', String(i + 1)));
+    // a notebook page has its own delete button (it can be put back below)
+    if (NBK() && !PG.selecting && map.length > 1) {
+      const del = el('span', 'pdel'); del.setAttribute('role', 'button'); del.setAttribute('aria-label', 'Delete page ' + (i + 1)); del.append(icon('i-trash'));
+      del.addEventListener('click', async (e) => { e.stopPropagation(); await setPageMap(map.filter((x) => x !== o)); toast('Page deleted. Put it back below.', 2600); });
+      frame.append(del);
+    }
     b.addEventListener('click', () => {
       if (!PG.selecting) { hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k); return; }
       PG.sel.has(o) ? PG.sel.delete(o) : PG.sel.add(o); b.classList.toggle('picked', PG.sel.has(o)); syncPageDelete(map);
@@ -3379,7 +3477,12 @@ initPassages({
 // log2: { day: { pieces: { scoreId: seconds }, tools: seconds, note: '' } }
 const practice = {
   scoreId: null, lastTick: Date.now(), log: {}, log2: {},
-  async load() { this.log = (await getSetting('log', {})) || {}; this.log2 = (await getSetting('log2', {})) || {}; },
+  slots: {}, plan: { weeks: {}, remind: false, lead: 0 },
+  async load() {
+    this.log = (await getSetting('log', {})) || {}; this.log2 = (await getSetting('log2', {})) || {};
+    this.slots = (await getSetting('slots', {})) || {};
+    this.plan = { weeks: {}, remind: false, lead: 0, ...((await getSetting('plan', null)) || {}) };
+  },
   day(k = dayKey()) { return (this.log2[k] = this.log2[k] || { pieces: {}, tools: 0, note: '' }); },
   scoreOpened(id) { this.flush(); this.scoreId = id; this.lastTick = Date.now(); },
   scoreClosed() { this.flush(); this.scoreId = null; },
@@ -3397,7 +3500,10 @@ const practice = {
       d.pieces[this.scoreId] = (d.pieces[this.scoreId] || 0) + dt;
       if (V.score && V.score.id === this.scoreId) { V.score.seconds = (V.score.seconds || 0) + dt; db.put('scores', V.score); }
     } else d.tools += dt;
-    setSetting('log', this.log); setSetting('log2', this.log2);
+    // which half hour of the day: for the practice plan
+    const nowD = new Date(), slot = nowD.getHours() * 2 + (nowD.getMinutes() >= 30 ? 1 : 0);
+    const sd = this.slots[k] || (this.slots[k] = {}); sd[slot] = (sd[slot] || 0) + dt;
+    setSetting('log', this.log); setSetting('log2', this.log2); setSetting('slots', this.slots);
     if (openPanel === 'goal') renderTracker();
   },
 };
@@ -3407,7 +3513,7 @@ setInterval(() => { practice.flush(); renderGoal(); }, 15000);
 // The iPhone keeps the iPad's log next to its own and shows both together.
 const IPAD = { data: null, busy: false, last: 0 };
 function allPractice() {
-  const d = IPAD.data; if (!d) return { log: practice.log, log2: practice.log2 };
+  const d = IPAD.data; if (!d) return { log: practice.log, log2: practice.log2, slots: practice.slots };
   const log = { ...practice.log }; for (const [k, v] of Object.entries(d.log || {})) log[k] = (log[k] || 0) + v;
   const log2 = {};
   for (const src of [practice.log2, d.log2 || {}]) for (const [k, x] of Object.entries(src)) {
@@ -3415,7 +3521,9 @@ function allPractice() {
     for (const [id, v] of Object.entries(x.pieces || {})) o.pieces[id] = (o.pieces[id] || 0) + v;
     o.tools += x.tools || 0; if (!o.note && x.note) o.note = x.note;
   }
-  return { log, log2 };
+  const slots = {};
+  for (const src of [practice.slots || {}, d.slots || {}]) for (const [k, x] of Object.entries(src)) { const o = slots[k] || (slots[k] = {}); for (const [i, v] of Object.entries(x)) o[i] = (o[i] || 0) + v; }
+  return { log, log2, slots };
 }
 // what the iPad sends: the last year of its log and the names of its pieces
 async function practiceForPhone() {
@@ -3425,7 +3533,7 @@ async function practiceForPhone() {
   for (const d of Object.values(log2)) for (const id of Object.keys(d.pieces || {})) titles[id] = titleOf(id);
   const pieces = scores.filter((x) => (x.seconds || 0) > 59).map((x) => ({ id: x.id, title: x.title, composer: x.composer || '', seconds: Math.round(x.seconds) }));
   for (const x of pieces) titles[x.id] = x.title;
-  return { v: 1, at: Date.now(), log: keep(practice.log), log2, titles, pieces, goal: S.goal || 30 };
+  return { v: 1, at: Date.now(), log: keep(practice.log), log2, titles, pieces, goal: S.goal || 30, slots: keep(practice.slots || {}) };
 }
 const pHost = new PracticeHost(practiceForPhone);
 function syncPracticeHost() {
@@ -3856,7 +3964,7 @@ function renderIntonation() {
   const all = cols.filter((c) => c.st);
   const off = all.filter((c) => Math.abs(c.st.avg) >= 6).sort((x, y) => Math.abs(y.st.avg) - Math.abs(x.st.avg));
   $('#intoSummary').textContent = !all.length ? 'Play scales or a passage with the tuner on. Stand learns which notes you tend to play sharp or flat.'
-    : !off.length ? `All ${all.length} notes you played sit within 5 cents on average. Lovely.`
+    : !off.length ? (all.length === 1 ? `The note you played sits within 5 cents on average. Lovely.` : `All ${all.length} notes you played sit within 5 cents on average. Lovely.`)
       : 'Watch ' + off.slice(0, 3).map((c) => `${c.label}${c.sub || ''} (${Math.round(Math.abs(c.st.avg))}¢ ${c.st.avg > 0 ? 'sharp' : 'flat'})`).join(', ') + '. Bars above the line are sharp, below are flat; tap a note for more.';
 }
 $('#intoReset').addEventListener('click', () => { if ($('#intoReset').dataset.armed !== '1') { $('#intoReset').dataset.armed = '1'; $('#intoReset').textContent = 'Tap again to clear'; setTimeout(() => { $('#intoReset').dataset.armed = ''; $('#intoReset').textContent = 'Start over'; }, 3000); return; } S.into = null; S.into2 = null; saveSettings(); renderIntonation(); });
@@ -3875,11 +3983,19 @@ tuner.onReading = (r) => {
   if (H.follow) followHarmonics(r);
   miniReading(r);
   if (!r) {
-    face.classList.add('idle'); face.classList.remove('intune', 'held');
-    $('#tCents').textContent = tuner.running ? 'Listening… play a note' : 'Tap Start, then play a note'; $('#tHz').innerHTML = '&nbsp;';
-    needle.target = 0; animateNeedle();
+    // the sound stopped: the last note stays (dimmed) for a few seconds, so the display does not
+    // flash on and off between notes and bow changes
+    const goIdle = () => {
+      face.classList.add('idle'); face.classList.remove('intune', 'held');
+      $('#tCents').textContent = tuner.active ? 'Play a note' : 'The tuner is off'; $('#tHz').innerHTML = '&nbsp;';
+      needle.target = 0; animateNeedle();
+    };
+    clearTimeout(TU.idleT);
+    if (tuner.running && TU.shownAt && performance.now() - TU.shownAt < 4000) { face.classList.add('held'); face.classList.remove('intune'); TU.idleT = setTimeout(goIdle, 4000); }
+    else goIdle();
     return;
   }
+  clearTimeout(TU.idleT); TU.shownAt = performance.now();
   face.classList.remove('idle');
   face.classList.toggle('held', !!r.held);
   const c = r.cents;
@@ -3976,7 +4092,9 @@ setInterval(() => { if (tuner.running && ((openPanel === 'tuner' && currentTuner
 async function startTuner() {
   try {
     TU.userStopped = false;
-    await tuner.start();
+    const p = tuner.start(); updateTunerButtons();
+    if (!tuner.running) { $('#tCents').textContent = 'Play a note'; }
+    await p;
     $('#micHint').textContent = 'Listening. Nothing leaves this device.';
     updateTunerButtons();
     return true;
@@ -3988,7 +4106,10 @@ const TU = { userStopped: false, mini: false };
 function miniReading(r) {
   if (!TU.mini) return;
   const box = $('#miniTuner');
-  if (!r) { $('#mtNote').textContent = '–'; $('#mtOct').textContent = ''; $('#mtCents').textContent = tuner.running ? 'Listening' : 'Off'; $('#mtNeedle').style.left = '50%'; box.classList.remove('intune', 'off'); return; }
+  const idle = () => { box.classList.remove('dim'); $('#mtNote').textContent = '–'; $('#mtOct').textContent = ''; $('#mtCents').textContent = tuner.active ? 'Play a note' : 'Off'; $('#mtNeedle').style.left = '50%'; box.classList.remove('intune', 'off'); };
+  clearTimeout(TU.miniT);
+  if (!r) { if (tuner.running && TU.miniAt && performance.now() - TU.miniAt < 4000) { box.classList.add('dim'); TU.miniT = setTimeout(idle, 4000); } else idle(); return; }
+  TU.miniAt = performance.now(); box.classList.remove('dim');
   $('#mtNote').textContent = r.name; $('#mtOct').textContent = r.octave;
   if (r.held) return;
   const c = clamp(r.cents, -50, 50);
@@ -4009,13 +4130,22 @@ $('#mtClose').addEventListener('click', (e) => { e.stopPropagation(); showMiniTu
   box.addEventListener('pointerdown', (e) => { if (e.target.closest('.mt-x')) return; const r = box.getBoundingClientRect(); d = { dx: e.clientX - r.left, dy: e.clientY - r.top }; try { box.setPointerCapture(e.pointerId); } catch {} });
   box.addEventListener('pointermove', (e) => { if (!d) return; box.style.left = clamp(e.clientX - d.dx, 4, innerWidth - box.offsetWidth - 4) + 'px'; box.style.top = clamp(e.clientY - d.dy, 4, innerHeight - box.offsetHeight - 4) + 'px'; box.style.right = 'auto'; });
   const up = () => { d = null; }; box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+  // turning the iPad: a tuner dragged to the side stays on the screen
+  const keepIn = () => {
+    if (box.hidden || !box.style.left) return;
+    const x = parseFloat(box.style.left), y = parseFloat(box.style.top);
+    box.style.left = clamp(x, 4, Math.max(4, innerWidth - box.offsetWidth - 4)) + 'px';
+    box.style.top = clamp(y, 4, Math.max(4, innerHeight - box.offsetHeight - 4)) + 'px';
+  };
+  window.addEventListener('resize', keepIn); window.addEventListener('orientationchange', () => setTimeout(keepIn, 300));
   // a tap opens the full tuner
   box.addEventListener('click', (e) => { if (e.target.closest('.mt-x')) return; });
 }
 function updateTunerButtons() {
   const b = $('#tunerToggle');
-  b.innerHTML = tuner.running ? '<svg><use href="#i-stop"/></svg><span>Stop tuner</span>' : '<svg><use href="#i-mic"/></svg><span>Start tuner</span>';
-  b.classList.toggle('primary', !tuner.running);
+  // while the microphone is still opening the tuner already counts as on (a tap then stops it)
+  b.innerHTML = tuner.active ? '<svg><use href="#i-stop"/></svg><span>Stop tuner</span>' : '<svg><use href="#i-mic"/></svg><span>Start tuner</span>';
+  b.classList.toggle('primary', !tuner.active);
   const h = $('#hListen');
   h.innerHTML = H.follow ? '<svg><use href="#i-pause"/></svg><span>Pause listening</span>' : '<svg><use href="#i-mic"/></svg><span>Listen</span>';
   h.classList.toggle('primary', !H.follow);
@@ -5386,18 +5516,165 @@ function renderTracker() {
   if (dd && dd.tools > 30) dl.append(el('li', '', `Tools · ${fmtMinutes(dd.tools)}`));
   const note = $('#trNote'); if (document.activeElement !== note) note.value = (dd && dd.note) || '';
   note.placeholder = dk === dayKey() ? 'What did you work on today? What is next?' : 'Notes for this day';
-  // heat map: last 18 weeks
-  const hm = $('#trHeat'); hm.textContent = '';
-  const start = new Date(); start.setDate(start.getDate() - (7 * 18 - 1) - ((start.getDay() + 6) % 7 - 6));
-  for (let i = 0; i < 7 * 18; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
-    const m = (log[dayKey(d)] || 0) / 60;
-    const cell = el('span'); const lvl = m <= 0 ? 0 : m < goal * 0.34 ? 1 : m < goal * 0.67 ? 2 : m < goal ? 3 : 4;
-    cell.className = 'h' + lvl; cell.title = `${d.toLocaleDateString()} · ${Math.round(m)} min`;
-    if (d > new Date()) cell.className = 'h-future';
-    hm.append(cell);
+  renderPlan();
+}
+
+// =====================================================================
+// Practice plan: the week in half hours. Tap (or drag over) the times you want to practise; they
+// turn green. Afterwards a planned half hour stays green when you practised in it, and turns red
+// when you did not. A plan carries on into the following weeks until you change it.
+// =====================================================================
+const PL = { week: null, paint: null, H0: 12, H1: 46 };   // the shown week (its Monday), rows 6:00–23:00
+const mondayOf = (d) => { const m = new Date(d.getFullYear(), d.getMonth(), d.getDate()); m.setDate(m.getDate() - ((m.getDay() + 6) % 7)); return m; };
+const weekKeyOf = (d) => dayKey(mondayOf(d));
+// the plan of a week: its own, or the one it carries on from
+function planFor(wk) {
+  const W = practice.plan.weeks;
+  if (W[wk]) return W[wk];
+  const before = Object.keys(W).filter((k) => k < wk).sort().pop();
+  return before ? W[before] : [];
+}
+function savePlan() { setSetting('plan', practice.plan); }
+const slotTime = (s) => `${String(Math.floor(s / 2)).padStart(2, '0')}:${s % 2 ? '30' : '00'}`;
+function renderPlan() {
+  const grid = $('#planGrid'); if (!grid) return;
+  const now = new Date(), cur = mondayOf(now);
+  if (!PL.week) PL.week = cur;
+  const wk = dayKey(PL.week), curKey = dayKey(cur);
+  const plan = new Set(planFor(wk));
+  const slots = allPractice().slots || {};
+  // the rows: 6:00–23:00, wider when the plan or the practice goes outside
+  let h0 = PL.H0, h1 = PL.H1;
+  for (const id of plan) { const s = +id.split('-')[1]; h0 = Math.min(h0, s); h1 = Math.max(h1, s + 1); }
+  for (let d = 0; d < 7; d++) { const day = new Date(PL.week); day.setDate(day.getDate() + d); const x = slots[dayKey(day)] || {}; for (const [s, v] of Object.entries(x)) if (v >= 300) { h0 = Math.min(h0, +s); h1 = Math.max(h1, +s + 1); } }
+  $('#plWeek').textContent = wk === curKey ? 'This week' : PL.week.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' – ' + new Date(PL.week.getTime() + 6 * 864e5).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const past = wk < curKey;
+  $('#plHint').textContent = past ? 'An earlier week: green where you practised as planned, red where you did not.' : 'Tap or drag over the half hours you want to practise. The plan carries on into the next weeks.';
+  grid.textContent = '';
+  grid.style.gridTemplateRows = `auto repeat(${h1 - h0}, var(--plan-row))`;
+  grid.append(el('span', 'pl-corner'));
+  const days = [];
+  for (let d = 0; d < 7; d++) {
+    const day = new Date(PL.week); day.setDate(day.getDate() + d); days.push(day);
+    const hd = el('span', 'pl-day' + (dayKey(day) === dayKey(now) ? ' today' : ''));
+    hd.append(el('b', '', day.toLocaleDateString(undefined, { weekday: 'short' })), el('small', '', String(day.getDate())));
+    grid.append(hd);
+  }
+  let planned = 0, kept = 0;
+  for (let s = h0; s < h1; s++) {
+    grid.append(el('span', 'pl-time' + (s % 2 ? ' half' : ''), s % 2 ? '' : slotTime(s)));
+    for (let d = 0; d < 7; d++) {
+      const day = days[d], id = d + '-' + s;
+      const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(s / 2), s % 2 ? 30 : 0);
+      const end = new Date(start.getTime() + 30 * 60000);
+      const sec = ((slots[dayKey(day)] || {})[s]) || 0, done = sec >= 300;
+      const isPlan = plan.has(id), over = end <= now;
+      let cls = 'pl-cell';
+      if (isPlan && over) { cls += done ? ' done' : ' missed'; planned++; if (done) kept++; }
+      else if (isPlan) { cls += ' plan'; planned++; if (done) kept++; }
+      else if (done) cls += ' extra';
+      if (start <= now && now < end) cls += ' now';
+      if (over) cls += ' over';
+      const c = el('span', cls); c.dataset.id = id; c.dataset.over = over ? '1' : '';
+      c.setAttribute('role', 'gridcell');
+      c.setAttribute('aria-label', `${day.toLocaleDateString(undefined, { weekday: 'long' })} ${slotTime(s)}${isPlan ? ', planned' : ''}${done ? ', practised' : ''}`);
+      grid.append(c);
+    }
+  }
+  $('#plSum').textContent = planned ? `${kept} of ${planned} half hours` : '';
+  $('#planRemind').checked = !!practice.plan.remind;
+  $('#planLead').value = String(practice.plan.lead || 0);
+  $('#planLead').hidden = !practice.plan.remind;
+  // the first time: show the morning-to-evening part around now (or the first plan)
+  if (!PL.scrolled) {
+    PL.scrolled = true;
+    const first = [...plan].map((x) => +x.split('-')[1]).sort((a, b) => a - b)[0];
+    const target = first !== undefined ? first : now.getHours() * 2;
+    const row = grid.querySelector('.pl-time:nth-of-type(1)');
+    requestAnimationFrame(() => { const sc = $('#plScroll'); const rh = parseFloat(getComputedStyle(grid).getPropertyValue('--plan-row')) || 20; sc.scrollTop = Math.max(0, (target - h0 - 2) * (rh + 2)); void row; });
   }
 }
+// tap or drag: the first cell decides whether the drag plans or clears
+{
+  const grid = $('#planGrid');
+  const cellAt = (e) => { const t = document.elementFromPoint(e.clientX, e.clientY); return t && t.classList && t.classList.contains('pl-cell') ? t : null; };
+  const apply = (c) => {
+    if (!c || !PL.paint || PL.paint.seen.has(c.dataset.id)) return;
+    PL.paint.seen.add(c.dataset.id);
+    if (c.dataset.over) return;
+    const set = PL.paint.set;
+    if (PL.paint.add) set.add(c.dataset.id); else set.delete(c.dataset.id);
+    c.classList.toggle('plan', PL.paint.add);
+  };
+  grid.addEventListener('pointerdown', (e) => {
+    const c = cellAt(e); if (!c) return;
+    const wk = dayKey(PL.week), curKey = weekKeyOf(new Date());
+    if (wk < curKey) { toast('This week is over. Plan this week or the next ones.', 2400); return; }
+    if (c.dataset.over) { toast('That time has passed.', 1600); return; }
+    e.preventDefault();
+    const set = new Set(planFor(wk));
+    PL.paint = { add: !set.has(c.dataset.id), set, seen: new Set(), wk, touch: e.pointerType === 'touch', x: e.clientX, y: e.clientY, locked: e.pointerType !== 'touch' };
+    try { grid.setPointerCapture(e.pointerId); } catch {}
+    apply(c);
+  });
+  grid.addEventListener('pointermove', (e) => {
+    if (!PL.paint) return;
+    // a finger moving up or down at first scrolls the list instead of painting
+    if (!PL.paint.locked) {
+      const dx = Math.abs(e.clientX - PL.paint.x), dy = Math.abs(e.clientY - PL.paint.y);
+      if (dy > 10 && dy > dx * 1.4 && PL.paint.seen.size <= 1) { const c0 = [...PL.paint.seen][0]; if (c0) { const el0 = grid.querySelector(`[data-id="${c0}"]`); if (el0) el0.classList.toggle('plan', !PL.paint.add); PL.paint.set[PL.paint.add ? 'delete' : 'add'](c0); } PL.paint = null; return; }
+      if (dx > 8) PL.paint.locked = true;
+    }
+    apply(cellAt(e));
+  });
+  const end = () => {
+    if (!PL.paint) return;
+    const p = PL.paint; PL.paint = null;
+    practice.plan.weeks[p.wk] = [...p.set].sort();
+    savePlan(); renderPlan();
+    if (p.wk === weekKeyOf(new Date())) syncReminders();
+  };
+  grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', end);
+  grid.style.touchAction = 'pan-y';
+  $('#plPrev').addEventListener('click', () => { PL.week = new Date(PL.week.getTime() - 7 * 864e5); renderPlan(); });
+  $('#plNext').addEventListener('click', () => { PL.week = new Date(PL.week.getTime() + 7 * 864e5); renderPlan(); });
+}
+// ---------- reminders (the Stand app on iPad and iPhone) ----------
+const NOTIFY = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standNotify;
+function reminderItems() {
+  const plan = planFor(weekKeyOf(new Date())), lead = practice.plan.lead || 0;
+  const byDay = Array.from({ length: 7 }, () => []);
+  for (const id of plan) { const [d, s] = id.split('-').map(Number); byDay[d].push(s); }
+  const items = [];
+  byDay.forEach((list, d) => {
+    list.sort((a, b) => a - b);
+    for (let i = 0; i < list.length; i++) {
+      const s0 = list[i]; let s1 = s0; while (list[i + 1] === s1 + 1) { i++; s1++; }
+      let mins = s0 * 30 - lead, day = d;
+      if (mins < 0) { mins += 24 * 60; day = (d + 6) % 7; }
+      items.push({ weekday: ((day + 1) % 7) + 1, hour: Math.floor(mins / 60), minute: mins % 60, title: 'Time to practise', body: `Your plan: ${slotTime(s0)}–${slotTime(s1 + 1).replace('48:00', '24:00')}.` });
+    }
+  });
+  return items;
+}
+function syncReminders() {
+  const N = NOTIFY();
+  if (!N) return;
+  if (practice.plan.remind) N.postMessage({ op: 'schedule', items: reminderItems() });
+  else N.postMessage({ op: 'clear' });
+}
+window.standNotifyState = (st) => {
+  if (st && !st.allowed && st.asked && practice.plan.remind) {
+    practice.plan.remind = false; savePlan(); renderPlan();
+    toast('Notifications are off for Stand. Turn them on in Settings › Notifications › Stand.', 5000);
+  }
+};
+$('#planRemind').addEventListener('change', (e) => {
+  if (e.target.checked && !NOTIFY()) { e.target.checked = false; toast('Reminders come from the Stand app on iPad and iPhone.', 3000); return; }
+  practice.plan.remind = e.target.checked; savePlan(); syncReminders(); renderPlan();
+  if (e.target.checked) toast('You will get a reminder when a planned practice begins.', 2600);
+});
+$('#planLead').addEventListener('change', (e) => { practice.plan.lead = +e.target.value; savePlan(); syncReminders(); });
 $('#trChart').addEventListener('click', (e) => {
   const r = e.currentTarget.getBoundingClientRect(); const x = e.clientX - r.left;
   const b = trBars.find((q) => x >= q.x0 && x < q.x1);
@@ -5405,7 +5682,7 @@ $('#trChart').addEventListener('click', (e) => {
 });
 $$('#trRange button').forEach((b) => b.addEventListener('click', () => { TR.range = b.dataset.range; renderTracker(); }));
 $('#trNote').addEventListener('input', (e) => { practice.day(TR.day).note = e.target.value; clearTimeout(practice.noteT); practice.noteT = setTimeout(() => setSetting('log2', practice.log2), 500); });
-document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="goal"]')) { TR.day = dayKey(); requestAnimationFrame(renderTracker); } });
+document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="goal"]')) { TR.day = dayKey(); PL.week = null; PL.scrolled = false; requestAnimationFrame(renderTracker); } });
 $('#goalSel').addEventListener('change', (e) => { S.goal = +e.target.value; saveSettings(); renderGoal(); renderTracker(); });
 
 // =====================================================================
@@ -5707,6 +5984,7 @@ function showWelcome() {
 (async function boot() {
   await loadSettings();
   await practice.load();
+  setTimeout(syncReminders, 1500);
   await loadPassages();
   await loadFolders();
   applyAppearance();

@@ -341,7 +341,7 @@
         <button id="insPaste"><svg><use href="#i-paste"/></svg><span>Paste</span></button>
       </div>
       <div class="ins-row ins-row-2">
-        <button id="insWord"><span class="ins-art word-art">BLOOM</span><span>Photo in a word</span></button>
+        <button id="insWord"><span class="ins-art word-art">ENCORE</span><span>Photo in a word</span></button>
         <button id="insGlass"><span class="ins-art glass-art"></span><span>Glass card</span></button>
       </div>
       <div class="ctl-head"><span>Photo in a shape</span></div>
@@ -576,7 +576,7 @@
         <g id="needle"><line x1="150" y1="98" x2="150" y2="32"/></g>
       </svg>
       <div class="note-read"><span id="tNote" class="note">–</span><sub id="tOct"></sub></div>
-      <div class="cents num" id="tCents">Tap Start, then play a note</div>
+      <div class="cents num" id="tCents">Play a note</div>
       <div class="hz num" id="tHz">&nbsp;</div>
     </div>
     <canvas class="trace" id="traceCanvas" height="90" aria-label="Pitch over the last seconds"></canvas>
@@ -890,8 +890,19 @@
     <div class="ctl-head"><span>Pieces in this period</span></div>
     <ul class="tr-pieces" id="trPieces"></ul>
     <p class="hint" id="trPiecesEmpty">Nothing yet. Time counts while a score is open, and while the tuner, metronome, drone or scales are running.</p>
-    <div class="ctl-head"><span>Last 18 weeks</span></div>
-    <div class="tr-heat" id="trHeat"></div>
+    <section class="sub-card plan-card">
+      <div class="plan-top">
+        <h3>Practice plan</h3>
+        <div class="plan-nav"><button class="icon-btn small" id="plPrev" aria-label="The week before"><svg><use href="#i-back"/></svg></button><span class="num" id="plWeek">This week</span><button class="icon-btn small" id="plNext" aria-label="The week after"><svg class="flipx"><use href="#i-back"/></svg></button></div>
+      </div>
+      <p class="hint" id="plHint">Tap or drag over the half hours you want to practise. The plan carries on into the next weeks.</p>
+      <div class="plan-scroll" id="plScroll"><div class="plan-grid" id="planGrid" role="grid" aria-label="Practice plan for the week"></div></div>
+      <div class="plan-legend"><span><i class="plan"></i>Planned</span><span><i class="done"></i>Practised</span><span><i class="missed"></i>Missed</span><span id="plSum" class="num"></span></div>
+      <div class="plan-remind">
+        <label class="check-row"><span><b>Remind me</b><small id="plRemindNote">A notification when a planned practice begins</small></span><label class="switch"><input type="checkbox" id="planRemind"><span></span></label></label>
+        <select id="planLead" class="small-select" aria-label="When to remind"><option value="0">At the start</option><option value="10">10 minutes before</option><option value="30">30 minutes before</option></select>
+      </div>
+    </section>
     <label class="field"><span>Daily goal</span><select id="goalSel"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1 h 30</option><option value="120">2 hours</option><option value="180">3 hours</option><option value="240">4 hours</option></select></label>
   </div>
 </aside>
@@ -1208,6 +1219,7 @@
       <button class="rec-choice" id="exMxl"><svg><use href="#i-music"/></svg><b>MusicXML</b><span>.mxl for Sibelius, Dorico, MuseScore</span></button>
       <button class="rec-choice" id="exXml"><svg><use href="#i-music"/></svg><b>Uncompressed</b><span>.musicxml</span></button>
     </div>
+    <button class="rec-choice wide-choice" id="exMxlParts"><svg><use href="#i-pages"/></svg><b>MusicXML with parts</b><span>The score and each player’s part as its own .mxl, in one .zip</span></button>
     <button class="rec-choice wide-choice" id="exWav"><svg><use href="#i-headphones"/></svg><b>Audio (WAV)</b><span>The score played by the sampled instruments</span></button>
     <button class="rec-choice wide-choice" id="exToLib"><svg><use href="#i-lib"/></svg><b>Put on my stand</b><span>Adds the score as a PDF to your library, to read and mark</span></button>
   </div>

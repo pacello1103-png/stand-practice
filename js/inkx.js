@@ -353,7 +353,7 @@ export function drawPicture(ctx, s, W, H) {
 const words = new Map();
 function wordCanvas(s, p, w, h, k) {
   const sc = Math.min(k, 2400 / Math.max(w, h, 1)), Wc = Math.max(8, Math.round(w * sc)), Hc = Math.max(8, Math.round(h * sc));
-  const f = s.f || LOOK_DEFAULT, word = (s.word || (s.mask === 'bloom' ? 'BLOOM' : 'MUSIC')).trim().slice(0, 16) || ' ';
+  const f = s.f || LOOK_DEFAULT, word = (s.word || (s.mask === 'bloom' ? 'ENCORE' : 'MUSIC')).trim().slice(0, 16) || ' ';
   const key = [s.id, p ? 1 : 0, s.mask, word, s.wf, Wc, Hc, (s.cr || []).join(), f.b, f.c, f.s, f.w, f.bw, s.fx, s.fy].join('|');
   let c = words.get(key); if (c) return c;
   c = document.createElement('canvas'); c.width = Wc; c.height = Hc;
@@ -688,7 +688,58 @@ export function drawShape(ctx, s, W, H) {
 
 // Frosted glass: whatever is under the card shows through, softly blurred, with a light tint,
 // a bright edge and a soft shadow.
-const glassScratch = [document.createElement('canvas'), document.createElement('canvas')];
+const glassScratch = [document.createElement('canvas'), document.createElement('canvas'), document.createElement('canvas')];
+let canFilter = null;
+function filterWorks() {
+  if (window.__glassNoFilter) return false;
+  if (canFilter !== null) return canFilter;
+  try { const g = document.createElement('canvas').getContext('2d'); g.filter = 'blur(2px)'; canFilter = g.filter === 'blur(2px)'; } catch { canFilter = false; }
+  return canFilter;
+}
+// A soft blur of part of a canvas, smooth at any size (no blocks): the browser's own blur where it
+// has one, otherwise halving step by step and growing back step by step.
+function blurRegion(cv, x0, y0, bw, bh) {
+  const [c1, c2, c3] = glassScratch;
+  const rad = Math.max(4, Math.min(bw, bh) / 14);          // blur radius in canvas pixels
+  const pad = Math.ceil(rad * 2);
+  const sx = Math.max(0, x0 - pad), sy = Math.max(0, y0 - pad);
+  const ex = Math.min(cv.width, x0 + bw + pad), ey = Math.min(cv.height, y0 + bh + pad);
+  const sw = ex - sx, sh = ey - sy;
+  if (filterWorks()) {
+    const q = 0.5;                                          // half size is plenty for a blur
+    c1.width = Math.max(2, Math.round(sw * q)); c1.height = Math.max(2, Math.round(sh * q));
+    const g1 = c1.getContext('2d'); g1.clearRect(0, 0, c1.width, c1.height);
+    g1.drawImage(cv, sx, sy, sw, sh, 0, 0, c1.width, c1.height);
+    c2.width = c1.width; c2.height = c1.height;
+    const g2 = c2.getContext('2d'); g2.clearRect(0, 0, c2.width, c2.height);
+    g2.filter = `blur(${(rad * q).toFixed(1)}px)`; g2.drawImage(c1, 0, 0); g2.filter = 'none';
+    return { img: c2, sx: (x0 - sx) * q, sy: (y0 - sy) * q, sw: bw * q, sh: bh * q };
+  }
+  // halve until small, then double back up: each step is a gentle box filter
+  let src = cv, cw = sw, ch = sh, ox = sx, oy = sy;
+  const target = Math.max(6, Math.min(sw, sh) / 36);
+  let flip = 0;
+  while (Math.min(cw, ch) / 2 >= target) {
+    const c = flip ? c2 : c1; flip ^= 1;
+    const nw = Math.max(2, Math.round(cw / 2)), nh = Math.max(2, Math.round(ch / 2));
+    const tmp = c === src ? c3 : c;
+    tmp.width = nw; tmp.height = nh; const g = tmp.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.clearRect(0, 0, nw, nh); g.drawImage(src, ox, oy, cw, ch, 0, 0, nw, nh);
+    src = tmp; cw = nw; ch = nh; ox = 0; oy = 0;
+  }
+  const small = src;
+  // grow back to a quarter of the size in steps, which removes the blocks
+  let gw = cw, gh = ch, cur = small;
+  const goal = Math.max(gw, Math.round(sw / 4));
+  while (gw * 2 <= goal) {
+    const c = cur === c1 ? c2 : cur === c2 ? c3 : c1;
+    c.width = gw * 2; c.height = gh * 2; const g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(cur, 0, 0, gw, gh, 0, 0, gw * 2, gh * 2);
+    cur = c; gw *= 2; gh *= 2;
+  }
+  const k = gw / sw;
+  return { img: cur, sx: (x0 - sx) * k, sy: (y0 - sy) * k, sw: bw * k, sh: bh * k };
+}
 function drawGlass(ctx, s, w, h) {
   const r = Math.min(w, h) * 0.1, a = s.a ?? 1, m = Math.min(w, h);
   const T = ctx.getTransform(), cv = ctx.canvas;
@@ -697,13 +748,7 @@ function drawGlass(ctx, s, w, h) {
   const x1 = Math.min(cv.width, Math.ceil(Math.max(...pts.map((q) => q[0])))), y1 = Math.min(cv.height, Math.ceil(Math.max(...pts.map((q) => q[1]))));
   let blurred = null;
   if (x1 - x0 > 4 && y1 - y0 > 4) {
-    // blur by shrinking twice and growing back: smooth, fast and it works everywhere
-    const bw = x1 - x0, bh = y1 - y0, [c1, c2] = glassScratch;
-    c1.width = Math.max(2, Math.round(bw / 4)); c1.height = Math.max(2, Math.round(bh / 4));
-    c2.width = Math.max(2, Math.round(bw / 18)); c2.height = Math.max(2, Math.round(bh / 18));
-    const g1 = c1.getContext('2d'), g2 = c2.getContext('2d');
-    g1.clearRect(0, 0, c1.width, c1.height); g2.clearRect(0, 0, c2.width, c2.height);
-    try { g1.drawImage(cv, x0, y0, bw, bh, 0, 0, c1.width, c1.height); g2.drawImage(c1, 0, 0, c2.width, c2.height); blurred = { bw, bh }; } catch { blurred = null; }
+    try { blurred = { ...blurRegion(cv, x0, y0, x1 - x0, y1 - y0), bw: x1 - x0, bh: y1 - y0 }; } catch { blurred = null; }
   }
   ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r);
   ctx.shadowColor = 'rgba(20,24,35,.22)'; ctx.shadowBlur = m * 0.09; ctx.shadowOffsetY = m * 0.03;
@@ -711,7 +756,7 @@ function drawGlass(ctx, s, w, h) {
   if (blurred) {
     ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r); ctx.clip();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = a; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(glassScratch[1], x0, y0, blurred.bw, blurred.bh); ctx.restore();
+    ctx.drawImage(blurred.img, blurred.sx, blurred.sy, blurred.sw, blurred.sh, x0, y0, blurred.bw, blurred.bh); ctx.restore();
   }
   ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r);
   ctx.globalAlpha = a * 0.26; ctx.fillStyle = s.f || '#ffffff'; ctx.fill();

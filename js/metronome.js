@@ -129,6 +129,8 @@ export class Metronome {
     if (this.running) this.stop(true);
     this._ensureBuffers();
     this._out();
+    this._ctx = ctx;
+    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) this._resync(getCtx()); }); }
     this.running = true;
     this._beatCount = 0;
     this._sub = 0;
@@ -164,8 +166,15 @@ export class Metronome {
     if (!silent && this.onStop) this.onStop();
   }
 
+  // the sound system was replaced (iOS dropped the old one): the beat carries on in the new one
+  _resync(ctx) {
+    this._ctx = ctx;
+    this._ensureBuffers(); this._gain = null; this._out();
+    this._next = ctx.currentTime + 0.1; this._queue = [];
+  }
   _tick() {
     const ctx = getCtx();
+    if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + 5)) this._resync(ctx);
     // fell behind (the sound system stalled): carry on from now instead of a burst of clicks
     if (this.running && this._next < ctx.currentTime - 0.25) this._next = ctx.currentTime + 0.05;
     // a suspended or interrupted sound system plays nothing: wake it, and do not replay the time that passed

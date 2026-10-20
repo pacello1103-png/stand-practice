@@ -120,11 +120,17 @@ export class PitchTracker {
   constructor() { this.floor = 0.002; this.reset(); }
   reset() { this.cur = 0; this.hist = []; this.cand = null; this.lastHeard = 0; }
   feed(r, rms, now) {
-    const gate = Math.max(0.0022, this.floor * 2.2);
-    // real strings carry bow and breath noise: a clear note keeps being followed at a lower clarity
-    const valid = r && r.rms > gate && r.clarity >= (this.cur ? 0.6 : 0.7);
+    // the noise floor follows the quiet moments quickly and loud noise only slowly (and never far),
+    // so talking, a fan or a page turn cannot make the tuner deaf to the next note
+    const gate = Math.min(0.012, Math.max(0.0022, this.floor * 2.2));
+    // real strings carry bow and breath noise: a clear note keeps being followed at a lower clarity;
+    // a clearly pitched sound counts even when it is not much louder than the noise around it
+    // and while a note sounds, a reading near it is believed even through noise (continuity)
+    const near = r && this.cur && Math.abs(1200 * Math.log2(r.freq / this.cur)) < 50;
+    const valid = r && ((r.clarity >= (this.cur ? 0.6 : 0.7) && (r.rms > gate || r.clarity >= 0.86)) || (near && r.clarity >= 0.4));
     if (!valid) {
-      this.floor = 0.97 * this.floor + 0.03 * Math.max(0.0008, Math.min(0.05, rms));
+      const x = Math.max(0.0008, Math.min(0.05, rms));
+      this.floor = x < this.floor ? 0.85 * this.floor + 0.15 * x : 0.996 * this.floor + 0.004 * x;
       if (this.cur && now - this.lastHeard < 1100) return { f: this.cur, held: true, clarity: 0 };
       if (this.cur) this.reset();
       this.cand = null;
@@ -233,12 +239,14 @@ export class Tuner {
       if (ctx.state !== 'running' && this._zero % 30 === 0) ensureRunning().catch(() => {});
       if (this._zero > 150) { this._zero = 0; this.restart(); return; }
     } else this._zero = 0;
-    // the loudest level of the last seconds (falls slowly)
-    this.peak = Math.max(rms, this.peak * 0.99);
+    // the loudest note of the last seconds (falls slowly). Only notes count: a knock, talking or
+    // any noise without a pitch never raises it, so noise cannot hide your playing.
+    this.peak *= 0.99;
     // much quieter than you just played (more than 18 dB): another player, not you. A sudden
     // piano of your own still shows within a moment, as the level of the last loud note fades.
     const quietOther = this.focus && this.peak > 0.01 && rms < this.peak * 0.12;
     let r = rms > 0.0009 && !quietOther ? detectPitch(this.buf, sr) : null;
+    if (r && r.clarity >= 0.8) this.peak = Math.max(this.peak, rms);
     // a low note the short window cannot hold: look again with the long one
     if (!r && !quietOther && !this.long && rms > 0.0009) { if (!this.big) this.big = new Float32Array(4096); this.analyser.getFloatTimeDomainData(this.big); r = detectPitch(this.big, sr); }
     // outside what the instrument can play: someone else (or an octave slip of the detector)
@@ -345,6 +353,8 @@ export const DRONE_CHORDS = {
   open: { label: 'Fifth + octave', r: [1, 3 / 2, 2] }, major: { label: 'Major', r: [1, 5 / 4, 3 / 2] }, minor: { label: 'Minor', r: [1, 6 / 5, 3 / 2] },
 };
 const TANPURA = { slow: 5.2, medium: 4, fast: 2.8 };
+// how loud the drone is at full volume (it sits under your playing, so it needs to be clearly heard)
+const DRONE_LEVEL = 1.4;
 export class Drone {
   constructor() {
     this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'pure'; this.chord = 'fifth';
@@ -356,11 +366,14 @@ export class Drone {
   ratios() { const r = (DRONE_CHORDS[this.chord] || DRONE_CHORDS.root).r; return this.lowOct ? [0.5, ...r] : r; }
   _out() {
     const ctx = getCtx();
+    if (this.out && this.out.context !== ctx) this.out = null;   // a new sound system
     if (!this.out) { this.out = ctx.createGain(); this.out.connect(master()); }
-    this.out.gain.setTargetAtTime(this.volume * 0.6, ctx.currentTime, 0.05);
+    this.out.gain.setTargetAtTime(this.volume * DRONE_LEVEL, ctx.currentTime, 0.05);
     return this.out;
   }
   start() {
+    // when iOS replaces the sound system, the drone starts again in the new one
+    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) { this.voices = []; this.out = null; this.start(); } }); }
     if (this.running) this._stopVoices();
     const f0 = noteFreq(this.midi, this.ref), out = this._out();
     if (this.sound === 'tanpura') this._tanpura(f0, out);
@@ -407,7 +420,7 @@ export class Drone {
     }
   }
   refresh() { if (this.running) this.start(); }
-  setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * 0.6, getCtx().currentTime, 0.05); }
+  setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * DRONE_LEVEL, getCtx().currentTime, 0.05); }
 }
 
 // One soft reference tone (for tapping a string in the tuner).

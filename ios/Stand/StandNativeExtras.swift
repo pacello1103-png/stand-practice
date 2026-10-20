@@ -41,6 +41,8 @@ final class StandNativeExtras: NSObject {
         let caps = "window.standCaps = Object.assign(window.standCaps || {}, { peer: 2 });"
         ucc.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView.evaluateJavaScript(caps, completionHandler: nil)
+        // reminders for the practice plan (StandReminders.swift)
+        StandReminders.shared.install(on: webView)
         NotificationCenter.default.addObserver(self, selector: #selector(appActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
     }

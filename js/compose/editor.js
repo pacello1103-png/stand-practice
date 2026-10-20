@@ -7,7 +7,7 @@ import * as M from './model.js';
 import { INST, INSTRUMENTS, FAMILIES, ENSEMBLES, STAFF_SIZES, defaultStaffSize } from './instruments.js';
 import { layoutScore, drawPage, hitTest, timeAtX, xAtTime, drawGhost, HEAD_W, DYNAMICS, GL, clearMetrics, glyph, text, textWidth, gm, drawClef, drawKey, drawTime, drawBarline, drawRepeatStart, drawLine, TEXT_FONT } from './engrave.js';
 import { ScorePlayer, applyScoreSound, renderAudio } from './playback.js';
-import { toMusicXML, toMXL, readMusicFile } from './musicxml.js';
+import { toMusicXML, toMXL, toPartsZip, readMusicFile } from './musicxml.js';
 import { sampler, SOUND_LABELS, ROOM_LABELS, DEFAULT_MIX } from '../sampler.js';
 import { db, uid, getSetting, setSetting } from '../db.js';
 import { loadMusicFont } from '../ink.js';
@@ -35,7 +35,7 @@ export const composeState = C;
 // =====================================================================
 export function initCompose(deps) {
   D = deps;
-  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { commitWrite, transpose, transposeToKey, setDuration, renderTab: () => renderTab() };
+  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { commitWrite, transpose, transposeToKey, setDuration, renderTab: () => renderTab(), makePdf: (w) => makePdf(w), tapSelect: (x, y, a) => tapSelect(x, y, a) };
   // the compose tour starts with the first touch on the editor, not when the panel opens
   const composeEl = document.getElementById('compose');
   // The compose tour starts on the first real tap or stroke. It listens for the click (in the capture
@@ -465,6 +465,8 @@ function tapSelect(cx, cy, add) {
   // a bar rest stands for the whole bar: select the bar
   if (best) { const f = M.findEvent(C.score, best.id); if (f && f.ev.rest && (f.ev.full || f.st.bars[f.m].length === 1)) best = null; }
   if (best) {
+    // the one selected note tapped again: nothing is selected any more
+    if (!add && !C.extend && !C.selBars && C.sel.size === 1 && C.sel.has(best.id)) { clearSel(); return; }
     if (!add) { C.sel.clear(); C.selBars = null; }
     if (C.sel.has(best.id) && add) C.sel.delete(best.id); else C.sel.add(best.id);
     const f = M.findEvent(C.score, best.id);
@@ -474,6 +476,14 @@ function tapSelect(cx, cy, add) {
   }
   const b = hitBar(pa);
   if (b && pa.x > b.meas.x0 && pa.x < b.meas.x1) {
+    // tapping a bar that is already blue takes it out again (from either end of the selection)
+    const sb = C.selBars;
+    if (sb && selStaves().includes(b.staff.st) && b.m >= sb.from && b.m <= sb.to && (b.m === sb.from || b.m === sb.to)) {
+      if (sb.from === sb.to) { clearSel(); return; }
+      C.selBars = { ...sb, from: b.m === sb.from ? sb.from + 1 : sb.from, to: b.m === sb.to ? sb.to - 1 : sb.to };
+      relayout(); syncSelBar(); renderTab();
+      return;
+    }
     if ((add || C.extend) && C.selBars) {
       const sts = selStaves(); const all = M.allStaves(C.score);
       const idx = [...sts, b.staff.st].map((x) => all.indexOf(x));
@@ -593,26 +603,41 @@ function setAcc(a) {
 }
 // ---- transposing
 // by an interval: steps (letters) and semitones, both signed
-function transpose(steps, semis) {
+function transpose(steps, semis, keyTo = null) {
   const evs = selEvents();
   const bars = C.selBars ? { from: C.selBars.from, to: C.selBars.to, sts: selStaves() } : null;
   const whole = !evs.length && !bars;
+  const S = C.score;
   const f = M.fifthsOfInterval(steps, semis);
-  const norm = (k) => (k > 7 ? k - 12 : k < -7 ? k + 12 : k);
-  let enh = false;
-  const info = M.staffInfo(C.score);
+  // keys of more than six sharps or flats are written the simpler way (C♯ major becomes D♭), unless asked for
+  const norm = (k) => (k > 6 ? k - 12 : k < -6 ? k + 12 : k);
+  const info = M.staffInfo(S);
   const instOf = (st) => (info.find((x) => x.st === (st.base || st)) || {}).inst || {};
+  // the key signatures move with the music when the whole score is transposed, or bars of every staff
+  const allSt = M.allStaves(S);
+  const keysMove = whole || (bars && allSt.every((st) => bars.sts.includes(st)));
+  const k0 = whole ? 0 : bars ? bars.from : 0, k1 = whole ? S.measures.length - 1 : bars ? bars.to : -1;
+  const respell = new Set();   // bars whose key was written the other way round (F♯ ↔ G♭): notes follow it
   edit(() => {
-    if (whole) {
-      // the key signatures move with the music
-      if (C.score.measures[0].key === undefined || C.score.measures[0].key === null) C.score.measures[0].key = 0;
-      for (const ms of C.score.measures) if (ms.key !== undefined && ms.key !== null) { const k2 = ms.key + f; ms.key = norm(k2); if (ms.key !== k2) enh = true; }
+    if (keysMove) {
+      const after = k1 + 1 < S.measures.length ? M.keyAt(S, k1 + 1) : null;
+      const startKey = M.keyAt(S, k0);
+      if (S.measures[k0].key === undefined || S.measures[k0].key === null) S.measures[k0].key = startKey;
+      for (let m = k0; m <= k1; m++) {
+        const ms = S.measures[m];
+        if (ms.key === undefined || ms.key === null) continue;
+        const raw = ms.key + f;
+        ms.key = keyTo !== null && m === k0 ? keyTo : norm(raw);
+        if (ms.key !== raw) for (let q = m; q <= k1; q++) { if (q > m && S.measures[q].key !== undefined && S.measures[q].key !== null) break; respell.add(q); }
+      }
+      // after the transposed bars the music goes back to its own key
+      if (after !== null && (S.measures[k1 + 1].key === undefined || S.measures[k1 + 1].key === null) && M.keyAt(S, k1 + 1) !== after) S.measures[k1 + 1].key = after;
     }
     const tp = (n, m) => {
       if (!n || n.perc) return n;
       const midi = M.midiOf(n.s, n.a) + semis;
       let s2 = n.s + steps, a2 = midi - M.midiOf(s2, 0);
-      if (Math.abs(a2) > 1 || enh) { const sp = M.spell(midi, M.keyAt(C.score, m)); s2 = sp.s; a2 = sp.a; }
+      if (Math.abs(a2) > 1 || respell.has(m)) { const sp = M.spell(midi, M.keyAt(S, m)); s2 = sp.s; a2 = sp.a; }
       return { ...n, s: s2, a: a2 };
     };
     const doEv = (ev, m, st) => {
@@ -621,8 +646,8 @@ function transpose(steps, semis) {
       if (ev.grace) ev.grace = { ...ev.grace, ...tp({ s: ev.grace.s, a: ev.grace.a || 0 }, m) };
     };
     if (evs.length) { for (const x of evs) doEv(x.ev, x.m, x.st); return; }
-    const sts = whole ? M.allStaves(C.score) : bars.sts;
-    const m0 = whole ? 0 : bars.from, m1 = whole ? C.score.measures.length - 1 : bars.to;
+    const sts = whole ? allSt : bars.sts;
+    const m0 = whole ? 0 : bars.from, m1 = whole ? S.measures.length - 1 : bars.to;
     for (const st of sts) for (let m = m0; m <= m1; m++) {
       for (const ev of st.bars[m] || []) doEv(ev, m, st);
       if (st.v2 && st.v2[m]) for (const ev of st.v2[m]) doEv(ev, m, st);
@@ -645,7 +670,7 @@ function transposeToKey(from, to) {
   let semis = (b.pc - a.pc + 12) % 12, steps = (b.st - a.st + 7) % 7;
   if (semis > 6 || (semis === 6 && steps > 3)) { semis -= 12; steps -= 7; }
   if (!semis && !steps) { hint('That is the key it is in now.'); return; }
-  transpose(steps, semis);
+  transpose(steps, semis, to);
 }
 function setDuration(t) {
   C.tool.dur = t; C.tool.rest = C.tool.rest && true;
@@ -1359,7 +1384,7 @@ function renderTab() {
     for (let f = -7; f <= 7; f++) { const o = el('option', '', `${KEYN[f + 7]} major / ${MINOR[f + 7]} minor`); o.value = f; if (f === kNow) o.textContent += ' (now)'; ksel.append(o); }
     ksel.addEventListener('change', () => { if (ksel.value === '' || isNaN(+ksel.value)) return; transposeToKey(kNow, +ksel.value); });
     kr.append(ksel); body.append(kr);
-    body.append(el('p', 'hint', 'Notes keep their spelling in the new key. Transposing the whole score changes the key signature too; transposing instruments (clarinet, horn…) stay correct.'));
+    body.append(el('p', 'hint', 'Notes keep their spelling in the new key. The whole score, or bars of every instrument, take the new key signature too, and the music after them goes back to its own key. Transposing instruments (clarinet, horn…) stay correct.'));
   } else if (C.tab === 'bars') {
     const m = targetBar();
     const g = grid('three');
@@ -1615,6 +1640,11 @@ function wirePanels() {
   $('#exScorePdf').addEventListener('click', () => exportPdf());
   $('#exPartsPdf').addEventListener('click', () => exportPdf('all'));
   $('#exMxl').addEventListener('click', async () => { D.hidePanel(); D.shareBlob(await toMXL(C.score), fileName('.mxl')); });
+  $('#exMxlParts').addEventListener('click', async () => {
+    D.hidePanel(); D.toast('Making the parts…', 20000);
+    try { const z = await toPartsZip(C.score, C.score.title || 'Score'); $('#toast').hidden = true; D.shareBlob(z, fileName('.zip', ' (MusicXML parts)')); }
+    catch (err) { console.error(err); D.toast('The parts could not be made.'); }
+  });
   $('#exXml').addEventListener('click', () => { D.hidePanel(); D.shareBlob(new Blob([toMusicXML(C.score)], { type: 'application/vnd.recordare.musicxml+xml' }), fileName('.musicxml')); });
   $('#exWav').addEventListener('click', async () => {
     D.hidePanel(); D.toast('Recording the score…', 120000);

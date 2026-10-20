@@ -227,7 +227,7 @@ svg { width: 22px; height: 22px; flex: none; }
 }
 .chrome-off .topbar { transform: translateY(-100%); opacity: 0; pointer-events: none; }
 .chrome-off .page-scrub { opacity: 0; pointer-events: none; }
-.tb-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.tb-title { flex: 1; min-width: 0; overflow: hidden; display: flex; align-items: baseline; gap: 10px; }
 .tb-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 600 17px var(--font-serif); }
 .tb-title span { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .tb-tools { display: flex; gap: 2px; }
@@ -513,6 +513,9 @@ input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border-radius: 
 .pthumb.picked .pick svg { opacity: 1; }
 .pthumb.picked .num { color: var(--rec); }
 .pthumb.gone canvas { opacity: .45; }
+.pthumb .pdel { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 15px; background: rgba(255, 255, 255, .94); color: var(--rec); display: grid; place-items: center; box-shadow: 0 1px 4px rgba(0,0,0,.2); cursor: pointer; }
+.pthumb .pdel svg { width: 16px; height: 16px; }
+#pgDelete { position: sticky; bottom: 0; }
 .pthumb.gone .num { color: var(--accent-text); font-weight: 600; }
 .page-grid.small { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
 #pgDelete { margin: 16px 0; }
@@ -1300,7 +1303,8 @@ body.phone .ipad-card.off { display: none !important; }
   #score.nbmode .inkbar { margin-left: -22px; }
 }
 
-.mt-more { grid-column: 1 / 4; display: grid; gap: 4px; margin-top: 4px; }
+.mt-more { display: none; }   /* the small tuner is only the tuner */
+.mini-tuner.dim .mt-note, .mini-tuner.dim .mt-c, .mini-tuner.dim .mt-needle { opacity: .45; }
 .mt-trace { width: 100%; height: 34px; display: block; border-radius: 10px; background: var(--sunk); }
 body.performing .mini-tuner .mt-more { display: none; }
 
@@ -1317,3 +1321,42 @@ body.performing .mini-tuner .mt-more { display: none; }
 /* testing the wink: a hand over the eyes pauses it */
 #winkMeter.hand { opacity: .45; }
 #winkMeter.hand::after { content: 'Hand over your eyes: winks are ignored'; display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* press and hold on a page: a small edit menu */
+.hold-menu { position: fixed; z-index: 90; display: flex; background: #1c1f27; border-radius: 10px; padding: 3px; box-shadow: 0 10px 30px rgba(0,0,0,.28); }
+.hold-menu button { color: #fff; font: 600 14px/1 var(--font-sans, -apple-system, system-ui, sans-serif); padding: 11px 13px; background: none; border-radius: 7px; white-space: nowrap; }
+.hold-menu button + button { border-left: 1px solid rgba(255,255,255,.16); border-radius: 0; }
+.hold-menu button:active { background: rgba(255,255,255,.14); }
+
+/* practice plan: the week in half hours */
+.plan-card { display: grid; gap: 10px; }
+.plan-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.plan-top h3 { margin: 0; }
+.plan-nav { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; }
+.plan-nav .num { min-width: 120px; text-align: center; }
+.plan-scroll { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; border-radius: 12px; background: var(--surface-solid, #fff); border: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+.plan-grid { --plan-row: 20px; display: grid; grid-template-columns: 42px repeat(7, minmax(0, 1fr)); gap: 2px; padding: 0 6px 6px 0; user-select: none; -webkit-user-select: none; }
+.pl-corner, .pl-day { position: sticky; top: 0; z-index: 1; background: var(--surface-solid, #fff); }
+.pl-day { display: grid; justify-items: center; padding: 6px 0 4px; font-size: 11px; line-height: 1.15; color: var(--muted); }
+.pl-day b { font-weight: 600; color: var(--ink); }
+.pl-day.today b, .pl-day.today small { color: var(--accent-text, var(--accent)); }
+.pl-time { font: 500 10px/1 var(--font-sans, inherit); color: var(--muted); text-align: right; padding-right: 6px; transform: translateY(-5px); font-variant-numeric: tabular-nums; }
+.pl-cell { border-radius: 4px; background: var(--sunk); cursor: pointer; transition: background .12s; position: relative; }
+.pl-cell.over { cursor: default; opacity: .75; }
+.pl-cell.plan { background: color-mix(in srgb, var(--good) 72%, var(--sunk)); opacity: 1; }
+.pl-cell.done { background: var(--good); opacity: 1; }
+.pl-cell.missed { background: color-mix(in srgb, var(--rec) 70%, var(--sunk)); opacity: 1; }
+.pl-cell.extra::after { content: ""; position: absolute; inset: 0; margin: auto; width: 6px; height: 6px; border-radius: 3px; background: var(--good); }
+.pl-cell.now { box-shadow: inset 0 0 0 2px var(--accent); }
+.plan-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.plan-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.plan-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.plan-legend i.plan { background: color-mix(in srgb, var(--good) 72%, var(--sunk)); }
+.plan-legend i.done { background: var(--good); }
+.plan-legend i.missed { background: color-mix(in srgb, var(--rec) 70%, var(--sunk)); }
+.plan-legend #plSum { margin-left: auto; }
+.plan-remind { display: grid; gap: 8px; }
+.plan-remind .check-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plan-remind .check-row > span { display: grid; gap: 2px; }
+.plan-remind small { color: var(--muted); font-size: 12px; }
+.plan-remind select { justify-self: start; }
