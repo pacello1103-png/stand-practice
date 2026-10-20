@@ -3205,37 +3205,28 @@ function renderPagesPanel() {
   $('#panel-pages .tool-list').hidden = NBK();
   PG.sel = new Set([...PG.sel].filter((o) => map.includes(o)));
   const grid = $('#pageGrid'); grid.textContent = '';
-  grid.classList.toggle('selecting', !!PG.selecting);
-  $('#pgSelect').textContent = PG.selecting ? 'Done' : 'Select';
-  $('#pgDelete').hidden = !PG.selecting;
-  $('#pgHint').textContent = PG.selecting ? 'Tap the pages you don’t need, then Delete. Nothing is lost: you can put them back any time.' : 'Tap a page to go to it.';
+  // no separate "Select" mode: every page has its own round tick to choose it, and the Delete
+  // button shows as soon as one is chosen. Tapping the page itself goes to it.
+  grid.classList.add('selecting');
+  $('#pgSelect').hidden = true;
+  $('#pgHint').textContent = 'Tap the circle on the pages you don’t need, then Delete. Tap a page to go to it.';
   map.forEach((o, i) => {
-    const b = el('button', 'pthumb' + (PG.sel.has(o) ? ' picked' : '') + (!PG.selecting && V.doc && V.doc.orig && V.doc.orig(V.page) === o ? ' here' : ''));
+    const b = el('button', 'pthumb' + (PG.sel.has(o) ? ' picked' : '') + (V.doc && V.doc.orig && V.doc.orig(V.page) === o ? ' here' : ''));
+    b.type = 'button';
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
-    const tick = el('span', 'pick'); tick.append(icon('i-check')); frame.append(tick);
     b.append(frame, el('span', 'num', String(i + 1)));
-    // each page sits in its own cell; in a notebook the cell also has a delete button of its own
-    // (a real button next to the page, not inside it, so a tap on it can never open the page instead)
+    // the tick is its own button next to the page (not inside it), so a tap on it only chooses
     const cell = el('div', 'pcell'); cell.append(b);
-    if (NBK() && !PG.selecting && map.length > 1) {
-      const del = el('button', 'pdel'); del.type = 'button'; del.setAttribute('aria-label', 'Delete page ' + (i + 1)); del.append(icon('i-trash'));
-      let busy = false;
-      const go = async (e) => {
-        e.preventDefault(); e.stopPropagation();
-        if (busy) return; busy = true;
-        const cur = V.score.pageMap || [...Array(V.base.pages).keys()];
-        if (cur.length <= 1) { toast('A notebook keeps at least one page.'); return; }
-        await setPageMap(cur.filter((x) => x !== o));
-        toast('Page deleted. You can put it back below.', 2600);
-      };
-      del.addEventListener('pointerdown', (e) => e.stopPropagation());
-      del.addEventListener('click', go);
-      cell.append(del);
-    }
-    b.addEventListener('click', () => {
-      if (!PG.selecting) { hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k); return; }
-      PG.sel.has(o) ? PG.sel.delete(o) : PG.sel.add(o); b.classList.toggle('picked', PG.sel.has(o)); syncPageDelete(map);
+    const pick = el('button', 'pick'); pick.type = 'button'; pick.setAttribute('aria-label', 'Choose page ' + (i + 1)); pick.setAttribute('aria-pressed', String(PG.sel.has(o))); pick.append(icon('i-check'));
+    pick.addEventListener('pointerdown', (e) => e.stopPropagation());
+    pick.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      PG.sel.has(o) ? PG.sel.delete(o) : PG.sel.add(o);
+      b.classList.toggle('picked', PG.sel.has(o)); pick.setAttribute('aria-pressed', String(PG.sel.has(o)));
+      syncPageDelete(map);
     });
+    cell.append(pick);
+    b.addEventListener('click', () => { hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k); });
     grid.append(cell);
   });
   const gone = all.filter((o) => !map.includes(o));
@@ -3254,8 +3245,9 @@ function renderPagesPanel() {
 $('#pgSelect').addEventListener('click', () => { PG.selecting = !PG.selecting; PG.sel.clear(); renderPagesPanel(); });
 function syncPageDelete(map) {
   const n = PG.sel.size, btn = $('#pgDelete');
+  btn.hidden = !n;
   btn.disabled = !n || n >= map.length;
-  btn.querySelector('span').textContent = !n ? 'Select pages to delete' : n >= map.length ? 'Keep at least one page' : n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
+  btn.querySelector('span').textContent = !n ? 'Choose pages to delete' : n >= map.length ? 'Keep at least one page' : n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
 }
 async function setPageMap(next) {
   const all = V.base.pages;
