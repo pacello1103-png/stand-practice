@@ -15,8 +15,8 @@ import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
 import { PracticeHost, fetchPractice, hasKnownIpad } from './sync.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
 import { ask } from './dialog.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets } from './ink.js';
-import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages } from './passages.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS } from './ink.js';
+import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
 import { exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
@@ -176,8 +176,9 @@ function showPanel(name, tab) {
   if (name === 'metronome') drawRamp();
   if (name === 'settings') fillScoreSettings();
   if (name === 'scales') renderScaleStrip();
-  if (name === 'pages') { PG.sel.clear(); PG.selecting = false; for (const [o, t] of PG.thumbs) if (PG.edited.has(o)) t.stale = true; PG.edited.clear(); renderPagesPanel(); }
+  if (name === 'pages') { PG.sel.clear(); PG.selecting = false; PG.staged = null; for (const [o, t] of PG.thumbs) if (PG.edited.has(o)) t.stale = true; PG.edited.clear(); renderPagesPanel(); }
   if (name === 'passages') renderPassages();
+  if (name === 'study') renderStudy();
   if (name === 'record') {
     syncLink(); if (host.state === 'linked') showRemotePreview();
     // the camera is opened ahead when the last recording was a video, so Record starts at once
@@ -190,8 +191,10 @@ function hidePanel() {
   $('#panel-' + openPanel).hidden = true;
   $$('[data-panel].on').forEach((b) => b.classList.remove('on'));
   if (openPanel === 'settings') saveScoreMeta();
+  if (openPanel === 'setpick' && SETS.pick) { const was = openPanel; openPanel = null; $('#panel-' + was).hidden = true; spFree(); SETS.pick = null; }
   if (openPanel === 'record' && !(recState && recState.iphone)) hideRemotePreview();
   if (openPanel === 'record') { clearTimeout(VW.t); VW.t = setTimeout(() => { if (!recState && !vrec.recording) vrec.close(); }, 1500); }
+  if (openPanel === 'pages' && PG.staged) { const was = openPanel; openPanel = null; $('#panel-' + was).hidden = true; savePageChanges(); }
   if (openPanel === 'tuner') { pauseHarmonicListening(); if (tuner.active && !TU.mini) { tuner.stop(); tuner.onReading(null); updateTunerButtons(); } }
   if (openPanel === 'app' && wink.testing) { wink.testing = false; $('#winkTest').textContent = 'Test'; $('#winkMeter').hidden = true; sendFace(); }
   if (openPanel === 'app' && tapTest.on) { tapTest.on = false; $('#tapTest').textContent = 'Test'; $('#tapLast').textContent = ''; sendTap(); }
@@ -219,7 +222,8 @@ document.addEventListener('click', (e) => { if (swallowClick) { e.stopPropagatio
 function setHomeTab(t) {
   S.hometab = t; saveSettings();
   $$('#homeTabs button').forEach((b) => b.classList.toggle('on', b.dataset.hometab === t));
-  $('#tab-mine').hidden = t !== 'mine'; $('#tab-find').hidden = t !== 'find';
+  $('#tab-mine').hidden = t !== 'mine'; $('#tab-find').hidden = t !== 'find'; $('#tab-sets').hidden = t !== 'sets';
+  if (t === 'sets') renderSets();
   if (t === 'find') setTimeout(() => { if (!$('#findInput').value) $('#findInput').focus({ preventScroll: true }); }, 50);
 }
 $$('#homeTabs button').forEach((b) => b.addEventListener('click', () => setHomeTab(b.dataset.hometab)));
@@ -841,7 +845,7 @@ let wakeLock = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
 const PAPER_COLOR = { white: '#ffffff', cream: '#FBF6EA', night: '#ffffff' };
 
-async function openScore(id) {
+async function openScore(id, opts = {}) {
   if (LIB.editing) setLibEditing(false);
   const peek = scores.find((x) => x.id === id) || await db.get('scores', id);
   if (peek && peek.kind === 'comp') { openComposition(id); return; }
@@ -858,11 +862,11 @@ async function openScore(id) {
   clearCache(); V.splits.clear(); V.undo = []; V.redo = []; V.half = false; V.usedJumps = new Set();
   V.crop = score.trim && score.trimBox ? score.trimBox : null;
   Z.s = 1; Z.x = 0; Z.y = 0;
-  V.page = clamp(score.lastPage || 0, 0, V.doc.pages - 1);
+  V.page = clamp(opts.page ? opts.page() : score.lastPage || 0, 0, V.doc.pages - 1);
   score.opened = Date.now(); db.put('scores', score);
   hidePanel(); clearSelection();
   if (file.kind === 'paper') setTimeout(() => sectionTour('notebook', { force: true }), 600);
-  else setTimeout(() => { if (!$('#score').hidden && !openPanel) sectionTour('score', { force: true }); }, 900);
+  else if (!opts.page) setTimeout(() => { if (!$('#score').hidden && !openPanel) sectionTour('score', { force: true }); }, 900);
   $('#library').hidden = true; $('#score').hidden = false; document.body.classList.remove('at-home');
   $('#score').dataset.paper = S.paper; setPaperColor(PAPER_COLOR[S.paper] || '#fff');
   $('#scoreTitle').textContent = score.title;
@@ -884,6 +888,7 @@ async function closeScore() {
   V.openToken = (V.openToken || 0) + 1;     // cancels a score that is still opening
   // Show the library first, so going home always works even if a clean-up step fails.
   const sc = V.score;
+  if (RUN.on) endRun();
   $('#score').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   step0(() => finishTextBox());
   const step = (fn) => { try { const r = fn(); if (r && r.catch) r.catch((e) => console.warn(e)); } catch (e) { console.warn(e); } };
@@ -988,7 +993,7 @@ async function layout(fade) {
     pg.append(inner);
     return { pg, inner, iw, ih };
   };
-  if (V.half && V.page + 1 < V.doc.pages) {
+  if (V.half && V.page + 1 <= lastPg()) {
     const [box] = pageBox([V.page]);
     const b = makeBox(box[0], box[1]);
     const [cur, next] = await Promise.all([renderPage(V.page, b.iw, b.ih), renderPage(V.page + 1, b.iw, b.ih)]);
@@ -1032,7 +1037,7 @@ async function layout(fade) {
     label = `${V.page + 1}½`;
   } else {
     V.half = false;
-    const idx = [V.page]; if (V.spread === 2 && V.page + 1 < V.doc.pages) idx.push(V.page + 1);
+    const idx = [V.page]; if (V.spread === 2 && V.page + 1 <= lastPg()) idx.push(V.page + 1);
     // two pieces of one page are never side by side (they share their markings)
     if (idx.length === 2 && V.doc.orig(idx[0]) === V.doc.orig(idx[1])) idx.pop();
     const boxes = pageBox(idx);
@@ -1062,7 +1067,7 @@ async function layout(fade) {
     if (token !== layoutToken || !V.doc) return;
     for (const start of [V.page + V.spread, V.page - V.spread]) {
       if (start < 0 || start >= V.doc.pages) continue;
-      const ids = [start]; if (V.spread === 2 && start + 1 < V.doc.pages) ids.push(start + 1);
+      const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
       pageBox(ids).forEach((b, k) => renderPage(ids[k], b[0] / cropOf(ids[k]).w, b[1] / cropOf(ids[k]).h));
     }
   }, 80);
@@ -1078,10 +1083,17 @@ function turn(dir) {
   // text being typed is kept (and its box closed) before the page changes
   if (typeof tbEdit !== 'undefined' && tbEdit) finishTextBox();
   if (typeof textEdit !== 'undefined' && textEdit) finishText();
+  // in a set or a practice session: past the last page goes on to the next part, maybe in another score
+  const rr = RUN.on ? runRange() : null;
+  if (rr) {
+    const halfLeft = S.halfTurn && V.spread === 1 && !V.inking && !V.half && V.page + 1 <= rr[1];
+    if (dir > 0 && V.page + (V.spread === 2 ? 1 : 0) >= rr[1] && !halfLeft) { runGo(RUN.idx + 1); return; }
+    if (dir < 0 && V.page <= rr[0] && !V.half) { runGo(RUN.idx - 1, true); return; }
+  } else if (RUN.busy) return;
   if (dir > 0) {
     const last = V.page + (V.spread === 2 ? 1 : 0);
     const jumps = V.score.jumps || [];
-    const j = jumps.find((x, i) => x.from - 1 >= V.page && x.from - 1 <= last && !(x.once && V.usedJumps.has(i)));
+    const j = jumps.find((x, i) => x.from - 1 >= V.page && x.from - 1 <= last && !(x.once && V.usedJumps.has(i)) && (!rr || (x.to - 1 >= rr[0] && x.to - 1 <= rr[1])));
     if (j && !V.half) {
       const i = jumps.indexOf(j); if (j.once) V.usedJumps.add(i);
       toast(`Jump to page ${j.to}`, 1400);
@@ -1091,13 +1103,13 @@ function turn(dir) {
   }
   if (S.halfTurn && V.spread === 1 && !V.inking) {
     if (dir > 0) {
-      if (!V.half && V.page + 1 < V.doc.pages) { V.half = true; layout(true); return; }
+      if (!V.half && V.page + 1 <= lastPg()) { V.half = true; layout(true); return; }
       if (V.half) { goTo(V.page + 1); return; }
       return;
     }
     if (V.half) { V.half = false; layout(true); return; }
   }
-  const next = clamp(V.page + dir * V.spread, 0, Math.max(0, V.doc.pages - 1));
+  const next = clamp(V.page + dir * V.spread, rr ? rr[0] : 0, rr ? rr[1] : Math.max(0, V.doc.pages - 1));
   if (next === V.page) return;
   goTo(next);
 }
@@ -1611,6 +1623,7 @@ function placeSelection() {
   bar.style.left = x + 'px'; bar.style.top = y + 'px';
 }
 function makeSelection(entry, idx) {
+  const loop = Sel.pendingLoop; Sel.pendingLoop = null;
   clearSelection();
   if (!idx.length) return;
   Sel.entry = entry; Sel.idx = idx; Sel.box = selectionBox(entry, idx);
@@ -1656,11 +1669,12 @@ function makeSelection(entry, idx) {
   } else {
     bar.append(
       mk('Colour', () => editSelection((s) => (s.t === 'pen' || s.t === 'stamp' ? { ...s, c: penColor() } : s.t === 'tb' ? { ...s, c: penColor() } : s))),
-      ...(NBK() ? [] : [mk('Passage', () => markRegion(entry.layer.key, { ...Sel.box }))]),
+      ...(NBK() || loop ? [] : [mk('Passage', () => markRegion(entry.layer.key, { ...Sel.box }))]),
       mk('Duplicate', duplicateSelection), mk('Delete', deleteSelection, 'danger'),
       ...(NBK() ? more(...arrange()) : [mk('Copy', copySelection)]),
     );
   }
+  if (loop && !NBK()) bar.prepend(mk('Passage', () => { const k = entry.layer.key; clearSelection(); markRegion(k, loop); }, 'accent'));
   // four corners to resize (from the opposite corner); a photo also turns by its top handle
   if (!locked) {
     for (const c of ['nw', 'ne', 'sw', 'se']) { const h = el('div', 'sel-handle ' + c); h.dataset.c = c; box.append(h); }
@@ -2672,6 +2686,28 @@ function relPos(entry, e, rect) {
 }
 function touches() { return [...PT.values()].filter((p) => p.type === 'touch' && !p.palm); }
 
+// A slur from a to b (page fractions): a smooth arc, thin at the ends and fuller in the middle, like
+// an engraved slur. It curves to the side the pen went (above the notes unless you drew below).
+function slurItem(a, b, path, rect) {
+  const PS = pageSize(rect), W = PS[0], H = PS[1];
+  const ax = a[0] * W, ay = a[1] * H, bx = b[0] * W, by = b[1] * H;
+  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+  if (len < 14) return null;
+  const nx = dy / len, ny = -dx / len;            // the normal on the left of a→b (up when drawn left to right)
+  // which side: where the pen actually went, on average
+  let side = 0; for (const q of path) side += (q[0] * W - ax) * nx + (q[1] * H - ay) * ny;
+  const dir = side / Math.max(1, path.length) < -len * 0.03 ? -1 : 1;
+  const h = Math.max(W * 0.006, Math.min(len * 0.16, W * 0.035)) * dir;
+  const st = styleFor('pen');
+  const pts = [];
+  const N = Math.max(16, Math.round(len / 6));
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, bow = Math.pow(Math.sin(Math.PI * t), 0.85);
+    const x = ax + dx * t + nx * h * bow, y = ay + dy * t + ny * h * bow;
+    pts.push([+(x / W).toFixed(5), +(y / H).toFixed(5), +(0.1 + 0.7 * Math.sin(Math.PI * t)).toFixed(3)]);
+  }
+  return { t: 'pen', c: penColor(), a: st.a ?? 1, s: inkSize('pen', st.size) * 0.9, p: pts };
+}
 function startInk(e, entry) {
   lastEntry = entry;
   if (!entry.layer.ready) { GS = { kind: 'done', id: e.pointerId }; return; }   // markings still loading
@@ -2680,6 +2716,11 @@ function startInk(e, entry) {
   const p = relPos(entry, e, rect);
   const before = entry.layer.items.slice();
   closeInkPops();
+  // the slur: drag from the first note to the last; a neat engraved arc is drawn between them
+  if (tool === 'stamp' && INK.stamp === 'slur') {
+    GS = { kind: 'tape', slur: true, id: e.pointerId, entry, rect, before, type: e.pointerType, t0: now(), a: [p[0], p[1]], path: [[p[0], p[1]]], item: null };
+    return;
+  }
   if (tool === 'stamp') {
     const st = INK.stampStyle;
     const item = { t: 'stamp', k: INK.stamp, c: penColor(), a: st.a, s: inkSize('stamp', st.size), x: +p[0].toFixed(4), y: +p[1].toFixed(4) };
@@ -2723,7 +2764,7 @@ function scheduleLive() {
   liveRaf = requestAnimationFrame(() => {
     liveRaf = 0;
     if (GS && (GS.kind === 'ink' || GS.kind === 'smart')) drawLiveItem(GS.entry, GS.item, GS.predicted);
-    else if (GS && GS.kind === 'tape') drawLiveItem(GS.entry, GS.item, null);
+    else if (GS && GS.kind === 'tape' && GS.item) drawLiveItem(GS.entry, GS.item, null);
     else if (GS && GS.kind === 'lasso') drawLasso(GS.pts);
   });
 }
@@ -2737,6 +2778,7 @@ function moveInk(e) {
     return;
   }
   if (GS.kind === 'lasso') { for (const ev of list) { GS.pts.push([ev.clientX, ev.clientY]); GS.rel.push(relPos(GS.entry, ev, GS.rect)); } scheduleLive(); return; }
+  if (GS.kind === 'tape' && GS.slur) { const p = relPos(GS.entry, e, GS.rect); GS.path.push([p[0], p[1]]); GS.item = slurItem(GS.a, [p[0], p[1]], GS.path, GS.rect); scheduleLive(); return; }
   if (GS.kind === 'tape') { const p = relPos(GS.entry, e, GS.rect); GS.item.x1 = +p[0].toFixed(4); GS.item.y1 = +p[1].toFixed(4); scheduleLive(); return; }
   if (GS.straight && GS.straight.shape) return;
   const pts = GS.item.p;
@@ -2870,6 +2912,7 @@ function endInk(cancelled) {
     if (g.erasePts && g.erasePts.length && L.eraseMany(g.erasePts, eraserR(), NBK() && INK.eraser.whole)) g.changed = true;
     if (g.changed) pushUndo(L.key, g.before, L.items.slice()); return;
   }
+  if (g.kind === 'tape' && g.slur) { if (!g.item) return; L.commit(g.item); pushUndo(L.key, g.before, L.items.slice()); return; }
   if (g.kind === 'tape') { const it = g.item, PS = pageSize(g.rect); if (Math.hypot((it.x1 - it.x0) * PS[0], (it.y1 - it.y0) * PS[1]) < 12) return; L.commit(it); pushUndo(L.key, g.before, L.items.slice()); return; }
   if (g.kind === 'lasso') {
     // a tap (no loop) picks the thing under it
@@ -2891,6 +2934,8 @@ function endInk(cancelled) {
       markRegion(L.key, box);
       return;
     }
+    // what you wrote is chosen, and the loop itself can still become a passage
+    if (!NBK()) { const xs = g.rel.map((p) => p[0]), ys = g.rel.map((p) => p[1]); Sel.pendingLoop = { x0: clamp(Math.min(...xs), 0, 1), y0: clamp(Math.min(...ys), 0, 1), x1: clamp(Math.max(...xs), 0, 1), y1: clamp(Math.max(...ys), 0, 1) }; }
     makeSelection(g.entry, idx);
     return;
   }
@@ -2986,7 +3031,10 @@ stage.addEventListener('pointerdown', (e) => {
     if (GS && GS.type === 'touch' && (GS.kind === 'ink' || GS.kind === 'smart' || GS.kind === 'erase')) endInk(true);
     if (e.pointerType === 'pen') { penDown = true; for (const p of PT.values()) if (p.type === 'touch') p.palm = true; }
     // the Apple Pencil on a page opens the markings tools and starts writing straight away
-    if (e.pointerType === 'pen' && !V.inking && !V.perform && S.penOpens !== false && entryAt(e.clientX, e.clientY)) setInking(true);
+    if (e.pointerType === 'pen' && !V.inking && !V.perform && S.penOpens !== false && entryAt(e.clientX, e.clientY)) {
+      // the first touch only opens the markings (nothing is written by it); the next touch writes
+      setInking(true); e.preventDefault(); GS = { kind: 'done', id: e.pointerId }; return;
+    }
     if (V.inking) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
     if (!V.inking || e.pointerType === 'mouse') startNav(e);
     return;
@@ -3200,7 +3248,11 @@ async function runThumbs() {
 }
 function renderPagesPanel() {
   const all = [...Array(V.base.pages).keys()];
-  const map = V.score.pageMap || all;
+  // changes made in the panel show at once and are kept aside until Save (or closing the panel)
+  const saved = V.score.pageMap || all;
+  const map = PG.staged || saved;
+  const changed = !!PG.staged && PG.staged.join() !== saved.join();
+  $('#pgSave').hidden = !changed;
   // cropping, cutting and moving lines are for printed scores, not notebook pages
   $('#panel-pages .tool-list').hidden = NBK();
   PG.sel = new Set([...PG.sel].filter((o) => map.includes(o)));
@@ -3226,7 +3278,10 @@ function renderPagesPanel() {
       syncPageDelete(map);
     });
     cell.append(pick);
-    b.addEventListener('click', () => { hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k); });
+    b.addEventListener('click', async () => {
+      if (PG.staged) await savePageChanges(true);
+      hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k);
+    });
     grid.append(cell);
   });
   const gone = all.filter((o) => !map.includes(o));
@@ -3237,7 +3292,7 @@ function renderPagesPanel() {
     const b = el('button', 'pthumb gone');
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     b.append(frame, el('span', 'num', 'Put back'));
-    b.addEventListener('click', () => setPageMap([...map, o].sort((x, y) => x - y)));
+    b.addEventListener('click', () => { PG.staged = [...map, o].sort((x, y) => x - y); renderPagesPanel(); });
     tg.append(b);
   }
   syncPageDelete(map);
@@ -3263,17 +3318,32 @@ async function setPageMap(next) {
   const k = next.indexOf(curOrig);
   V.page = clamp(k >= 0 ? k : V.page, 0, V.doc.pages - 1);
   PG.sel.clear();
-  layout(); renderPagesPanel();
+  layout(); if (openPanel === 'pages') renderPagesPanel();
   return removed;
 }
-$('#pgDelete').addEventListener('click', async () => {
-  const map = V.score.pageMap || [...Array(V.base.pages).keys()];
+$('#pgDelete').addEventListener('click', () => {
+  const all = [...Array(V.base.pages).keys()];
+  const map = PG.staged || V.score.pageMap || all;
   if (!PG.sel.size || PG.sel.size >= map.length) return;
-  const n = PG.sel.size;
-  await setPageMap(map.filter((o) => !PG.sel.has(o)));
-  toast(n === 1 ? 'Page deleted. Put it back below.' : n + ' pages deleted. Put them back below.', 2600);
+  // the pages go at once (they wait below, to put back); Save keeps the change
+  PG.staged = map.filter((o) => !PG.sel.has(o));
+  PG.sel.clear();
+  renderPagesPanel();
 });
-$('#pgRestoreAll').addEventListener('click', () => setPageMap([...Array(V.base.pages).keys()]));
+// keep the changes: the score or notebook is laid out once, with the panel closed
+async function savePageChanges(quiet) {
+  const next = PG.staged; PG.staged = null;
+  if (!next) return;
+  const cur = V.score.pageMap || [...Array(V.base.pages).keys()];
+  if (next.join() === cur.join()) return;
+  const n = cur.filter((o) => !next.includes(o)).length, back = next.filter((o) => !cur.includes(o)).length;
+  await setPageMap(next);
+  goTo(V.page, false);
+  if (!quiet) toast(n ? (n === 1 ? 'Page deleted. Put it back any time from Pages.' : `${n} pages deleted. Put them back any time from Pages.`) : back === 1 ? 'Page put back.' : 'Pages put back.', 2600);
+}
+$('#pgSaveBtn').addEventListener('click', () => { hidePanel(); });
+$('#pgCancel').addEventListener('click', () => { PG.staged = null; PG.sel.clear(); renderPagesPanel(); });
+$('#pgRestoreAll').addEventListener('click', () => { PG.staged = [...Array(V.base.pages).keys()]; renderPagesPanel(); });
 $('#pagesBtn').addEventListener('click', () => showPanel('pages'));
 // ---------- crop and cut pages ----------
 $('#pgCrop').addEventListener('click', async () => {
@@ -3676,7 +3746,7 @@ function syncMetroUI() {
 function setBpm(v, quiet) {
   v = clamp(Math.round(v), 20, 280);
   metro.bpm = v; showBpm(v); $('#bpmRange').value = v;
-  try { scale.bpm = v; syncMetroLinks(); } catch {}
+  try { syncMetroLinks(); } catch {}
   if (!quiet) persistMetro();
 }
 function showBpm(v) { $('#bpmVal').textContent = Math.round(v); $('#bpmMark').textContent = tempoMarking(v); $('#metroPillBpm').textContent = Math.round(v); }
@@ -3774,7 +3844,7 @@ function autoTurnBar() {
   const n = S.autoTurn || 0;
   if (!n || autoBars <= 1 || (autoBars - 1) % n !== 0) return;
   if (!V.doc || $('#score').hidden) return;
-  if (V.page + (V.spread === 2 ? 1 : 0) >= V.doc.pages - 1) return;   // last page: stay
+  if (!RUN.on && V.page + (V.spread === 2 ? 1 : 0) >= V.doc.pages - 1) return;   // last page: stay
   turn(1);
 }
 metro.onBeat = (ev) => {
@@ -4441,12 +4511,11 @@ const walk = {
 // ---------- metronome shortcuts inside the drone and scale tools ----------
 function syncMetroLinks() {
   $$('.ml-bpm').forEach((x) => (x.textContent = Math.round(metro.bpm)));
-  $$('.ml-on').forEach((x) => (x.checked = x.dataset.for === 'scale' ? !!scale.click : metro.running));
+  $$('.ml-on').forEach((x) => (x.checked = metro.running));
 }
 $$('.ml-down').forEach((b) => holdRepeat(b, () => { setBpm(metro.bpm - 1); syncMetroLinks(); }));
 $$('.ml-up').forEach((b) => holdRepeat(b, () => { setBpm(metro.bpm + 1); syncMetroLinks(); }));
 $$('.ml-on').forEach((x) => x.addEventListener('change', (e) => {
-  if (x.dataset.for === 'scale') { scale.click = e.target.checked; persistScale(); if (scale.playing) restartScale(); return; }
   if (e.target.checked) startMetro(); else stopMetro();
   syncMetroLinks();
 }));
@@ -4473,6 +4542,7 @@ function syncScaleUI() {
   $('#scaleOcts').value = scale.octaves; $('#scaleDir').value = scale.direction; $('#scaleSys').value = scale.system;
   $('#scalePer').value = scale.perBeat; $('#scaleSound').value = scale.sound; $('#scaleVol').value = scale.volume;
   $('#scaleCount').checked = scale.countIn !== false;
+  $('#scaleClick').checked = !!scale.click; showScaleBpm();
   $('#scaleDrone').checked = scale.drone; $('#scaleRepeat').checked = scale.repeat;
   $('#scaleTitle').textContent = scale.title();
   $('#scalePillNote').textContent = scale.title();
@@ -4480,7 +4550,7 @@ function syncScaleUI() {
   renderScaleStrip();
 }
 function persistScale() {
-  S.scale = { tonic: scale.tonic, octave: scale.octave, octaves: scale.octaves, type: scale.type, direction: scale.direction, system: scale.system, perBeat: scale.perBeat, sound: scale.sound, volume: scale.volume, drone: scale.drone, click: scale.click, repeat: scale.repeat, countIn: scale.countIn };
+  S.scale = { tonic: scale.tonic, octave: scale.octave, octaves: scale.octaves, type: scale.type, direction: scale.direction, system: scale.system, perBeat: scale.perBeat, sound: scale.sound, volume: scale.volume, drone: scale.drone, click: scale.click, repeat: scale.repeat, countIn: scale.countIn, bpm: scale.bpm };
   saveSettings();
 }
 function scaleChanged(restart = true) {
@@ -4521,8 +4591,7 @@ scale.onNote = (ev) => {
   $('#scalePillNote').textContent = name;
   $$('#scaleStrip span').forEach((s) => s.classList.toggle('on', +s.dataset.midi === ev.midi));
 };
-let scaleOwnsMetro = false;
-scale.onEnd = () => { if (scaleOwnsMetro && metro.running) stopMetro(); scaleOwnsMetro = false; updateScaleButtons(); };
+scale.onEnd = () => { updateScaleButtons(); const b = $('#scaleBeats'); if (b) b.textContent = ''; };
 function updateScaleButtons() {
   const b = $('#scaleToggle');
   b.innerHTML = scale.playing ? '<svg><use href="#i-stop"/></svg><span>Stop</span>' : '<svg><use href="#i-play"/></svg><span>Play scale</span>';
@@ -4531,20 +4600,34 @@ function updateScaleButtons() {
   if (!scale.playing) { $$('#scaleStrip span').forEach((s) => s.classList.remove('on')); $('#scaleNote').textContent = '–'; $('#scaleCents').textContent = ''; $('#scalePillNote').textContent = scale.title(); }
   syncMetroLinks();
 }
-// The scale always plays at the metronome tempo; with "Click" on, both start together, in time.
+// The scale has its own tempo and its own click, in the same clock as the notes: always exactly together.
 function startScale() {
   unlock();
-  scale.ref = S.ref; scale.bpm = metro.bpm;
-  let at = 0;
-  if (scale.click) {
-    if (metro.running) stopMetro();
-    at = startMetro({ accentFirstOnly: false }); scaleOwnsMetro = true;
-  }
-  scale.start(at);
+  scale.ref = S.ref;
+  scale.start(0);
   updateScaleButtons();
 }
-function stopScale() { scale.stop(); if (scaleOwnsMetro && metro.running) stopMetro(); scaleOwnsMetro = false; updateScaleButtons(); }
-function restartScale() { scale.stop(true); if (scaleOwnsMetro && metro.running) stopMetro(true); scaleOwnsMetro = false; startScale(); }
+function stopScale() { scale.stop(); updateScaleButtons(); }
+function restartScale() { scale.stop(true); startScale(); }
+function showScaleBpm() { $('#scaleBpmVal').textContent = Math.round(scale.bpm); $('#scaleBpm').value = Math.round(scale.bpm); }
+// a new tempo while the scale plays: it carries on from the next note at the new speed
+let scaleTempoT = 0;
+function setScaleBpm(v) {
+  scale.bpm = clamp(Math.round(v), 30, 208); showScaleBpm(); persistScale();
+  clearTimeout(scaleTempoT); if (scale.playing) scaleTempoT = setTimeout(restartScale, 350);
+}
+$('#scaleBpm').addEventListener('input', (e) => setScaleBpm(+e.target.value));
+holdRepeat($('#scaleSlower'), () => setScaleBpm(scale.bpm - 1));
+holdRepeat($('#scaleFaster'), () => setScaleBpm(scale.bpm + 1));
+{ const tap = makeTapper((b) => setScaleBpm(b)); $('#scaleTap').addEventListener('click', tap); }
+$('#scaleClick').addEventListener('change', (e) => { scale.click = e.target.checked; persistScale(); if (scale.playing) restartScale(); });
+// the beats of each note, as dots: C ● ○ ○ ○
+scale.onBeat = (ev) => {
+  const box = $('#scaleBeats'); if (!box) return;
+  const n = scale.perBeat < 1 ? Math.round(1 / scale.perBeat) : 4;
+  if (box.childElementCount !== n) { box.textContent = ''; for (let i = 0; i < n; i++) box.append(el('i')); }
+  [...box.children].forEach((d, i) => d.classList.toggle('on', i === ev.beat - 1));
+};
 $('#scaleToggle').addEventListener('click', () => (scale.playing ? stopScale() : startScale()));
 $('#scalePillStop').addEventListener('click', stopScale);
 
@@ -5009,6 +5092,8 @@ async function selectTake(id) {
   $('#player').hidden = false; $('#delConfirm').hidden = true;
   $('#waveWrap').hidden = nativeVideo; $('.times').hidden = nativeVideo; $('.transport').hidden = nativeVideo;
   $('#exportLabel').textContent = t.kind === 'video' ? 'Share video' : 'Export as heard';
+  $('#takeFloat').hidden = t.kind !== 'video' || nativeVideo;
+  if (VF.on && t.kind !== 'video') closeVideoFloat(false);
   $('#takeName').value = t.name;
   const sc = t.scoreId ? (scores.find((s) => s.id === t.scoreId) || V.score) : null;
   $('#takeMeta').textContent = (sc ? sc.title + ' · p. ' + (t.page + 1) + ' · ' : '') + new Date(t.created).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -5075,9 +5160,157 @@ player.onState = () => {
   $('#tLoop').textContent = player.loop && player.b > player.a ? `Looping ${fmtTime(player.a, true)} – ${fmtTime(player.b, true)}` : 'Drag across the waveform to loop a passage';
   $('#tDur').textContent = fmtTime(player.duration, true);
   if (player.playing) animateWave(); else drawWave();
+  if (VF.on) vfSync();
 };
 player.onBusy = (on) => { $('#waveBusy').hidden = !on; };
 $('#playBtn').addEventListener('click', () => { unlock(); player.playing ? player.pause() : player.play(); });
+// ---------- the video over the score ----------
+// Drag a video out of Recordings (or tap its button) and it floats small over the score, as while
+// recording: drag it anywhere, pull its corner to resize, pinch (or double-tap) to zoom into the
+// picture and drag to look around in it. The controls hide while you play.
+const VF = { on: false, z: 1, x: 0, y: 0, quietT: 0 };
+const vfEl = $('#vfloat');
+function vfApply() {
+  const v = $('#takeVideo'), st = $('#vfStage');
+  const W = st.clientWidth, H = st.clientHeight;
+  VF.z = clamp(VF.z, 1, 5);
+  // keep the picture covering the window
+  VF.x = clamp(VF.x, W - W * VF.z, 0); VF.y = clamp(VF.y, H - H * VF.z, 0);
+  const mirror = $('#videoWrap').classList.contains('mirror');
+  v.style.transform = `translate(${VF.x}px, ${VF.y}px) scale(${VF.z})` + (mirror ? ` translateX(${W}px) scaleX(-1)` : '');
+  $('#vfZoom').hidden = VF.z < 1.05; $('#vfZoom').textContent = VF.z.toFixed(1) + '×';
+}
+function vfSync() {
+  const p = $('#vfPlay'); p.innerHTML = player.playing ? '<svg><use href="#i-pause"/></svg>' : '<svg><use href="#i-play"/></svg>';
+  p.setAttribute('aria-label', player.playing ? 'Pause' : 'Play');
+  $('#vfSpeed').textContent = Math.round(player.rate * 100) + '%';
+  vfEl.classList.remove('quiet'); clearTimeout(VF.quietT);
+  if (player.playing) VF.quietT = setTimeout(() => vfEl.classList.add('quiet'), 2500);
+}
+function openVideoFloat(at) {
+  if (!currentTake || currentTake.kind !== 'video') return;
+  const wrap = $('#videoWrap');
+  $('#vfStage').append(wrap);
+  VF.on = true; VF.z = 1; VF.x = 0; VF.y = 0;
+  vfEl.hidden = false;
+  if (at) {
+    const r = vfEl.getBoundingClientRect();
+    vfEl.style.left = clamp(at[0] - r.width / 2, 8, innerWidth - r.width - 8) + 'px';
+    vfEl.style.top = clamp(at[1] - r.height / 2, 8, innerHeight - r.height - 8) + 'px'; vfEl.style.bottom = 'auto';
+  }
+  hidePanel();
+  requestAnimationFrame(vfApply); vfSync();
+}
+function closeVideoFloat(back) {
+  if (!VF.on) return;
+  VF.on = false; vfEl.hidden = true;
+  const wrap = $('#videoWrap'), v = $('#takeVideo');
+  v.style.transform = '';
+  $('#player').insertBefore(wrap, $('#waveWrap'));
+  if (back) showPanel('takes'); else player.pause();
+}
+$('#takeFloat').addEventListener('click', () => openVideoFloat());
+$('#vfPlay').addEventListener('click', (e) => { e.stopPropagation(); unlock(); player.playing ? player.pause() : player.play(); setTimeout(vfSync, 50); });
+$('#vfSpeed').addEventListener('click', (e) => { e.stopPropagation(); const steps = [1, 0.9, 0.75, 0.6, 0.5]; const i = steps.findIndex((s) => Math.abs(s - player.rate) < 0.01); setSpeed(steps[(i + 1) % steps.length]); vfSync(); });
+$('#vfBack').addEventListener('click', (e) => { e.stopPropagation(); closeVideoFloat(true); });
+$('#vfClose').addEventListener('click', (e) => { e.stopPropagation(); closeVideoFloat(false); });
+for (const b of vfEl.querySelectorAll('.vf-btn')) b.addEventListener('pointerdown', (e) => e.stopPropagation());
+{
+  // gestures on the window: one finger moves it (or looks around a zoomed picture), two pinch
+  const pts = new Map(); let g = null, lastTap = 0;
+  const st = $('#vfStage');
+  st.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); try { st.setPointerCapture(e.pointerId); } catch {}
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    vfEl.classList.remove('quiet'); clearTimeout(VF.quietT);
+    const r = vfEl.getBoundingClientRect();
+    if (pts.size === 1) g = { kind: 'one', x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, px: VF.x, py: VF.y, moved: false, t0: performance.now() };
+    else if (pts.size === 2) {
+      const [a, b] = [...pts.values()], sr = st.getBoundingClientRect();
+      g = { kind: 'pinch', d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: VF.z, x0: VF.x, y0: VF.y, cx: (a[0] + b[0]) / 2 - sr.left, cy: (a[1] + b[1]) / 2 - sr.top };
+    }
+  });
+  st.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId) || !g) return;
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (g.kind === 'one') {
+      const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+      if (Math.hypot(dx, dy) > 6) g.moved = true;
+      if (VF.z > 1.02) { VF.x = g.px + dx; VF.y = g.py + dy; vfApply(); }
+      else {
+        const r = vfEl.getBoundingClientRect();
+        vfEl.style.left = clamp(g.left + dx, 4, innerWidth - r.width - 4) + 'px';
+        vfEl.style.top = clamp(g.top + dy, 4, innerHeight - r.height - 4) + 'px'; vfEl.style.bottom = 'auto';
+      }
+    } else if (g.kind === 'pinch' && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const z = clamp(g.z0 * Math.hypot(a[0] - b[0], a[1] - b[1]) / g.d0, 1, 5);
+      // zoom about the point between the fingers
+      VF.x = g.cx - (g.cx - g.x0) * (z / g.z0); VF.y = g.cy - (g.cy - g.y0) * (z / g.z0); VF.z = z; vfApply();
+    }
+  });
+  const up = (e) => {
+    pts.delete(e.pointerId);
+    if (g && g.kind === 'one' && !g.moved && performance.now() - g.t0 < 300) {
+      const now = performance.now();
+      // double tap: zoom in to 2× where you tapped, or back to the whole picture
+      if (now - lastTap < 320) {
+        const sr = st.getBoundingClientRect(), cx = g.x0 - sr.left, cy = g.y0 - sr.top;
+        if (VF.z > 1.05) { VF.z = 1; VF.x = 0; VF.y = 0; } else { VF.z = 2; VF.x = cx - (cx - VF.x) * 2; VF.y = cy - (cy - VF.y) * 2; }
+        vfApply(); lastTap = 0;
+      } else { lastTap = now; if (player.playing) { vfEl.classList.toggle('quiet'); clearTimeout(VF.quietT); } }
+    }
+    if (!pts.size) g = null; else if (pts.size === 1) { const [p] = [...pts.values()]; const r = vfEl.getBoundingClientRect(); g = { kind: 'one', x0: p[0], y0: p[1], left: r.left, top: r.top, px: VF.x, py: VF.y, moved: true, t0: 0 }; }
+  };
+  st.addEventListener('pointerup', up); st.addEventListener('pointercancel', up);
+  // the corner: bigger or smaller (the bottom-left corner stays where it is)
+  const rz = $('#vfResize'); let rs = null;
+  rz.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); try { rz.setPointerCapture(e.pointerId); } catch {} const r = vfEl.getBoundingClientRect(); rs = { x0: e.clientX, w0: r.width, left: r.left, bottom: r.bottom }; });
+  rz.addEventListener('pointermove', (e) => {
+    if (!rs) return;
+    const w = clamp(rs.w0 + (e.clientX - rs.x0), 200, Math.min(innerWidth - 16, 900));
+    vfEl.style.width = w + 'px';
+    const h = vfEl.getBoundingClientRect().height;
+    vfEl.style.top = clamp(rs.bottom - h, 4, innerHeight - h - 4) + 'px'; vfEl.style.bottom = 'auto';
+    vfApply();
+  });
+  const rup = () => { rs = null; }; rz.addEventListener('pointerup', rup); rz.addEventListener('pointercancel', rup);
+  // keep it on the screen when the iPad turns
+  window.addEventListener('resize', () => { if (!VF.on) return; const r = vfEl.getBoundingClientRect(); if (vfEl.style.left) vfEl.style.left = clamp(r.left, 4, Math.max(4, innerWidth - r.width - 4)) + 'px'; if (vfEl.style.top) vfEl.style.top = clamp(r.top, 4, Math.max(4, innerHeight - r.height - 4)) + 'px'; vfApply(); });
+}
+// drag the video out of Recordings onto the score
+{
+  const wrap = $('#videoWrap'); let d = null;
+  wrap.addEventListener('pointerdown', (e) => {
+    if (VF.on || !currentTake || currentTake.kind !== 'video' || nativeVideo) return;
+    d = { x0: e.clientX, y0: e.clientY, id: e.pointerId, lift: null, t0: performance.now() };
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const dist = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
+    if (!d.lift && dist > 18) {
+      // lifted: a picture of the video follows the finger
+      const r = wrap.getBoundingClientRect();
+      const lift = el('div', 'vf-lift'); lift.style.width = Math.min(260, r.width) + 'px'; lift.style.height = Math.min(260, r.width) * (r.height / r.width) + 'px';
+      const c = document.createElement('canvas'); c.width = 260; c.height = Math.round(260 * r.height / r.width); c.style.width = '100%'; c.style.height = '100%';
+      try { c.getContext('2d').drawImage($('#takeVideo'), 0, 0, c.width, c.height); } catch {}
+      lift.append(c); document.body.append(lift); d.lift = lift;
+    }
+    if (d.lift) { const lw = d.lift.offsetWidth, lh = d.lift.offsetHeight; d.lift.style.left = (e.clientX - lw / 2) + 'px'; d.lift.style.top = (e.clientY - lh / 2) + 'px'; }
+  });
+  const end = (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const lift = d.lift; d = null;
+    if (!lift) return;
+    lift.remove();
+    // dropped outside the panel (on the score): it stays there, small
+    const pr = $('#panel-takes').getBoundingClientRect();
+    const outside = e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom;
+    if (outside) openVideoFloat([e.clientX, e.clientY]);
+  };
+  window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+}
+
 $('#loopBtn').addEventListener('click', () => {
   if (player.loop) player.setLoop(false);
   else if (player.b > player.a) player.setLoop(true);
@@ -5938,9 +6171,356 @@ $('#pcAdjBtn').addEventListener('click', () => { const h = !$('#pcAdjust').hidde
 for (const [id, key] of [['#pcBright', 'bright'], ['#pcWarm', 'warm'], ['#pcZoom', 'zoom']]) $(id).addEventListener('input', (e) => phone.apply({ [key]: +e.target.value }));
 window.__link = { host, phone };
 
+// =====================================================================
+// Sets and practice sessions: one reading order across several scores
+// =====================================================================
+// A run is a list of parts, each a range of pages in one score (a set) or one passage's page (a
+// practice session). Turning past a part's last page opens the next part, in whatever score it is.
+const RUN = { on: false, kind: '', name: '', items: [], idx: 0, busy: false };
+const runItem = () => (RUN.on ? RUN.items[RUN.idx] : null);
+function mappedOf(orig) { if (!V.doc) return 0; for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === orig) return i; return -1; }
+// the pages (0-based, in the score as it is now) of the part on show; null when another score is open
+function runRange() {
+  const it = runItem(); if (!it || !V.doc || !V.score || V.score.id !== it.sid) return null;
+  const n = V.doc.pages;
+  if (it.orig !== undefined) { const k = mappedOf(it.orig); const p = k < 0 ? 0 : k; return [p, p]; }
+  const a = clamp(it.a - 1, 0, n - 1);
+  return [a, clamp(it.b - 1, a, n - 1)];
+}
+function lastPg() { const r = RUN.on ? runRange() : null; return r ? r[1] : V.doc.pages - 1; }
+// where a part opens: its first page, or (going back) the last spread of it
+function runStartPage(r, atEnd) {
+  if (!atEnd) return r[0];
+  const sp = spreadSize();
+  return sp === 2 ? r[0] + 2 * Math.floor((r[1] - r[0]) / 2) : r[1];
+}
+async function runGo(idx, atEnd = false) {
+  if (!RUN.on || RUN.busy) return;
+  if (idx >= RUN.items.length) { toast(RUN.kind === 'study' ? 'That was the last passage. Well practised!' : 'That is the end of the set.', 2200); return; }
+  if (idx < 0) { toast(RUN.kind === 'study' ? 'This is the first passage.' : 'This is the start of the set.', 1600); return; }
+  const it = RUN.items[idx];
+  RUN.busy = true;
+  try {
+    const sameScore = V.score && V.score.id === it.sid && !$('#score').hidden;
+    RUN.idx = idx;
+    if (!sameScore) {
+      const sc = scores.find((s) => s.id === it.sid) || await db.get('scores', it.sid).catch(() => null);
+      if (!sc) {
+        toast('A score in this ' + (RUN.kind === 'study' ? 'session' : 'set') + ' is not in your library any more. It is skipped.', 2400);
+        RUN.busy = false; RUN.idx = idx; return runGo(idx + (atEnd ? -1 : 1), atEnd);
+      }
+      // leave the score on show tidily (as going back to the library does), without going home
+      step0(() => finishTextBox()); step0(() => finishText(true)); step0(() => clearSelection());
+      if (V.inking) step0(() => setInking(false));
+      if (V.score) { V.score.lastPage = V.page; db.put('scores', V.score).catch(() => {}); }
+      if (V.score) step0(() => freePages());
+      await openScore(it.sid, { page: () => { const r = runRange(); return r ? runStartPage(r, atEnd) : 0; } });
+      if (!V.score || V.score.id !== it.sid) return;   // something else was opened meanwhile
+    } else {
+      const r = runRange();
+      if (r) { Z.s = 1; Z.x = 0; Z.y = 0; goTo(runStartPage(r, atEnd)); }
+    }
+    runShow(!sameScore);
+    if (it.orig !== undefined) runFlashPassage(it);
+  } finally { RUN.busy = false; }
+}
+function startRun(kind, name, items) {
+  if (!items.length) return;
+  RUN.on = true; RUN.kind = kind; RUN.name = name; RUN.items = items; RUN.idx = 0; RUN.busy = false;
+  hidePanel();
+  runGo(0);
+}
+function endRun() {
+  RUN.on = false; RUN.items = []; RUN.idx = 0;
+  $('#runPill').hidden = true;
+  if (V.doc && !$('#score').hidden) layout();
+}
+const PRIO_LABEL = ['Skip', 'Low', 'Medium', 'High'];
+function runShow(newScore) {
+  const it = runItem(); if (!it) { $('#runPill').hidden = true; return; }
+  const sc = scores.find((s) => s.id === it.sid) || V.score;
+  const title = sc ? sc.title : '';
+  const n = RUN.items.length;
+  $('#runPill').hidden = false;
+  $('#runPill').dataset.kind = RUN.kind;
+  if (RUN.kind === 'study') {
+    $('#runTitle').textContent = `${it.name}`;
+    $('#runSub').textContent = `Passage ${RUN.idx + 1} of ${n} · ${PRIO_LABEL[it.prio] || ''} · ${title}`;
+  } else {
+    const r = runRange();
+    const pg = r ? (r[0] === r[1] ? `page ${r[0] + 1}` : `pages ${r[0] + 1}–${r[1] + 1}`) : '';
+    $('#runTitle').textContent = RUN.name;
+    $('#runSub').textContent = `${RUN.idx + 1} of ${n} · ${title}${pg ? ' · ' + pg : ''}`;
+  }
+  $('#runPrev').disabled = RUN.idx === 0; $('#runNext').disabled = RUN.idx >= n - 1;
+  if (newScore && RUN.idx > 0) toast(RUN.kind === 'study' ? `${it.name} · ${title}` : `${title}`, 1600);
+}
+// the passage being practised is pointed out for a moment when its page opens
+function runFlashPassage(it) {
+  setTimeout(async () => {
+    if (runItem() !== it || !V.score) return;
+    const items = await loadItems(V.score.id + ':' + it.orig).catch(() => []);
+    const s = items.find((x) => x.t === 'passage' && x.pid === it.pid); if (!s) return;
+    const pgEl = [...stage.querySelectorAll('.pg')][0]; if (!pgEl) return;
+    const inner = pgEl.querySelector('.pgi'); if (!inner) return;
+    const f = el('div', 'pass-flash');
+    const x0 = Math.min(s.x0, s.x1), x1 = Math.max(s.x0, s.x1), y0 = Math.min(s.y0, s.y1), y1 = Math.max(s.y0, s.y1);
+    f.style.left = x0 * 100 + '%'; f.style.top = y0 * 100 + '%'; f.style.width = (x1 - x0) * 100 + '%'; f.style.height = (y1 - y0) * 100 + '%';
+    inner.append(f); setTimeout(() => f.remove(), 2600);
+  }, 450);
+}
+$('#runPrev').addEventListener('click', () => runGo(RUN.idx - 1));
+$('#runNext').addEventListener('click', () => runGo(RUN.idx + 1));
+$('#runEnd').addEventListener('click', () => { const k = RUN.kind; endRun(); toast(k === 'study' ? 'Practice session ended.' : 'Set ended. You can turn through this score as usual.', 1800); });
+window.__run = { RUN, runGo, runRange, startRun, endRun };
+
+// ---------- Sets in the library ----------
+const SETS = { list: [], edit: null, pick: null };
+async function loadSets() { SETS.list = (await getSetting('sets', [])) || []; }
+const saveSets = () => setSetting('sets', SETS.list);
+function coverOf(sid) {
+  const s = scores.find((x) => x.id === sid); if (!s || !s.thumb) return '';
+  if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
+  return `url(${thumbURLs.get(s.id)})`;
+}
+const partPages = (it) => (it.a === it.b ? `Page ${it.a}` : `Pages ${it.a}–${it.b}`);
+function renderSets() {
+  const ul = $('#setList'); ul.textContent = '';
+  $('#setEmpty').hidden = SETS.list.length > 0;
+  for (const set of SETS.list) {
+    const li = el('li', 'set-card');
+    const covers = el('div', 'set-covers');
+    [...new Set(set.items.map((i) => i.sid))].slice(0, 3).forEach((sid, k) => { const c = el('i'); c.style.backgroundImage = coverOf(sid); c.style.setProperty('--k', k); covers.append(c); });
+    const txt = el('button', 'set-txt');
+    const pages = set.items.reduce((n, i) => n + (i.b - i.a + 1), 0);
+    const names = set.items.map((i) => (scores.find((s) => s.id === i.sid) || {}).title).filter(Boolean);
+    txt.append(el('strong', '', set.name), el('span', 'hint', `${set.items.length} part${set.items.length === 1 ? '' : 's'} · ${pages} page${pages === 1 ? '' : 's'}`), el('span', 'set-names', [...new Set(names)].join(' · ')));
+    txt.addEventListener('click', () => openSetEditor(set));
+    const play = el('button', 'btn primary small'); play.append(icon('i-play'), el('span', '', 'Play'));
+    play.disabled = !set.items.length;
+    play.addEventListener('click', () => playSet(set));
+    li.append(covers, txt, play);
+    ul.append(li);
+  }
+}
+function playSet(set) {
+  const items = set.items.filter((i) => scores.some((s) => s.id === i.sid)).map((i) => ({ ...i }));
+  if (!items.length) { toast('The scores in this set are no longer in your library.'); return; }
+  startRun('set', set.name, items);
+}
+$('#setNew').addEventListener('click', () => {
+  const set = { id: uid(), name: `Set ${SETS.list.length + 1}`, items: [], created: Date.now() };
+  SETS.list.push(set); saveSets();
+  openSetEditor(set, true);
+});
+function openSetEditor(set, fresh) {
+  SETS.edit = set;
+  $('#setEditTitle').textContent = fresh ? 'New set' : 'Set';
+  $('#setName').value = set.name;
+  renderSetParts();
+  showPanel('setedit');
+  if (fresh) setTimeout(() => { $('#setName').select(); }, 80);
+}
+function renderSetParts() {
+  const set = SETS.edit; if (!set) return;
+  const ol = $('#setParts'); ol.textContent = '';
+  $('#setPartsEmpty').hidden = set.items.length > 0;
+  $('#setPlay').disabled = !set.items.length;
+  set.items.forEach((it, i) => {
+    const sc = scores.find((s) => s.id === it.sid);
+    const li = el('li', 'set-part' + (sc ? '' : ' missing'));
+    const th = el('i', 'sp-cover'); th.style.backgroundImage = coverOf(it.sid);
+    const txt = el('button', 'sp-txt');
+    txt.append(el('strong', '', sc ? sc.title : 'Score not in the library'), el('span', '', partPages(it) + (sc && it.a === 1 && it.b >= (sc.pages || 0) ? ' (whole score)' : '')));
+    txt.addEventListener('click', () => { if (sc) openSetPicker(i); });
+    const up = el('button', 'icon-btn small'); up.append(icon('i-up')); up.disabled = i === 0; up.setAttribute('aria-label', 'Earlier');
+    const dn = el('button', 'icon-btn small'); dn.append(icon('i-down')); dn.disabled = i === set.items.length - 1; dn.setAttribute('aria-label', 'Later');
+    const rm = el('button', 'icon-btn small'); rm.append(icon('i-close')); rm.setAttribute('aria-label', 'Remove');
+    up.addEventListener('click', () => { [set.items[i - 1], set.items[i]] = [set.items[i], set.items[i - 1]]; saveSets(); renderSetParts(); });
+    dn.addEventListener('click', () => { [set.items[i + 1], set.items[i]] = [set.items[i], set.items[i + 1]]; saveSets(); renderSetParts(); });
+    rm.addEventListener('click', () => { set.items.splice(i, 1); saveSets(); renderSetParts(); });
+    li.append(el('span', 'sp-num num', String(i + 1)), th, txt, up, dn, rm);
+    ol.append(li);
+  });
+}
+$('#setName').addEventListener('input', () => { if (!SETS.edit) return; SETS.edit.name = $('#setName').value.trim() || 'Set'; saveSets(); });
+function closeSetEditor() {
+  const set = SETS.edit; SETS.edit = null;
+  if (set && !set.items.length && !$('#setName').value.trim().replace(/^Set \d+$/, '')) { SETS.list = SETS.list.filter((s) => s !== set); saveSets(); }
+  hidePanel(); renderSets();
+}
+$('#setEditClose').addEventListener('click', closeSetEditor);
+$('#setAdd').addEventListener('click', () => openSetPicker(-1));
+$('#setPlay').addEventListener('click', () => { const set = SETS.edit; if (!set) return; SETS.edit = null; renderSets(); playSet(set); });
+$('#setDelete').addEventListener('click', async () => {
+  const set = SETS.edit; if (!set) return;
+  if (!(await ask(`Delete “${set.name}”?`, { ok: 'Delete', danger: true, sub: 'The scores themselves stay in your library.' }))) return;
+  SETS.list = SETS.list.filter((s) => s !== set); saveSets(); SETS.edit = null; hidePanel(); renderSets();
+});
+
+// choosing music for a set: a score, then its pages from small pictures of them
+function openSetPicker(partIdx) {
+  SETS.pick = { part: partIdx, sid: null, doc: null, base: null, a: 0, b: 0, taps: 0, token: 0 };
+  $('#spScores').hidden = false; $('#spPages').hidden = true; $('#spTitle').textContent = partIdx >= 0 ? 'Change pages' : 'Add music';
+  $('#spSearch').value = '';
+  showPanel('setpick');
+  if (partIdx >= 0) { const it = SETS.edit.items[partIdx]; spOpenScore(it.sid, it.a - 1, it.b - 1); return; }
+  spRenderScores();
+}
+function spRenderScores() {
+  const q = $('#spSearch').value.trim().toLowerCase();
+  const ul = $('#spList'); ul.textContent = '';
+  const list = scores.filter((s) => s.kind !== 'comp' && (!q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q)))
+    .sort((a, b) => (b.opened || b.added) - (a.opened || a.added));
+  for (const s of list) {
+    const b = el('button', 'sp-score');
+    const th = el('i', 'sp-cover'); th.style.backgroundImage = coverOf(s.id);
+    const t = el('span', 'sp-txt'); t.append(el('strong', '', s.title), el('span', '', (s.composer ? s.composer + ' · ' : '') + s.pages + (s.pages === 1 ? ' page' : ' pages')));
+    b.append(th, t);
+    b.addEventListener('click', () => spOpenScore(s.id));
+    ul.append(b);
+  }
+  if (!list.length) ul.append(el('p', 'hint center', q ? 'No score matches.' : 'Your library is empty.'));
+}
+$('#spSearch').addEventListener('input', spRenderScores);
+function spFree() {
+  const P = SETS.pick; if (!P) return;
+  P.token++;
+  if (P.base && P.base !== V.base) try { P.base.destroy(); } catch {}
+  P.base = null; P.doc = null;
+  for (const c of $('#spStrip').querySelectorAll('canvas')) { c.width = 0; c.height = 0; }
+  $('#spStrip').textContent = '';
+}
+async function spOpenScore(sid, a, b) {
+  const P = SETS.pick; spFree();
+  const score = scores.find((s) => s.id === sid) || await db.get('scores', sid);
+  const file = score && await db.get('files', score.fileId);
+  if (!file) { toast('This score’s file is missing.'); return; }
+  const token = ++P.token;
+  let base, doc;
+  // the score on show is used as it is; another one is opened just for its pictures
+  if (V.score && V.score.id === sid && V.base) { base = V.base; doc = V.doc; }
+  else {
+    try { base = await openDocument(file); } catch { toast('The score could not be opened.'); return; }
+    if (token !== P.token) { try { base.destroy(); } catch {} return; }
+    doc = mapDoc(base, score.pageMap, score.cuts, score.glue);
+  }
+  Object.assign(P, { sid, base, doc, a: a ?? 0, b: b ?? doc.pages - 1, taps: a === undefined ? 0 : 2, title: score.title });
+  if (a === undefined) { P.a = 0; P.b = doc.pages - 1; }
+  $('#spScores').hidden = true; $('#spPages').hidden = false; $('#spTitle').textContent = score.title;
+  const strip = $('#spStrip');
+  const cells = [];
+  for (let i = 0; i < doc.pages; i++) {
+    const cell = el('button', 'sp-page');
+    const [pw, ph] = doc.sizes[i] || [595, 842];
+    const cv = el('canvas'); cv.width = 120; cv.height = Math.round(120 * ph / pw);
+    cell.append(cv, el('span', 'num', String(i + 1)));
+    cell.addEventListener('click', () => spTap(i));
+    strip.append(cell); cells.push(cv);
+  }
+  spMark();
+  // the pages chosen are scrolled into view
+  setTimeout(() => { const c = strip.children[P.a]; if (c) c.scrollIntoView({ block: 'nearest', inline: 'center' }); }, 30);
+  for (let i = 0; i < doc.pages; i++) {
+    if (token !== P.token) return;
+    await doc.render(i, cells[i], cells[i].width, cells[i].height).catch(() => {});
+  }
+}
+function spTap(i) {
+  const P = SETS.pick;
+  // first tap: that page alone; second tap: the range up to it; a third tap starts again
+  if (P.taps === 1) { P.b = Math.max(P.a, i); P.a = Math.min(P.a, i); P.taps = 2; }
+  else { P.a = P.b = i; P.taps = 1; }
+  spMark();
+}
+function spMark() {
+  const P = SETS.pick;
+  [...$('#spStrip').children].forEach((c, i) => { c.classList.toggle('on', i >= P.a && i <= P.b); c.classList.toggle('edge', i === P.a || i === P.b); });
+  const pg = P.a === P.b ? `page ${P.a + 1}` : `pages ${P.a + 1}–${P.b + 1}`;
+  $('#spHint').textContent = P.taps === 1 ? `From page ${P.a + 1}. Tap the last page (or Add for just this one).` : P.taps === 2 ? `${pg[0].toUpperCase() + pg.slice(1)} chosen. Tap a page to choose again.` : 'Tap the first page, then the last page.';
+  $('#spOk').textContent = (P.part >= 0 ? 'Use ' : 'Add ') + pg;
+}
+$('#spAll').addEventListener('click', () => { const P = SETS.pick; if (!P.doc) return; P.a = 0; P.b = P.doc.pages - 1; P.taps = 2; spMark(); });
+$('#spOk').addEventListener('click', () => {
+  const P = SETS.pick, set = SETS.edit; if (!P || !P.doc || !set) return;
+  const part = { sid: P.sid, a: P.a + 1, b: P.b + 1 };
+  if (P.part >= 0) set.items[P.part] = part; else set.items.push(part);
+  saveSets(); spFree(); SETS.pick = null;
+  renderSetParts(); showPanel('setedit');
+});
+$('#spBack').addEventListener('click', () => {
+  const P = SETS.pick;
+  if (P && !$('#spPages').hidden && P.part < 0) { spFree(); $('#spScores').hidden = false; $('#spPages').hidden = true; $('#spTitle').textContent = 'Add music'; spRenderScores(); return; }
+  spFree(); SETS.pick = null; renderSetParts(); showPanel('setedit');
+});
+$('#spClose').addEventListener('click', () => { spFree(); SETS.pick = null; renderSetParts(); showPanel('setedit'); });
+
+// ---------- practice session with passages ----------
+function studyGroups() {
+  const order = new Map(scores.map((s, i) => [s.id, i]));
+  return allPassages().filter((g) => order.has(g.scoreId))
+    .sort((a, b) => (V.score && a.scoreId === V.score.id ? -1 : V.score && b.scoreId === V.score.id ? 1 : 0) || (scores.find((s) => s.id === b.scoreId).opened || 0) - (scores.find((s) => s.id === a.scoreId).opened || 0));
+}
+function renderStudy() {
+  const box = $('#studyList'); box.textContent = '';
+  const groups = studyGroups();
+  $('#studyEmpty').hidden = groups.length > 0; $('#studyOpts').hidden = !groups.length; $('#studyStart').hidden = !groups.length;
+  S.studyOff = S.studyOff || {};
+  for (const g of groups) {
+    const sc = scores.find((s) => s.id === g.scoreId);
+    const on = !S.studyOff[g.scoreId];
+    const sec = el('section', 'study-score' + (on ? '' : ' off'));
+    const head = el('label', 'study-head');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = on;
+    cb.addEventListener('change', () => { if (cb.checked) delete S.studyOff[g.scoreId]; else S.studyOff[g.scoreId] = true; saveSettings(); renderStudy(); });
+    const th = el('i', 'sp-cover'); th.style.backgroundImage = coverOf(g.scoreId);
+    head.append(cb, th, el('strong', '', sc.title), el('span', 'hint', `${g.list.length} passage${g.list.length === 1 ? '' : 's'}`));
+    sec.append(head);
+    const urgent = new Map(passMissed(g.list).filter((x) => !x.good).map((x) => [x.p.id, x.text]));
+    for (const p of g.list) {
+      const row = el('div', 'study-row');
+      const dot = el('i', 'study-dot'); dot.style.background = (PASSAGE_KINDS[p.kind] || PASSAGE_KINDS.melodic).color;
+      const t = el('div', 'study-txt');
+      const last = p.log.length ? p.log[p.log.length - 1].bpm : null;
+      t.append(el('strong', '', p.name), el('span', 'hint', (last ? `${last} of ${p.target} bpm` : `Target ${p.target} bpm`) + (urgent.has(p.id) ? ' · ' + urgent.get(p.id) : '') + ` · page ${+p.key.split(':').pop() + 1}`));
+      const seg = el('div', 'seg study-prio');
+      const pr = priorityOf(p);
+      [3, 2, 1, 0].forEach((v) => {
+        const b = el('button', (pr === v ? 'on' : '') + (v === 0 ? ' skip' : ''), PRIO_LABEL[v]);
+        b.addEventListener('click', () => { setPriority(g.scoreId, p.id, v); renderStudy(); });
+        seg.append(b);
+      });
+      row.append(dot, t, seg);
+      if (pr === 0) row.classList.add('skipped');
+      sec.append(row);
+    }
+    box.append(sec);
+  }
+  const n = studyItems().length;
+  $('#studyStart').disabled = !n;
+  $('#studyStart').querySelector('span').textContent = n ? `Start · ${n} passage${n === 1 ? '' : 's'}` : 'Choose some passages';
+  $('#studyTwice').checked = !!S.studyTwice;
+}
+// highest priority first; within a priority, what was practised least comes first, then page order
+function studyItems() {
+  const out = [];
+  for (const g of studyGroups()) {
+    if (S.studyOff && S.studyOff[g.scoreId]) continue;
+    for (const p of g.list) {
+      const prio = priorityOf(p); if (!prio) continue;
+      out.push({ sid: g.scoreId, orig: +p.key.split(':').pop(), pid: p.id, name: p.name, prio, prog: passProgress(p), created: p.created });
+    }
+  }
+  out.sort((a, b) => b.prio - a.prio || a.prog - b.prog || (a.sid === b.sid ? a.orig - b.orig : 0) || a.created - b.created);
+  if (S.studyTwice) out.push(...out.filter((x) => x.prio === 3).map((x) => ({ ...x })));
+  return out;
+}
+$('#studyTwice').addEventListener('change', (e) => { S.studyTwice = e.target.checked; saveSettings(); renderStudy(); });
+$('#studyStart').addEventListener('click', () => { const items = studyItems(); if (items.length) startRun('study', 'Practice session', items); });
+
 // ---------- tools on the home screen, and the first time Stand opens ----------
 // writing scores needs the iPad's big screen and the Pencil: on the iPhone, Compose is not offered
-const TOOLS = [['tuner', 'Tuner'], ['harmonics', 'Harmonics'], ['drone', 'Drone'], ['metronome', 'Metronome'], ['scales', 'Scales'], ['reps', 'Repetitions'], ['pomodoro', 'Practice timer'], ['record', 'Record'], ['takes', 'Recordings'], ['compose', 'Compose']].filter(([k]) => !(k === 'compose' && (/iPhone|iPod/.test(navigator.userAgent) || (Math.min(screen.width, screen.height) < 500 && matchMedia('(pointer: coarse)').matches))));
+const TOOLS = [['tuner', 'Tuner'], ['harmonics', 'Harmonics'], ['drone', 'Drone'], ['metronome', 'Metronome'], ['scales', 'Scales'], ['study', 'Passages'], ['reps', 'Repetitions'], ['pomodoro', 'Practice timer'], ['record', 'Record'], ['takes', 'Recordings'], ['compose', 'Compose']].filter(([k]) => !(k === 'compose' && (/iPhone|iPod/.test(navigator.userAgent) || (Math.min(screen.width, screen.height) < 500 && matchMedia('(pointer: coarse)').matches))));
 // a sensible start for each instrument (everything else can be switched on)
 function toolsFor(inst) {
   const strings = !!(INSTRUMENTS[inst] && INSTRUMENTS[inst].fifths);
@@ -5949,7 +6529,11 @@ function toolsFor(inst) {
   if (inst === 'piano') { all.delete('drone'); all.delete('tuner'); }
   return [...all];
 }
-function shownTools() { return Array.isArray(S.tools) ? S.tools : TOOLS.map(([k]) => k); }
+function shownTools() {
+  // Passages came later: shown to people who had already chosen their tools too
+  if (Array.isArray(S.tools) && !S.toolsStudy) { S.toolsStudy = true; if (!S.tools.includes('study')) S.tools.push('study'); saveSettings(); }
+  return Array.isArray(S.tools) ? S.tools : TOOLS.map(([k]) => k);
+}
 function applyTools() {
   const on = new Set(shownTools());
   $$('.tile[data-tile]').forEach((t) => t.classList.toggle('off', !on.has(t.dataset.tile)));
@@ -5999,6 +6583,7 @@ function showWelcome() {
   await practice.load();
   setTimeout(syncReminders, 1500);
   await loadPassages();
+  await loadSets().catch(() => {});
   await loadFolders();
   applyAppearance();
   document.body.classList.add('at-home');
@@ -6021,7 +6606,7 @@ function showWelcome() {
   }
   syncInkBar();
   $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio(); $('#penOpens').checked = S.penOpens !== false;
-  if (S.scale) { Object.assign(scale, S.scale); if (!['piano', 'organ', 'flute', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
+  if (S.scale) { Object.assign(scale, S.scale); if (!S.scale.bpm) scale.bpm = metro.bpm || 60; if (!['piano', 'organ', 'flute', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;
   $('#countIn').checked = S.countIn; $('#clickWhileRec').checked = S.clickWhileRec;

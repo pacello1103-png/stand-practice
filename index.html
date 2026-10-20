@@ -93,6 +93,7 @@
     <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
     <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2.5V18h15.5M2.5 6H18v15.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.8" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="18" r="2.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 16L18 3M16 16L6 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-set" viewBox="0 0 24 24"><rect x="3.5" y="5" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="9" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 10h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M12.4 8.6l1.4 1.4-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-glue" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="4" y="14" width="16" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="2.5 2"/><path d="M12 18.5v-6.5M9.5 14l2.5-2.5 2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -153,6 +154,7 @@
       <div class="tgroup" data-group="practise"><span class="tg-label">Practise</span><div class="tg-row">
         <button class="tile" data-panel="metronome" data-tile="metronome"><svg><use href="#i-metro"/></svg><span>Metronome</span></button>
         <button class="tile" data-panel="scales" data-tile="scales"><svg><use href="#i-scales"/></svg><span>Scales</span></button>
+        <button class="tile" data-panel="study" data-tile="study"><svg><use href="#i-passage"/></svg><span>Passages</span></button>
         <button class="tile" data-panel="reps" data-tile="reps"><svg><use href="#i-reps"/></svg><span>Repetitions</span></button>
         <button class="tile" data-panel="pomodoro" data-tile="pomodoro"><svg><use href="#i-timer"/></svg><span>Practice timer</span></button>
       </div></div>
@@ -166,6 +168,7 @@
 
     <div class="home-tabs seg" id="homeTabs" role="tablist">
       <button data-hometab="mine" class="on" role="tab"><svg><use href="#i-lib"/></svg>My scores</button>
+      <button data-hometab="sets" role="tab"><svg><use href="#i-set"/></svg>Sets</button>
       <button data-hometab="find" role="tab"><svg><use href="#i-search"/></svg>Find a score</button>
     </div>
 
@@ -208,6 +211,15 @@
         </div>
         <p class="hint">New iPad, or Stand was reinstalled? <button class="linkish" data-panel="backup">Bring back a backup</button></p>
       </section>
+    </section>
+
+    <section id="tab-sets" hidden>
+      <div class="sets-head">
+        <p class="hint">A set plays pages from several scores in one go: a concert, an audition, an exam. Turning the page after the last page of one score opens the next score at the right page.</p>
+        <button class="btn primary" id="setNew"><svg><use href="#i-plus"/></svg><span>New set</span></button>
+      </div>
+      <ul class="set-list" id="setList"></ul>
+      <p class="hint center" id="setEmpty">No sets yet.</p>
     </section>
 
     <section id="tab-find" hidden>
@@ -705,12 +717,24 @@
       <label class="field"><span>Direction</span><select id="scaleDir"><option value="updown">Up and down</option><option value="up">Up</option><option value="down">Down</option></select></label>
       <label class="field"><span>Intonation</span><select id="scaleSys"><option value="equal">Equal</option><option value="just">Just (pure)</option><option value="pyth">Pythagorean</option></select></label>
     </div>
-    <div class="metro-link">
-      <label class="check"><input type="checkbox" class="ml-on" data-for="scale" id="scaleClick"> Click with the metronome</label>
-      <div class="stepper"><button class="round-btn small ml-down" aria-label="Slower"><svg><use href="#i-minus"/></svg></button><span class="num"><span class="ml-bpm">80</span> BPM</span><button class="round-btn small ml-up" aria-label="Faster"><svg><use href="#i-plus"/></svg></button></div>
-    </div>
+    <section class="scale-tempo" aria-label="Tempo">
+      <div class="st-row">
+        <button class="round-btn small" id="scaleSlower" aria-label="Slower"><svg><use href="#i-minus"/></svg></button>
+        <div class="st-bpm"><b class="num" id="scaleBpmVal">60</b><span>BPM</span></div>
+        <button class="round-btn small" id="scaleFaster" aria-label="Faster"><svg><use href="#i-plus"/></svg></button>
+        <button class="btn small" id="scaleTap">Tap</button>
+      </div>
+      <input type="range" id="scaleBpm" min="30" max="208" step="1" value="60" aria-label="Tempo">
+      <div class="st-row two">
+        <label class="field"><span>Each note</span><select id="scalePer">
+          <option value="0.25">4 beats</option><option value="0.3333333333333333">3 beats</option><option value="0.5">2 beats</option><option value="1">1 beat</option>
+          <option value="2">2 per beat</option><option value="3">3 per beat</option><option value="4">4 per beat</option></select></label>
+        <label class="check st-click"><input type="checkbox" id="scaleClick"> Click on every beat</label>
+      </div>
+      <div class="st-beats" id="scaleBeats" aria-hidden="true"></div>
+    </section>
     <div class="field-grid">
-      <label class="field"><span>Notes per beat</span><select id="scalePer"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+      
       <label class="field"><span>Sound</span><select id="scaleSound"><option value="piano">Piano</option><option value="organ">Organ</option><option value="flute">Flute</option><option value="pure">Soft</option></select></label>
     </div>
     <label class="field"><span>Volume</span><input type="range" id="scaleVol" min="0" max="1" step="0.01" value="0.6"></label>
@@ -761,6 +785,7 @@
     <div class="player" id="player" hidden>
       <div class="player-top">
         <div class="player-name"><input id="takeName" aria-label="Recording name"><span class="muted num" id="takeMeta"></span></div>
+        <button class="icon-btn small" id="takeFloat" aria-label="Show the video over the score" title="Over the score" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="11.5" y="11" width="7" height="5.5" rx="1" fill="currentColor" stroke="none"/></svg></button>
         <button class="icon-btn small" id="takeFav" aria-label="Favourite"><svg><use href="#i-star"/></svg></button>
       </div>
       <div class="video-wrap" id="videoWrap" hidden><video id="takeVideo" playsinline muted preload="auto"></video></div>
@@ -855,6 +880,7 @@
 <aside class="panel wide" id="panel-passages" hidden aria-label="Passages">
   <div class="panel-head"><h2>Passages</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
+    <button class="btn wide" id="passSession" data-panel="study"><svg><use href="#i-play"/></svg><span>Practice session…</span></button>
     <section class="pass-missed-box" id="passMissed"></section>
     <ul class="pass-list" id="passList"></ul>
     <p class="hint center" id="passEmpty">Passages are parts of this piece you want to track, such as a shift or a fast technical run. Choose the Select tool in Markings, draw around the passage, then tap Mark passage.</p>
@@ -875,6 +901,52 @@
     <div class="row-even"><button class="btn" id="passCancel">Cancel</button><button class="btn primary" id="passSave">Save passage</button></div>
   </div>
 </aside>
+
+<aside class="panel wide" id="panel-setedit" hidden aria-label="Set">
+  <div class="panel-head"><h2 id="setEditTitle">New set</h2><button class="icon-btn small" id="setEditClose" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <label class="field"><span>Name</span><input id="setName" maxlength="40" autocomplete="off" placeholder="Concert, audition, exam…"></label>
+    <ol class="set-parts" id="setParts"></ol>
+    <p class="hint center" id="setPartsEmpty">Add the music in the order you will play it.</p>
+    <button class="btn wide" id="setAdd"><svg><use href="#i-plus"/></svg><span>Add music</span></button>
+    <div class="row-even"><button class="btn danger-text" id="setDelete">Delete set</button><button class="btn primary" id="setPlay"><svg><use href="#i-play"/></svg><span>Play the set</span></button></div>
+  </div>
+</aside>
+
+<aside class="panel wide" id="panel-setpick" hidden aria-label="Choose music">
+  <div class="panel-head"><button class="icon-btn small" id="spBack" aria-label="Back"><svg><use href="#i-back"/></svg></button><h2 id="spTitle">Add music</h2><button class="icon-btn small" id="spClose" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <div id="spScores">
+      <label class="search"><svg><use href="#i-search"/></svg><input id="spSearch" type="search" placeholder="Search your scores" autocomplete="off"></label>
+      <ul class="sp-scores" id="spList"></ul>
+    </div>
+    <div id="spPages" hidden>
+      <p class="hint" id="spHint">Tap the first page, then the last page.</p>
+      <div class="sp-strip" id="spStrip"></div>
+      <div class="row-even"><button class="btn" id="spAll">Whole score</button><button class="btn primary" id="spOk">Add</button></div>
+    </div>
+  </div>
+</aside>
+
+<aside class="panel wide" id="panel-study" hidden aria-label="Practice session">
+  <div class="panel-head"><h2>Practice session</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+  <div class="panel-body">
+    <p class="hint">Choose the passages to practise and how important each one is. Start, and turning the page takes you to the next passage, in this score or another one. The whole page is shown.</p>
+    <div class="study-list" id="studyList"></div>
+    <p class="hint center" id="studyEmpty">No passages yet. In a score, choose the Select tool in Markings, draw around a passage and tap Passage.</p>
+    <div class="study-opts" id="studyOpts">
+      <label class="check"><input type="checkbox" id="studyTwice"> High priority twice (again at the end)</label>
+    </div>
+    <button class="btn primary wide" id="studyStart"><svg><use href="#i-play"/></svg><span>Start</span></button>
+  </div>
+</aside>
+
+<div class="run-pill" id="runPill" hidden>
+  <button class="icon-btn small" id="runPrev" aria-label="Previous"><svg><use href="#i-back"/></svg></button>
+  <div class="run-txt"><strong id="runTitle"></strong><span id="runSub"></span></div>
+  <button class="icon-btn small" id="runNext" aria-label="Next"><svg style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
+  <button class="icon-btn small" id="runEnd" aria-label="End"><svg><use href="#i-close"/></svg></button>
+</div>
 
 <aside class="panel wide" id="panel-goal" hidden aria-label="Practice">
   <div class="panel-head"><h2>Practice</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
@@ -928,7 +1000,7 @@
       <div class="row-even" id="iphoneCodeRow"><button class="btn small" id="iphoneCodeBtn">Show a code</button><b class="num ip-code" id="iphoneCode"></b></div>
     </section>
     <section class="sub-card ipad-only">
-      <div class="sub-head"><div><h3>Writing</h3><p class="hint">With the Apple Pencil, touching a score opens the markings tools and starts writing at once. Finger gestures still turn pages.</p></div></div>
+      <div class="sub-head"><div><h3>Writing</h3><p class="hint">With the Apple Pencil, the first touch on a score opens the markings tools (it writes nothing); then write. Finger gestures still turn pages.</p></div></div>
       <label class="check"><input type="checkbox" id="penOpens"> Apple Pencil opens markings</label>
     </section>
     <section class="sub-card ipad-only">
@@ -1038,6 +1110,7 @@
     <div class="page-grid" id="pageGrid"></div>
     <p class="hint" id="pgHint">Tap a page to go to it.</p>
     <button class="btn danger full" id="pgDelete" disabled hidden><svg><use href="#i-trash"/></svg><span>Select pages to delete</span></button>
+    <div class="pg-save" id="pgSave" hidden><button class="btn" id="pgCancel">Undo</button><button class="btn primary" id="pgSaveBtn">Save</button></div>
     <section class="sub-card" id="pgTrash" hidden>
       <div class="sub-head"><div><h3 id="pgTrashTitle">Deleted pages</h3><p class="hint">Tap a page to put it back.</p></div><button class="btn small" id="pgRestoreAll">Put all back</button></div>
       <div class="page-grid small" id="pgTrashGrid"></div>
@@ -1212,9 +1285,10 @@
 <aside class="panel" id="panel-cpexport" hidden aria-label="Export">
   <div class="panel-head"><h2>Export</h2><button class="icon-btn small" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="panel-body">
-    <button class="rec-choice wide-choice" id="exScorePdf"><svg><use href="#i-pdf"/></svg><b>Score (PDF)</b><span>Every instrument, as on screen</span></button>
+    <button class="rec-choice wide-choice" id="exScorePdf"><svg><use href="#i-pdf"/></svg><b>Score (PDF)</b><span>Every instrument in the key it plays in (clarinet, horn… transposed)</span></button>
     <button class="rec-choice wide-choice" id="exPartsPdf"><svg><use href="#i-pages"/></svg><b>All parts (PDF)</b><span>Each player’s part, transposed, with multi-bar rests</span></button>
     <div class="cp-partlinks" id="exPartList"></div>
+    <button class="btn small ghost" id="exConcertPdf">Score in concert pitch (PDF), for the conductor</button>
     <div class="row-even">
       <button class="rec-choice" id="exMxl"><svg><use href="#i-music"/></svg><b>MusicXML</b><span>.mxl for Sibelius, Dorico, MuseScore</span></button>
       <button class="rec-choice" id="exXml"><svg><use href="#i-music"/></svg><b>Uncompressed</b><span>.musicxml</span></button>
@@ -1373,6 +1447,18 @@
 </section>
 <audio id="refAudio" preload="auto"></audio>
 <div class="flash" id="flash"></div>
+<!-- a recording's video, small over the score: move it, resize it, pinch to zoom -->
+<div class="vfloat" id="vfloat" hidden aria-label="Video">
+  <div class="vf-stage" id="vfStage"></div>
+  <div class="vf-bar">
+    <button class="vf-btn" id="vfPlay" aria-label="Play"><svg><use href="#i-play"/></svg></button>
+    <button class="vf-btn vf-speed num" id="vfSpeed" aria-label="Speed">100%</button>
+    <span class="vf-zoom num" id="vfZoom" hidden></span>
+    <button class="vf-btn" id="vfBack" aria-label="Back to the recordings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 15l8-6M8 9.5V15h5.5"/></svg></button>
+    <button class="vf-btn" id="vfClose" aria-label="Close the video"><svg><use href="#i-close"/></svg></button>
+  </div>
+  <div class="vf-resize" id="vfResize" aria-hidden="true"></div>
+</div>
 <div class="wink-flash" id="winkFlash"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 

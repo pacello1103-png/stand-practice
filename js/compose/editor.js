@@ -1639,6 +1639,7 @@ function wirePanels() {
   // ---- export
   $('#exScorePdf').addEventListener('click', () => exportPdf());
   $('#exPartsPdf').addEventListener('click', () => exportPdf('all'));
+  $('#exConcertPdf').addEventListener('click', () => exportPdf(undefined, { concert: true }));
   $('#exMxl').addEventListener('click', async () => { D.hidePanel(); D.shareBlob(await toMXL(C.score), fileName('.mxl')); });
   $('#exMxlParts').addEventListener('click', async () => {
     D.hidePanel(); D.toast('Making the parts…', 20000);
@@ -1906,12 +1907,15 @@ function renderExport() {
 const fileName = (ext, extra = '') => ((C.score.title || 'Score') + extra).replace(/[\\/:*?"<>|]+/g, '').slice(0, 80) + ext;
 
 // ---------- PDF ----------
-async function makePdf(which) {
+// Every export is in the key each player reads: transposing instruments (clarinet, horn,
+// saxophones, euphonium in treble clef…) are written in their own key. Only "Score in concert
+// pitch" shows them as they sound.
+async function makePdf(which, { concert = false } = {}) {
   const { PDFDocument } = await import('../../vendor/pdf-lib.mjs');
   const pdf = await PDFDocument.create();
   pdf.setTitle(C.score.title || 'Score'); if (C.score.composer) pdf.setAuthor(C.score.composer); pdf.setCreator('Stand');
   const layouts = [];
-  if (which === undefined) layouts.push(layoutScore(C.score));
+  if (which === undefined) layouts.push(layoutScore(C.score, { concert }));
   else {
     const list = which === 'all' ? C.score.parts.map((_, i) => i) : [which];
     for (const pi of list) layouts.push(layoutScore(C.score, { partIndex: pi, multiRests: true, staffMm: 7.0, hideEmpty: false }));
@@ -1932,10 +1936,10 @@ async function makePdf(which) {
   }
   return new Blob([await pdf.save()], { type: 'application/pdf' });
 }
-async function exportPdf(which) {
+async function exportPdf(which, opts) {
   D.hidePanel(); D.toast('Making the PDF…', 60000);
   try {
-    const blob = await makePdf(which);
+    const blob = await makePdf(which, opts);
     $('#toast').hidden = true;
     const extra = which === undefined ? '' : which === 'all' ? ' (parts)' : ' - ' + C.score.parts[which].name;
     await D.shareBlob(blob, fileName('.pdf', extra));

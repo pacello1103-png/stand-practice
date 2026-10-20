@@ -25,6 +25,7 @@ export const STAMPS = [
   { k: '0', label: '0', font: 'finger' }, { k: '1', label: '1', font: 'finger' }, { k: '2', label: '2', font: 'finger' }, { k: '3', label: '3', font: 'finger' }, { k: '4', label: '4', font: 'finger' },
   { k: 'I', label: 'I', font: 'roman' }, { k: 'II', label: 'II', font: 'roman' }, { k: 'III', label: 'III', font: 'roman' }, { k: 'IV', label: 'IV', font: 'roman' },
   { k: 'rit', label: 'rit.', font: 'text' }, { k: 'atempo', label: 'a tempo', font: 'text' }, { k: 'pizz', label: 'pizz.', font: 'text' }, { k: 'arco', label: 'arco', font: 'text' },
+  { k: 'slur', label: '⌒', font: 'shape' },
   { k: 'glasses', label: '👓', font: 'emoji' }, { k: 'circle', label: '○', font: 'shape' }, { k: 'box', label: '▢', font: 'shape' },
 ];
 const STAMP_BY_KEY = Object.fromEntries(STAMPS.map((s) => [s.k, s]));

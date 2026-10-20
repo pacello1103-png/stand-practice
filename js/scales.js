@@ -70,11 +70,13 @@ export class ScalePlayer {
   _voice(freq, t, dur, level = 1) {
     playNote(this._out(), freq, t, this.legato ? dur * 0.98 : dur * 0.75, this.sound, level);
   }
+  // a short, clean click (a little louder and higher on the first beat of each note or bar)
   _click(t, accent) {
     const ctx = getCtx();
-    const o = ctx.createOscillator(); o.frequency.value = accent ? 1500 : 1100;
-    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.25 : 0.14, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
-    o.connect(g).connect(master()); o.start(t); o.stop(t + 0.05);
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = accent ? 1760 : 1320;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.32 : 0.18, t + 0.0015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 600;
+    o.connect(g).connect(hp).connect(master()); o.start(t); o.stop(t + 0.045);
   }
 
   start(at = 0) {
@@ -82,7 +84,7 @@ export class ScalePlayer {
     this.stop(true);
     this._nodes = [];
     this._list = this.notes();
-    this._i = 0; this._queue = [];
+    this._i = 0; this._queue = []; this._end = undefined;
     this.playing = true;
     // one bar of count-in: four beats at the scale's tempo, shown as 4 3 2 1 and clicked
     let t0 = at && at > ctx.currentTime ? at : ctx.currentTime + 0.12;
@@ -96,6 +98,7 @@ export class ScalePlayer {
       t0 += 4 * beat;
     }
     this._next = t0;
+    this._beat0 = t0; this._beatN = 0; this._noteStarts = [];
     if (this.drone) this._startDrone();
     this._tick();
     this._timer = setInterval(() => this._tick(), 25);
@@ -107,28 +110,50 @@ export class ScalePlayer {
     const a = holdNote(this._out(), f, 'flute', 0.4);
     this._drone = { stop: (t) => a.stop(t) };
   }
+  // seconds per note: perBeat notes in one beat (2, 3, 4), or one note over 1/perBeat beats (2, 3, 4 beats)
+  _dur() { return 60 / this.bpm / this.perBeat; }
   _tick() {
     const ctx = getCtx();
-    const dur = 60 / this.bpm / this.perBeat;
-    while (this.playing && this._next < ctx.currentTime + 0.15) {
+    const dur = this._dur(), beat = 60 / this.bpm;
+    const horizon = ctx.currentTime + 0.15;
+    while (this.playing && this._next < horizon) {
       if (this._i >= this._list.length) {
         if (!this.repeat) {
           const end = this._next;
           this._queue.push({ time: end, end: true });
+          this._end = end;
           clearInterval(this._timer); this._timer = null;
-          return;
+          break;
         }
         this._i = 0;
-        this._next += dur; // a breath between repeats
+        // a breath between repeats: one beat (or one note when notes are longer than a beat)
+        this._next += Math.max(beat, dur);
+        // the beats stay on the grid
+        this._next = this._beat0 + Math.ceil((this._next - this._beat0) / beat - 1e-6) * beat;
       }
       const m = this._list[this._i];
-      const last = this._i === this._list.length - 1;
-      const d = last ? dur * Math.max(2, this.perBeat) : dur;
+      const last = this._i === this._list.length - 1 && !this.repeat;
+      // the last note rings at least two beats (and never less than a normal note)
+      const d = last ? Math.max(dur, 2 * beat) : dur;
       this._voice(this.freqOf(m), this._next, d, 1);
       this._queue.push({ time: this._next, midi: m, index: this._i });
+      this._noteStarts.push(this._next);
       this._next += d;
       this._i++;
     }
+    // the click: every beat while the scale sounds, in the same clock as the notes
+    const stopAt = this._end !== undefined ? this._end : Infinity;
+    while (this.playing && this._beat0 + this._beatN * beat < Math.min(horizon, stopAt - 1e-4)) {
+      const t = this._beat0 + this._beatN * beat;
+      // the first beat of each note (long notes), or of each bar of four (quick notes)
+      const onNote = this._noteStarts.some((x) => Math.abs(x - t) < 0.002);
+      const accent = this.perBeat < 1 ? onNote : this._beatN % 4 === 0;
+      const inNote = this.perBeat < 1 ? Math.round((t - (this._noteStarts.filter((x) => x <= t + 0.002).pop() ?? t)) / beat) + 1 : (this._beatN % 4) + 1;
+      if (this.click) this._click(t, accent);
+      this._queue.push({ time: t, beat: inNote, accent });
+      this._beatN++;
+    }
+    while (this._noteStarts.length > 8) this._noteStarts.shift();
   }
   _drain() {
     const now = getCtx().currentTime;
@@ -136,6 +161,7 @@ export class ScalePlayer {
       const ev = this._queue.shift();
       if (ev.count) { this.onCount && this.onCount(ev.count); continue; }
       if (ev.end) { setTimeout(() => { if (!this._timer) this.stop(); }, 600); continue; }
+      if (ev.beat) { this.onBeat && this.onBeat(ev); continue; }
       this.onNote && this.onNote(ev);
     }
   }

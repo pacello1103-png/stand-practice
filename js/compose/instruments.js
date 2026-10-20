@@ -44,6 +44,13 @@ export const INSTRUMENTS = [
   I('trombone', 'Trombone', 'Tbn.', 'brass', ['bass'], [40, 72], 'trombone'),
   I('basstrombone', 'Bass Trombone', 'B. Tbn.', 'brass', ['bass'], [34, 67], 'trombone'),
   I('euphonium', 'Euphonium', 'Euph.', 'brass', ['bass'], [34, 70], 'trombone'),
+  // brass band: written in treble clef, sounding lower
+  I('euphoniumTC', 'Euphonium in B♭ (treble clef)', 'Euph.', 'brass', ['treble'], [34, 70], 'trombone', T(-8, -14)),
+  I('baritone', 'Baritone in B♭ (treble clef)', 'Bar.', 'brass', ['treble'], [40, 70], 'trombone', T(-8, -14)),
+  I('tenorhorn', 'Tenor Horn in E♭', 'T. Hn.', 'brass', ['treble'], [46, 77], 'horn', T(-5, -9)),
+  I('tromboneTC', 'Trombone in B♭ (treble clef)', 'Tbn.', 'brass', ['treble'], [40, 72], 'trombone', T(-8, -14)),
+  I('tubaEb', 'E♭ Bass (treble clef)', 'E♭ Bass', 'brass', ['treble'], [28, 63], 'tuba', T(-19, -33)),
+  I('tubaBb', 'B♭ Bass (treble clef)', 'B♭ Bass', 'brass', ['treble'], [26, 60], 'tuba', T(-15, -26)),
   I('tuba', 'Tuba', 'Tba.', 'brass', ['bass'], [26, 65], 'tuba'),
   // ---- percussion
   I('timpani', 'Timpani', 'Timp.', 'perc', ['bass'], [38, 57], 'timpani'),

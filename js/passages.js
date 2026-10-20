@@ -34,6 +34,11 @@ export function passagesFor(scoreId) {
   return Object.values(store[scoreId] || {}).sort((a, b) => a.created - b.created);
 }
 export function dropScorePassages(scoreId) { delete store[scoreId]; save(); }
+// every score that has passages: [{ scoreId, list }]
+export function allPassages() { return Object.keys(store).map((scoreId) => ({ scoreId, list: passagesFor(scoreId) })).filter((x) => x.list.length); }
+// how much a passage matters in a practice session: 0 skip, 1 low, 2 medium, 3 high
+export function setPriority(scoreId, id, prio) { const p = store[scoreId] && store[scoreId][id]; if (p) { p.prio = prio; save(); } }
+export function priorityOf(p) { return p.prio === undefined ? 2 : p.prio; }
 
 // Per day: the first and the best tempo logged that day.
 export function dayRows(p) {

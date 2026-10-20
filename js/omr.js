@@ -515,22 +515,43 @@ function readStaff(s, ctx, header) {
     if (hd.wRow <= sp * 1.7) continue;
     const cx2 = hd.right - rx * 1.02;
     if (fill(cx2, hd.cy) < 0.86) continue;
-    const xl = Math.round(hd.left + sp * 0.25);
-    let a2 = Math.round(hd.cy), z2 = a2;
-    while (a2 > 0 && (C[(a2 - 1) * w + xl] || C[(a2 - 1) * w + xl + 1])) a2--;
-    while (z2 < h - 1 && (C[(z2 + 1) * w + xl] || C[(z2 + 1) * w + xl + 1])) z2++;
-    if (z2 - a2 < sp * 1.5) continue;
+    // the tallest stroke in the extra part on the left (the stem of a flat, the uprights of a sharp)
+    let tall = 0;
+    for (let xl = Math.round(hd.left + sp * 0.1); xl <= Math.round(cx2 - rx * 0.9); xl += Math.max(1, Math.round(sp * 0.1))) {
+      let a2 = Math.round(hd.cy), z2 = a2;
+      while (a2 > 0 && (C[(a2 - 1) * w + xl] || C[(a2 - 1) * w + xl + 1])) a2--;
+      while (z2 < h - 1 && (C[(z2 + 1) * w + xl] || C[(z2 + 1) * w + xl + 1])) z2++;
+      tall = Math.max(tall, z2 - a2);
+    }
+    if (tall < sp * 1.5) continue;
     hd.cx = cx2; hd.left = Math.round(hd.right - rx * 2.04); hd.wRow = hd.right - hd.left + 1; hd.trimmed = true;
   }
+  // two readings of the same head (trimmed to one place): keep one
+  heads = heads.filter((hd, i) => !heads.some((q, j) => j < i && q.p === hd.p && Math.abs(q.cx - hd.cx) < sp * 0.5));
+  // inside a beam: ink runs straight on well past both sides of the 'head', over several rows
+  // (a note head ends; a ledger line is a single thin row)
+  heads = heads.filter((hd) => {
+    let k = 0;
+    for (const dy of [-0.2, 0, 0.2]) {
+      const y = Math.round(hd.cy + dy * sp); if (y < 0 || y >= h) continue;
+      let a = Math.round(hd.cx), z = a; if (!C[y * w + a]) continue;
+      while (a > 0 && C[y * w + a - 1]) a--; while (z < w - 1 && C[y * w + z + 1]) z++;
+      if (hd.cx - a > sp * 1.6 && z - hd.cx > sp * 1.6) k++;
+    }
+    return k < 2;
+  });
   // narrower than a note head: the bowl of a flat, a dot, a letter
   heads = heads.filter((hd) => hd.wRow >= sp * 1.0);
   // wider than a note head: thick or blurred beams (unless it is two heads side by side, a second)
   // hollow: a hole in the middle of the head, not one beside it (a flag curling back to the head)
   const holeAt = (hd) => {
     let inn = 0, out = 0;
+    // the hole of a head stacked just above or below (a chord) is not 'beside' this one
+    const others = heads.filter((q) => q !== hd && Math.abs(q.cx - hd.cx) < sp * 1.6 && Math.abs(q.cy - hd.cy) < sp * 1.6);
     for (let dy = -Math.round(sp * 0.9); dy <= Math.round(sp * 0.9); dy++) for (let dx = -Math.round(sp * 1.0); dx <= Math.round(sp * 1.0); dx++) {
       const x = Math.round(hd.cx) + dx, y = Math.round(hd.cy) + dy; if (x < 0 || y < 0 || x >= w || y >= h || !holes[y * w + x]) continue;
-      if ((dx / (rx * 0.85)) ** 2 + (dy / (ry * 1.1)) ** 2 <= 1) inn++; else out++;
+      if ((dx / (rx * 0.85)) ** 2 + (dy / (ry * 1.1)) ** 2 <= 1) inn++;
+      else if (!others.some((q) => ((x - q.cx) / (rx * 0.85)) ** 2 + ((y - q.cy) / (ry * 1.1)) ** 2 <= 1)) out++;
     }
     return inn >= Math.max(3, sp * sp * 0.025) && out < inn * 0.7;
   };
@@ -566,6 +587,15 @@ function readStaff(s, ctx, header) {
     const carried = heads.some((q) => q !== hd && Math.abs(q.cy - st.backEnd) < sp * 0.9 && Math.abs(q.cx - hd.cx) < sp * 1.4 && (st.up ? q.cy > hd.cy : q.cy < hd.cy));
     if (!carried) { hd.stem = null; hd.beams = 0; hd.kind = hd.hollow ? 'whole' : 'black'; }
   }
+  // the curl of a flag read as a head: it sits on another note's stem, between that head and the
+  // stem's end, with its 'stem' the other way (two voices cross the other way round)
+  heads = heads.filter((hd) => !heads.some((q) => {
+    if (q === hd || !q.stem || hd.hollow || Math.abs(hd.cx - q.cx) > sp * 0.75) return false;
+    const between = q.stem.up ? hd.cy < q.cy - sp * 0.6 && hd.cy > q.stem.end - sp * 0.3 : hd.cy > q.cy + sp * 0.6 && hd.cy < q.stem.end + sp * 0.3;
+    if (!between) return false;
+    if (q.stem.len < sp * 2.6) return false;
+    return hd.stem ? hd.stem.up !== q.stem.up && hd.stem.len < q.stem.len * 0.85 : q.beams > 0;
+  }));
   // a 'head' just left of a note and a step above it, without its own stem: part of an accidental
   heads = heads.filter((hd) => !heads.some((q) => q !== hd && q.cx - hd.cx > sp * 0.55 && q.cx - hd.cx < sp * 1.45 && hd.p - q.p === 1 && q.stem && (!hd.stem || Math.abs(hd.stem.x - q.stem.x) > sp * 0.45)));
   // a stemless 'whole note' right next to a note with a stem is that note's accidental and head read together
@@ -594,6 +624,21 @@ function readStaff(s, ctx, header) {
       if (tot && wide / tot > 0.3) { x = e + 1; continue; }
     }
     const stemOfHead = heads.some((hd) => hd.stem && Math.abs(hd.stem.x - cx) < sp * 0.45);
+    // a stem from the top line to the bottom line looks like a barline, but has a head (or a beam)
+    // at one end, against one side
+    const blobAt = (y, side) => {
+      let n = 0, tot = 0;
+      for (let yy = Math.round(y - sp * 0.3); yy <= Math.round(y + sp * 0.3); yy++) for (let k = 0.2; k <= 1.0; k += 0.1) {
+        const xx = Math.round(side > 0 ? e + k * sp : x - k * sp); if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
+        tot++; n += C[yy * w + xx] || 0;
+      }
+      // and it touches the stroke (a note just before or after a barline stands clear of it)
+      let t = 0, tt = 0;
+      for (let yy = Math.round(y - sp * 0.3); yy <= Math.round(y + sp * 0.3); yy++) { const xx = side > 0 ? e + 1 : x - 1; if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue; tt++; t += C[yy * w + xx] || C[yy * w + xx + side] || 0; }
+      return tot && tt && t / tt > 0.4 ? n / tot : 0;
+    };
+    const capped = [yTop(cx), yBot(cx)].some((y) => blobAt(y, 1) > 0.6 || blobAt(y, -1) > 0.6);
+    if (capped) { x = e + 1; continue; }
     const ya = yTop(cx), yb = yBot(cx);
     let up = 0; while (ya - up - 1 > 0 && (B[(ya - up - 1) * w + Math.round(cx)])) up++;
     let dn = 0; while (yb + dn + 1 < h && (B[(yb + dn + 1) * w + Math.round(cx)])) dn++;
@@ -722,7 +767,7 @@ function readStaff(s, ctx, header) {
 function stemOf(C, w, h, hd, rx, sp) {
   const run = (x, y0, dir) => {
     let y = Math.round(y0), gap = 0, last = y;
-    const lim = sp * 6;
+    const lim = sp * 8.5;   // beams pulled far from the heads make long stems
     while (y > 0 && y < h - 1 && Math.abs(y - y0) < lim) {
       if (C[y * w + x] || C[y * w + x - 1] || C[y * w + x + 1]) { last = y; gap = 0; } else if (++gap > Math.max(2, sp * 0.15)) break;
       y += dir;
@@ -1167,14 +1212,16 @@ export async function recognise(canvas, opts = {}) {
 // 3/4 or 6/8 (and 3/2 or 6/4 or 12/8)? Where the notes start in the bar tells: in 6/8 the second
 // beat is on the 4th quaver, in 3/4 on the 3rd and 5th.
 function compoundFeel(bars) {
+  // only notes and rests of a beat or longer: runs of quavers start everywhere in both
   let six = 0, three = 0;
   for (const b of bars) {
     let p = 0;
     for (const it of b) {
+      const len = ticksOf(it.t, it.dots);
       const e = Math.round((p * 8) / WHOLE);
-      if (!it.rest && Math.abs((p * 8) / WHOLE - e) < 0.01) { if (e === 3) six++; if (e === 2 || e === 4) three++; }
+      if (len >= WHOLE / 4 && Math.abs((p * 8) / WHOLE - e) < 0.01) { if (e === 3) six++; if (e === 2 || e === 4) three++; }
       if (it.t === 4 && it.dots === 1) six += 0.5;
-      p += ticksOf(it.t, it.dots);
+      p += len;
     }
   }
   return six - three;
@@ -1183,8 +1230,10 @@ function chooseTime(st, bars) {
   const pick = (t) => {
     // the same length of bar can be simple or compound: the rhythm decides when it is clear
     const feel = compoundFeel(bars.slice(1));
-    if (t[0] === 3 && t[1] === 4 && feel >= 3) return [6, 8];
-    if (t[0] === 6 && t[1] === 8 && feel <= -3) return [3, 4];
+    // digits read clearly are believed unless the rhythm says otherwise again and again
+    const need = st.time && st.time[0] === t[0] && st.time[1] === t[1] ? 5 : 3;
+    if (t[0] === 3 && t[1] === 4 && feel >= need) return [6, 8];
+    if (t[0] === 6 && t[1] === 8 && feel <= -need) return [3, 4];
     return t;
   };
   const sums = bars.slice(1, -1).map((b) => b.reduce((a, it) => a + ticksOf(it.t, it.dots), 0));
