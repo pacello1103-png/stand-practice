@@ -43,6 +43,8 @@ final class StandNativeExtras: NSObject {
         webView.evaluateJavaScript(caps, completionHandler: nil)
         // reminders for the practice plan (StandReminders.swift)
         StandReminders.shared.install(on: webView)
+        // sound and microphone after the background, a call or an audio reset (StandAudioKeeper.swift)
+        StandAudioKeeper.shared.install(on: webView)
         NotificationCenter.default.addObserver(self, selector: #selector(appActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
     }

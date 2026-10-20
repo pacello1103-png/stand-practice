@@ -188,7 +188,10 @@ export class Tuner {
     return this._starting;
   }
   async _start() {
-    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) this.restart(); }); }
+    if (!this._wired) {
+      this._wired = true;
+      window.addEventListener('stand-audio-new', () => { if (this.running) this.restart(); });
+    }
     await ensureRunning();
     const src = await acquireMic();
     const ctx = src.context || getCtx();

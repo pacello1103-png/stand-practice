@@ -53,7 +53,7 @@ export class PageFollower {
     this.listener.attach(this.src.context || getCtx(), this.src);
     this.onState && this.onState('Listening', false);
     // the sound system was replaced (iOS): listen again through the new one
-    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.on) { this.stop(); this.start(); } }); }
+    if (!this._wired) { this._wired = true; for (const ev of ['stand-audio-new', 'stand-mic-lost']) window.addEventListener(ev, () => { if (this.on) { this.stop(); this.start(); } }); }
     this.prepare();
   }
   stop() {

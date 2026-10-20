@@ -40,6 +40,10 @@ export async function ensureRunning(timeout = 500) {
   if (c.state === 'running') return c;
   try { await Promise.race([c.resume(), new Promise((r) => setTimeout(r, timeout))]); } catch {}
   if (c.state === 'running') return c;
+  // only a broken sound system is replaced, and not over and over: a merely suspended one just
+  // waits for the next touch (iOS allows only a few sound systems; making more breaks sound until
+  // Stand is closed)
+  if (!mayReplace(c)) return c;
   try { c.close(); } catch {}
   ctx = null;
   const n = getCtx();
@@ -48,6 +52,51 @@ export async function ensureRunning(timeout = 500) {
   try { await Promise.race([n.resume(), new Promise((r) => setTimeout(r, timeout))]); } catch {}
   window.dispatchEvent(new Event('stand-audio-new'));
   return n;
+}
+// After Stand was in the background, after a call, or when iOS restarted its audio, the sound
+// system can look alive and play nothing, and the microphone can be dead. Check both, and rebuild
+// what is broken; everyone using sound (metronome, drone, tuner…) hears 'stand-audio-new' or
+// 'stand-mic-lost' and carries on by itself. No need to close Stand any more.
+let healing = null, lastReplace = -1e9;
+function mayReplace(c, clockStuck = false) {
+  if (performance.now() - lastReplace < 5000) return false;
+  const broken = c.state === 'interrupted' || c.state === 'closed' || (c.state === 'running' && clockStuck);
+  if (!broken) return false;
+  lastReplace = performance.now();
+  return true;
+}
+const clockMoves = async (c, ms = 260) => { const t0 = c.currentTime; await new Promise((r) => setTimeout(r, ms)); return c.currentTime > t0; };
+export function healAudio(reason = '') {
+  if (healing) return healing;
+  healing = (async () => {
+    if (micStream && micStream.getAudioTracks().some((t) => t.readyState !== 'live')) {
+      micStream = null; micSource = null;
+      window.dispatchEvent(new Event('stand-mic-lost'));
+    }
+    if (!ctx) return;
+    const inUse = wantSound || micUsers > 0;
+    if (reason !== 'reset') {
+      try { await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 600))]); } catch {}
+      const moving = ctx.state === 'running' && await clockMoves(ctx);
+      if (moving) return;
+      if (!inUse) return;          // nothing is playing: it wakes on the next touch
+      if (!mayReplace(ctx, ctx.state === 'running')) return;   // suspended: the next touch wakes it
+    } else lastReplace = performance.now();
+    // dead: a new sound system, and the microphone connected to it
+    try { ctx.close(); } catch {}
+    ctx = null;
+    const n = getCtx();
+    if (micStream) { try { micSource = n.createMediaStreamSource(micStream); } catch { micStream = null; micSource = null; } }
+    try { await Promise.race([n.resume(), new Promise((r) => setTimeout(r, 600))]); } catch {}
+    window.dispatchEvent(new Event('stand-audio-new'));
+    if (!micSource && micUsers > 0) window.dispatchEvent(new Event('stand-mic-lost'));
+  })().finally(() => { healing = null; });
+  return healing;
+}
+if (typeof window !== 'undefined') {
+  window.standAudioWake = (reason) => { healAudio(reason); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(() => healAudio('visible'), 400); });
+  window.addEventListener('pageshow', () => setTimeout(() => healAudio('visible'), 400));
 }
 // The first touch anywhere wakes the sound (iOS only allows it inside a touch), and so does
 // coming back to the app.
@@ -70,6 +119,9 @@ let micStream = null, micSource = null, micUsers = 0, micPending = null;
 export async function acquireMic() {
   const c = getCtx();
   micUsers++;
+  // a microphone that iOS stopped while Stand was away is opened afresh
+  if (micStream && micStream.getAudioTracks().some((t) => t.readyState !== 'live')) { micStream = null; micSource = null; }
+  if (micSource && micSource.context !== c) { try { micSource = c.createMediaStreamSource(micStream); } catch { micStream = null; micSource = null; } }
   if (micSource) return micSource;
   if (!micPending) {
     setSession('play-and-record');

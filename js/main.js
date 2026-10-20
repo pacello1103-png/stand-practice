@@ -4089,6 +4089,12 @@ function paintTrace(sel) {
 
 }
 setInterval(() => { if (tuner.running && ((openPanel === 'tuner' && currentTunerTab === 'tune') || TU.mini)) drawTrace(); }, 100);
+// iOS sometimes keeps the sound asleep until the screen is touched (after Stand was away): say so
+setInterval(() => {
+  if (!tuner.running || lastReading) return;
+  let st = 'running'; try { st = getCtx().state; } catch {}
+  if (st !== 'running') { if (openPanel === 'tuner') $('#tCents').textContent = 'Tap the screen to start listening'; if (TU.mini) $('#mtCents').textContent = 'Tap to listen'; }
+}, 800);
 async function startTuner() {
   try {
     TU.userStopped = false;
@@ -4170,6 +4176,8 @@ window.addEventListener('stand-mic-lost', () => {
   if (tuner.running) tuner.restart();
   if (keyEar.ear && keyEar.ear.on) keyEar.ear.restart();
 });
+// a new sound system: the key listener connects to it again (the tuner, metronome and drone do it themselves)
+window.addEventListener('stand-audio-new', () => { if (keyEar.ear && keyEar.ear.on) keyEar.ear.restart(); });
 
 // ---------- harmonics: which natural harmonic are you playing? ----------
 const H = { midi: 36, f0: 0, follow: false, ownsMic: false, profile: null, lit: 0, count: 8, found: null, sounding: false };
@@ -4398,10 +4406,11 @@ const keyEar = {
         const t = $('#droneHear');
         if (err) { t.textContent = err; return; }
         if (k) t.innerHTML = `Hearing <b>${NOTE_NAMES[k.pc]} ${k.minor ? 'minor' : 'major'}</b> · drone on <b>${NOTE_NAMES[drone.pc]}</b>`;
+        else t.innerHTML = `Listening… the drone stays on <b>${NOTE_NAMES[drone.pc]}</b> until the key clearly changes`;
       });
       this.ear.set(drone.pc, drone.chord === 'minor');
       this.ear.start();
-    } else if (!want && this.ear) { this.ear.stop(); this.ear = null; $('#droneHear').textContent = 'Play, and the drone moves to the key you are in.'; }
+    } else if (!want && this.ear) { this.ear.stop(); this.ear = null; $('#droneHear').textContent = 'Play: when the key clearly changes, the drone moves to it.'; }
   },
   set(pc, minor) { if (this.ear) this.ear.set(pc, minor); },
 };
