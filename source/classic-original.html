@@ -1,0 +1,413 @@
+<meta charset="utf-8">
+<title>Stand for iPad and iPhone</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Stand is a music stand, practice room and writing desk for iPad and iPhone.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* A drawer of paper folders, one per capability, in the app's own colours, type and icons. */
+:root {
+  --bg: #F3F4F7; --stage: #E3E6EC; --surface: #FFFFFF; --sunk: #ECEEF3; --sunk-2: #E1E4EB;
+  --ink: #121522; --muted: #61687B; --line: rgba(18, 21, 34, .10);
+  --accent: #1F3A8F; --accent-text: #1F3A8F; --accent-soft: rgba(31, 58, 143, .10);
+  --shadow: 0 12px 40px rgba(14, 20, 45, .16), 0 1px 3px rgba(14, 20, 45, .08);
+  --t-white: #FFFFFF; --t-sunk: #F1F2F6; --t-sunk2: #E1E4EB; --t-tint: #E7EBF6; --t-tint2: #CDD6EE; --t-navy: #1F3A8F; --t-deep: #121522;
+  --t-ink: #121522; --t-ink-inv: #FFFFFF;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --serif: "Newsreader", ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B0E16; --stage: #05070C; --surface: #161B29; --sunk: #1E2435; --sunk-2: #272E42;
+    --ink: #E9ECF4; --muted: #959DB2; --line: rgba(255, 255, 255, .09);
+    --accent: #2F4FB5; --accent-text: #A9BCFF; --accent-soft: rgba(120, 150, 255, .14);
+    --shadow: 0 12px 40px rgba(0, 0, 0, .55), 0 1px 3px rgba(0, 0, 0, .4);
+    --t-white: #1B2131; --t-sunk: #161B29; --t-sunk2: #232A3D; --t-tint: #1D2642; --t-tint2: #26335C; --t-navy: #2F4FB5; --t-deep: #0E1220;
+    --t-ink: #E9ECF4; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B0E16; --stage: #05070C; --surface: #161B29; --sunk: #1E2435; --sunk-2: #272E42;
+  --ink: #E9ECF4; --muted: #959DB2; --line: rgba(255, 255, 255, .09);
+  --accent: #2F4FB5; --accent-text: #A9BCFF; --accent-soft: rgba(120, 150, 255, .14);
+  --shadow: 0 12px 40px rgba(0, 0, 0, .55), 0 1px 3px rgba(0, 0, 0, .4);
+  --t-white: #1B2131; --t-sunk: #161B29; --t-sunk2: #232A3D; --t-tint: #1D2642; --t-tint2: #26335C; --t-navy: #2F4FB5; --t-deep: #0E1220;
+  --t-ink: #E9ECF4; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--stage); color: var(--ink); font: 400 16px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1400px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+a { color: inherit; }
+svg.i { width: 20px; height: 20px; flex: none; }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+
+.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-block: 20px 4px; }
+.top b { font: 600 24px/1 var(--serif); letter-spacing: -.01em; }
+.top span { color: var(--muted); font-size: 13px; }
+
+.drawer { position: relative; height: clamp(560px, 76vh, 760px); margin-block: 26px 18px; overflow-x: clip; }
+.folder {
+  position: absolute; top: 0; bottom: 0; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left; font: inherit;
+  border-radius: 18px 22px 22px 18px; color: var(--c-ink); background: var(--c-bg) var(--grain); background-blend-mode: multiply;
+  box-shadow: -12px 0 26px -16px rgba(14, 20, 45, .5), inset 1px 0 0 rgba(255, 255, 255, .5);
+  transition: transform .45s var(--ease); will-change: transform;
+}
+.folder::before { content: ""; position: absolute; left: -32px; top: var(--tab-y, 40px); width: 36px; height: 170px; background: var(--c-bg) var(--grain); background-blend-mode: multiply; border-radius: 14px 0 0 14px; box-shadow: -8px 0 14px -10px rgba(14, 20, 45, .45); }
+.folder .tab { position: absolute; left: -28px; top: var(--tab-y, 40px); height: 170px; width: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; z-index: 2; }
+.folder .tab small { writing-mode: vertical-rl; transform: rotate(180deg); font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; opacity: .75; white-space: nowrap; }
+.folder .tab svg { width: 18px; height: 18px; }
+.folder .strip { position: absolute; left: 0; top: 0; bottom: 0; width: var(--strip, 70px); display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding-block: 24px 22px; }
+.folder .name { writing-mode: vertical-rl; font: 500 30px/1 var(--serif); letter-spacing: -.005em; white-space: nowrap; }
+.folder .num { font: 500 10.5px/1 var(--mono); letter-spacing: .06em; opacity: .55; }
+.folder .bars { width: 20px; height: 22px; background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px, currentColor 4px 5px, transparent 5px 8px); opacity: .35; }
+.folder .foot-s { display: grid; justify-items: center; gap: 12px; }
+.folder .peek { position: absolute; left: calc(var(--strip, 70px) + 4px); right: 18px; top: 22px; bottom: 22px; border-radius: 12px; overflow: hidden; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); }
+.folder .peek img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 25%; display: block; filter: grayscale(1) contrast(.9); opacity: .55; transition: opacity .4s, filter .4s, transform .6s var(--ease); }
+.folder:hover .peek img, .folder:focus-visible .peek img { opacity: 1; filter: none; transform: scale(1.02); }
+.folder.lift { transform: translateY(-14px); }
+.folder.shift { transform: translateX(var(--shift, 150px)); }
+.folder.pull { transform: translateY(-40px); transition-duration: .22s; }
+
+.cover { cursor: default; background: var(--surface) var(--grain); background-blend-mode: multiply; color: var(--ink); box-shadow: -14px 0 30px -14px rgba(14, 20, 45, .45), var(--shadow); }
+.cover::before { display: none; }
+.cover .inner { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto; padding: 30px 32px 28px; gap: 18px; }
+.cover .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cover .brand b { font: 500 64px/.9 var(--serif); letter-spacing: -.02em; }
+.cover .brand span { color: var(--muted); font-size: 13px; }
+.cover h1 { margin: 0; font: 500 clamp(28px, 2.6vw, 38px)/1.08 var(--serif); letter-spacing: -.01em; text-wrap: balance; max-width: 16ch; }
+.cover p { margin: 0; color: var(--muted); max-width: 40ch; }
+.cover .cta { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; font-size: 15px; justify-self: start; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tiles button { display: grid; justify-items: center; gap: 6px; padding: 10px 4px 9px; border: 0; border-radius: 14px; background: var(--sunk); color: var(--ink); font: 500 11.5px/1.15 var(--font); cursor: pointer; transition: background .2s, transform .2s; }
+.tiles button svg { width: 22px; height: 22px; color: var(--accent-text); }
+.tiles button:hover { background: var(--accent-soft); transform: translateY(-1px); }
+
+.foot { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px 48px; padding-block: 24px 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+.foot p { margin: 0; max-width: 64ch; }
+.foot nav { display: flex; gap: 18px; justify-content: flex-end; align-items: start; flex-wrap: wrap; }
+.foot nav a { color: var(--accent-text); text-decoration: none; font-weight: 500; }
+
+.sheet { position: fixed; inset: 0; z-index: 30; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); color: var(--ink); }
+.sheet .bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; padding-block: calc(12px + env(safe-area-inset-top, 0px)) 12px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border-bottom: 1px solid var(--line); }
+.sheet .bar .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.sheet .bar .t svg { color: var(--accent-text); }
+.icon { width: 40px; height: 40px; border-radius: 12px; border: 0; background: var(--sunk); color: var(--ink); display: grid; place-items: center; cursor: pointer; }
+.icon svg { width: 18px; height: 18px; }
+.icon:hover { background: var(--accent-soft); }
+.sheet .band { height: 10px; background: var(--c-bg); border-bottom: 1px solid var(--line); }
+.sheet .body { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 40px 56px; padding-block: 44px 70px; padding-left: max(22px, env(safe-area-inset-left, 0px)); padding-right: max(22px, env(safe-area-inset-right, 0px)); }
+.sheet .text { min-width: 0; display: grid; align-content: start; gap: 18px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; justify-self: start; padding: 6px 12px 6px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; font-size: 13px; }
+.eyebrow svg { width: 18px; height: 18px; }
+.sheet h2 { margin: 0; font: 500 clamp(44px, 6vw, 80px)/.95 var(--serif); letter-spacing: -.02em; }
+.sheet .lead { margin: 0; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.4; color: var(--muted); max-width: 34ch; text-wrap: pretty; }
+.card { background: var(--surface); border-radius: 18px; box-shadow: 0 1px 3px rgba(14, 20, 45, .06), 0 0 0 1px var(--line); padding: 4px 18px; }
+.card ul { list-style: none; margin: 0; padding: 0; }
+.card li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding-block: 14px; border-top: 1px solid var(--line); }
+.card li:first-child { border-top: 0; }
+.card li .k { width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-text); display: grid; place-items: center; font: 700 11px/1 var(--font); margin-top: 1px; }
+.card li b { font-weight: 600; }
+.sheet .note { margin: 0; color: var(--muted); font-size: 13px; }
+.pics { min-width: 0; align-self: start; }
+.dev { margin-bottom: var(--room, 0px); }
+.dev { position: relative; }
+.ipad { position: relative; border-radius: 26px; padding: 12px; background: #15171C; box-shadow: 0 30px 60px -24px rgba(14, 20, 45, .45), 0 0 0 1px rgba(255, 255, 255, .06) inset; }
+.ipad img { display: block; width: 100%; height: auto; border-radius: 15px; }
+.float { position: absolute; right: -14px; bottom: 0; width: 34%; filter: drop-shadow(0 22px 34px rgba(14, 20, 45, .35)); }
+.float img { display: block; width: 100%; height: auto; }
+.cap { margin: 12px 4px 0; color: var(--muted); font-size: 13px; }
+.sheet.in .float { animation: rise .7s .25s var(--ease) both; }
+@keyframes rise { from { translate: 0 26px; opacity: 0; } to { translate: 0 0; opacity: 1; } }
+.next { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.next button { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 18px; border: 0; background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); cursor: pointer; text-align: left; font: inherit; transition: transform .2s, box-shadow .2s; }
+.next button:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--line), var(--shadow); }
+.next button:last-child { flex-direction: row-reverse; text-align: right; }
+.next .ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); flex: none; }
+.next span { display: grid; gap: 2px; flex: 1; }
+.next small { color: var(--muted); font-size: 12.5px; }
+.next b { font: 500 22px/1.1 var(--serif); }
+.reveal > * { opacity: 0; transform: translateY(12px); }
+.sheet.in .reveal > * { opacity: 1; transform: none; transition: opacity .5s var(--ease), transform .6s var(--ease); }
+.sheet.in .reveal > *:nth-child(2) { transition-delay: .05s; } .sheet.in .reveal > *:nth-child(3) { transition-delay: .1s; }
+.sheet.in .reveal > *:nth-child(4) { transition-delay: .15s; } .sheet.in .reveal > *:nth-child(5) { transition-delay: .2s; }
+
+@media (max-width: 760px) {
+  .drawer { height: auto; display: grid; margin-top: 14px; }
+  .folder { position: relative; inset: auto; height: 74px; margin-top: -12px; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 22px -14px rgba(14, 20, 45, .5); transform: none; }
+  .folder::before, .folder .peek { display: none; }
+  .folder .tab { position: absolute; left: 18px; top: 0; height: 62px; width: auto; flex-direction: row; }
+  .folder .tab small { display: none; }
+  .folder .strip { position: absolute; inset: 0 0 auto 48px; width: auto; height: 62px; flex-direction: row; padding: 0 18px 0 0; align-items: center; }
+  .folder .name { writing-mode: horizontal-tb; font-size: 25px; }
+  .folder .bars { display: none; }
+  .folder.shift, .folder.lift { transform: none; }
+  .folder:last-of-type { border-radius: 18px; }
+  .cover { order: -1; height: auto; margin: 0 0 6px; border-radius: 22px; }
+  .cover .inner { position: relative; padding: 24px 20px 26px; }
+  .cover .brand b { font-size: 52px; }
+  .sheet .body { grid-template-columns: 1fr; padding-block: 26px 50px; }
+  .ipad { border-radius: 18px; padding: 7px; }
+  .ipad img { border-radius: 11px; }
+  .float { right: -4px; width: 40%; }
+  .next { grid-template-columns: 1fr; }
+  .foot { grid-template-columns: 1fr; }
+  .foot nav { justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) { .folder, .sheet.in .reveal > *, .sheet.in .float { transition: none !important; animation: none !important; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-lib" viewBox="0 0 24 24"><path d="M5 4h4v16H5z M11 4h4v16h-4z M16.5 5.2l3.8-1 3.7 15.5-3.8 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" transform="translate(-1 0)"/></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z M14 7l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><rect x="3.5" y="5" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="9" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 10h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M12.4 8.6l1.4 1.4-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-passage" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.2"/><path d="M7 14l3-3 2.5 2 2.5-4 2 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-fork" viewBox="0 0 24 24"><path d="M8 3v8a4 4 0 0 0 8 0V3 M12 15v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-metro" viewBox="0 0 24 24"><path d="M9 3h6l4 18H5L9 3z M7.2 16h9.6 M12 15l5-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+<symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 10.5l5-3v9l-5-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+<symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M15 3v4h4 M8.5 10h8 M8.5 12h8 M8.5 14h8 M8.5 16h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+<symbol id="i-compose" viewBox="0 0 24 24"><path d="M3 7h11M3 11h9M3 15h7M3 19h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 19.5l.8-3.3 6.4-6.4a1.6 1.6 0 0 1 2.3 2.3l-6.4 6.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+<symbol id="i-capture" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7 10h10M7 12h10M7 14h10" stroke="currentColor" stroke-width="1" opacity=".75"/><circle cx="10" cy="13.4" r="1.15" fill="currentColor"/><path d="M11.1 13.4V9.6" stroke="currentColor" stroke-width="1"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 13.5V9.5 M9.5 2.8h5 M12 2.8v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+
+<symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="wrap">
+  <header class="top"><b>Stand</b><span>For iPad and iPhone</span></header>
+  <main class="drawer" id="drawer" aria-label="What Stand does"></main>
+  <footer class="foot">
+    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. Coming to the App Store, for iPadOS and iOS 15 or later. Example scores by J. S. Bach: Minuet in G (BWV Anh. 114) and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007). Music font: Bravura (SIL Open Font License).</p>
+    <nav aria-label="More"><a href="privacy.html">Privacy policy</a><span>&copy; 2026 Stand</span></nav>
+  </footer>
+</div>
+
+<section class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle">
+  <div class="bar">
+    <span class="t" id="sheetBar"></span>
+    <button class="icon" id="prevBtn" aria-label="Previous"><svg><use href="#i-chev-l"/></svg></button>
+    <button class="icon" id="nextBtn" aria-label="Next"><svg><use href="#i-chev-r"/></svg></button>
+    <button class="icon" id="closeBtn" aria-label="Close"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <div class="band"></div>
+  <div class="body" id="sheetBody"></div>
+</section>
+
+<script>
+(() => { try { const c = document.createElement('canvas'); c.width = c.height = 160; const g = c.getContext('2d'); const im = g.createImageData(160, 160); for (let i = 0; i < im.data.length; i += 4) { const v = 238 + Math.random() * 17; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; } g.putImageData(im, 0, 0); document.documentElement.style.setProperty('--grain', `url(${c.toDataURL()})`); } catch {} })();
+const F = [
+  { id: 'scores', code: 'Scores', title: 'Scores', c: ['#e9e3d4', '#1f1e1b'], img: '02_score', alt: 'Two pages of Bach side by side on the iPad',
+    lead: 'Your PDFs and scans, two pages side by side on the iPad, turned without lifting a hand.',
+    pts: [['Turn pages your way', 'Tap or swipe, a Bluetooth pedal, a wink, a knock on the stand, or Stand listening to you play.'],
+          ['See the next page early', 'Half-page turns show the top of the next page while you finish this one.'],
+          ['Repeats and codas', 'Tell Stand where D.C. and repeats jump, and turning forward goes there.'],
+          ['Perform', 'Nothing on screen but the music, so a stray touch never opens a tool.']],
+    pics: [['02_score', 'Bach, Minuet in G and Cello Suite No. 1'], ['19_perform', 'Perform: just the music']] },
+  { id: 'markings', code: 'Markings', title: 'Markings', c: ['#cfc8b6', '#1f1e1b'], img: '07_marked', alt: 'Fingerings and a slur written on the Minuet',
+    lead: 'Write on the music with the Apple Pencil: fingerings, bowings, breaths, reminders.',
+    pts: [['The first touch is safe', 'Touching the score with the Pencil opens the tools and writes nothing. Your finger still turns pages.'],
+          ['Symbols in one tap', 'Dynamics, bowings, fingerings 0 to 4, strings I to IV, rit., pizz., arco.'],
+          ['Slurs drawn for you', 'Draw from the first note to the last and Stand engraves a clean slur.'],
+          ['Your edition stays clean', 'Hide your markings, or export the score with or without them.']],
+    pics: [['07_marked', 'Fingerings, a breath and a slur on the Minuet'], ['06_symbols', 'The symbols']] },
+  { id: 'sets', code: 'Sets', title: 'Sets', c: ['#8e98a3', '#141618'], img: '24_set_playing', alt: 'A set playing, with its bar at the bottom',
+    lead: 'A concert, an audition or an exam in one reading order, from pages of different scores.',
+    pts: [['Choose pages from pictures', 'Pick any pages of any score in your library. No new PDF to make.'],
+          ['One page turn to the next piece', 'After the last page of one part, the next score opens at the right page.'],
+          ['Only what you play', 'Pages outside the set are never shown, in landscape or portrait.']],
+    pics: [['24_set_playing', 'Playing an audition set'], ['23_set_editor', 'Three parts from three scores']] },
+  { id: 'passages', code: 'Passages', title: 'Passages', c: ['#a5825a', '#1b150e'], img: '26_study_running', alt: 'A practice session on the Prélude',
+    lead: 'Mark the hard spots, log their tempo, and practise them all in one session.',
+    pts: [['A tempo log for each passage', 'Start tempo, target tempo, and your best tempo day by day.'],
+          ['What you have missed', 'Stand points out passages you left alone or that are stuck.'],
+          ['Practice sessions', 'Give each passage a priority. Turning the page goes to the next one, in any score, with the whole page shown.']],
+    pics: [['26_study_running', 'Session: the opening arpeggios of the Prélude'], ['25_study', 'Choosing priorities']] },
+  { id: 'tuner', code: 'Tuner', title: 'Tune', c: ['#2a2a27', '#ece6d8'], img: '11_tuner', alt: 'The tuner on an open A string',
+    lead: 'A tuner you can trust, a drone that follows the music, and the harmonics of every string.',
+    pts: [['Equal, just or Pythagorean', 'Set your reference A and the intonation, with open strings in pure fifths.'],
+          ['A small tuner over the score', 'Only the note, the bar and the cents, wherever you put it.'],
+          ['A drone that listens', 'It moves to a new key only when the music has really changed key.'],
+          ['Harmonics', 'Play a harmonic and Stand tells you which one, on which string, and where to touch.']],
+    pics: [['11_tuner', 'In tune on the A string'], ['12_drone', 'The drone']] },
+  { id: 'tempo', code: 'Tempo', title: 'Tempo', c: ['#d4cdbc', '#1f1e1b'], img: '14_metronome', alt: 'The metronome',
+    lead: 'A metronome that turns your pages, and scales with their own tempo and drone.',
+    pts: [['Accents and subdivisions', 'Tap a beat to accent or silence it; eighths, triplets, sixteenths.'],
+          ['Speed trainer and silent bars', 'Build up the tempo bar by bar, or let the click drop out to test yourself.'],
+          ['Scales in long notes', 'Each note lasts 4, 3, 2 or 1 beats, or 2 to 4 notes per beat, with a clean click.']],
+    pics: [['14_metronome', 'The metronome'], ['16_scale_tempo', 'Scale tempo']] },
+  { id: 'record', code: 'Record', title: 'Record', c: ['#4b4f3f', '#efebdf'], img: '63_video_over_score', alt: 'A video floating over the score',
+    lead: 'Hear and watch yourself, with the score always on screen.',
+    pts: [['Audio or video', 'With the iPad camera, or your iPhone as a second camera on a better angle.'],
+          ['Slower without changing pitch', 'Loop a passage and listen at 50 to 100 percent speed.'],
+          ['The video over the score', 'Drag it onto the music, keep it small, pinch to zoom on your bow arm.']],
+    pics: [['63_video_over_score', 'The video floating over the Prélude'], ['62_recordings', 'A recording with its loop and speed']] },
+  { id: 'notebooks', code: 'Notebooks', title: 'Notebooks', c: ['#ebe5d6', '#1f1e1b'], img: '64_new_notebook', alt: 'A new notebook with its cover',
+    lead: 'Music paper for exercises, dictation, lesson notes and your practice journal.',
+    pts: [['Covers and papers', 'Staff paper in several sizes, lined or plain, with a cover you choose.'],
+          ['Photos, words and stickers', 'Photos in shapes or inside a word, glass cards, washi tape.'],
+          ['Move anything', 'Drag between the two pages; press and hold to copy, cut and paste.']],
+    pics: [['64_new_notebook', 'A new notebook'], ['66_notebook_insert', 'Photos, words and shapes']] },
+  { id: 'compose', code: 'Compose', title: 'Compose', c: ['#9fa39a', '#141512'], img: '40_composer', alt: 'The composer with the Minuet in G',
+    lead: 'Write music with the Pencil, hear it played, and export engraved scores and parts.',
+    pts: [['Every instrument', 'From piccolo to tuba, with each transposing instrument in its own key.'],
+          ['Engraved as it should be', 'Slurs, hairpins, endings, tuplets from 2 to 11, staves that never collide.'],
+          ['Parts in the key they play', 'PDF score and parts, MusicXML for Sibelius, Dorico and MuseScore, audio.']],
+    pics: [['40_composer', 'The Minuet in G for violin'], ['44_export', 'Export']] },
+  { id: 'read', code: 'Read music', title: 'Read music', c: ['#c3b59a', '#1b1813'], img: '49_picker_chosen', alt: 'Choosing lines of a score to read',
+    lead: 'Point Stand at printed music and it writes the notes out for you.',
+    pts: [['From a PDF or a photo', 'Choose the lines; Stand reads notes, rhythms, rests, accidentals, clef, key and time.'],
+          ['Into your own score', 'Paste it into any instrument and bar, then transpose or arrange it.']],
+    pics: [['49_picker_chosen', 'Two lines of the Minuet chosen'], ['50_capture_result', 'Recognised and ready to paste']] },
+  { id: 'find', code: 'Find a score', title: 'Find', c: ['#e3ddcd', '#1f1e1b'], img: '32_find', alt: 'Searching for Bach cello suites',
+    lead: 'Search the public-domain library and download the best edition for your instrument.',
+    pts: [['Composer and piece', 'Type Bach cello suite, choose your instrument, tap a result.'],
+          ['Straight onto your stand', 'The score lands in your library, ready to read and mark.']],
+    pics: [['32_find', 'Finding the Bach cello suites']] },
+  { id: 'plan', code: 'Practice plan', title: 'Plan', c: ['#3b3a35', '#ece6d8'], img: '28_plan', alt: 'The weekly practice plan',
+    lead: 'Plan your week in half hours, get reminded, and see what you really practised.',
+    pts: [['A weekly plan', 'Paint the half hours you want to practise. Past weeks show green for done, red for missed.'],
+          ['Reminders', 'A notification when practice begins, or 10 or 30 minutes before.'],
+          ['iPad and iPhone together', 'Your plan and your practice time on both, with the iPhone as a camera too.']],
+    pics: [['28_plan', 'The practice plan'], ['29_timer', 'Practice timer']] },
+];
+const X = {
+  scores:    ['white', 'lib', 's_02_score', 'p_30_settings', 'Two pages of the Prélude, with the page-turn settings'],
+  markings:  ['sunk', 'pen', 's_07_marked', '', 'Fingerings, a breath and a slur on the Minuet'],
+  sets:      ['tint', 'set', 's_24_set_playing', 'p_23_set_editor', 'An audition set: three parts from three scores'],
+  passages:  ['tint2', 'passage', 's_26_study_running', 'p_25_study', 'A practice session on the opening of the Prélude'],
+  tuner:     ['navy', 'fork', 's_19_perform', 'p_11_tuner', 'The tuner over the Prélude'],
+  tempo:     ['sunk2', 'metro', 's_02_score', 'p_14_metronome', 'The metronome, turning the pages'],
+  record:    ['deep', 'video', 's_63_video_over_score', 'p_62_recordings', 'A video floating over the score'],
+  notebooks: ['sunk2', 'paper', 's_66_notebook_insert', '', 'A notebook with photos, words and shapes'],
+  compose:   ['white', 'compose', 's_40_composer', 'p_44_export', 'The Minuet in G in the composer, and Export'],
+  read:      ['tint', 'capture', 's_49_picker_chosen', 'p_50_capture_result', 'Two lines of the Minuet chosen and recognised'],
+  find:      ['sunk', 'search', 's_32_find', '', 'Finding the Bach cello suites'],
+  plan:      ['tint2', 'timer', 's_01_library', 'p_28_plan', 'The library and the weekly practice plan'],
+};
+const INV = new Set(['navy', 'deep']);
+F.forEach((f) => { const x = X[f.id]; Object.assign(f, { tone: x[0], icon: x[1], shot: x[2], float: x[3], cap: x[4] }); });
+const ic = (id, cls = 'i') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+
+const drawer = document.getElementById('drawer');
+const phone = () => matchMedia('(max-width: 760px)').matches;
+const els = [], n = F.length;
+F.forEach((f, i) => {
+  const b = document.createElement('button');
+  b.className = 'folder'; b.dataset.id = f.id;
+  b.style.setProperty('--c-bg', `var(--t-${f.tone})`); b.style.setProperty('--c-ink', INV.has(f.tone) ? 'var(--t-ink-inv)' : 'var(--t-ink)');
+  b.setAttribute('aria-label', `${f.title}: ${f.lead}`);
+  b.innerHTML = `<span class="tab">${ic(f.icon)}<small>${String(i + 1).padStart(2, '0')} / ${f.title}</small></span>
+    <span class="strip"><span class="name">${f.title}</span><span class="foot-s"><span class="bars" aria-hidden="true"></span><span class="num">${String(i + 1).padStart(2, '0')}</span></span></span>
+    <span class="peek"><img src="img/${f.shot}.webp" alt="" decoding="async" loading="lazy"></span>`;
+  b.addEventListener('click', () => openFolder(i, b));
+  b.addEventListener('mouseenter', () => hover(i));
+  b.addEventListener('focus', () => hover(i));
+  drawer.append(b); els.push(b);
+});
+const cover = document.createElement('div');
+cover.className = 'folder cover';
+cover.innerHTML = `<div class="inner">
+    <div class="brand"><b>Stand</b><span>iPad &middot; iPhone</span></div>
+    <div style="display:grid;gap:16px;align-content:center">
+      <h1>The music stand that practises with you.</h1>
+      <p>Read and mark your scores, turn pages hands-free, tune, keep time, film yourself and plan your week. Then keep notebooks and write your own music, in the same place.</p>
+      <span class="cta">Coming to the App Store</span>
+    </div>
+    <div class="tiles">${F.map((f, i) => `<button data-open="${i}">${ic(f.icon)}${f.title}</button>`).join('')}</div>
+  </div>`;
+drawer.append(cover);
+cover.querySelectorAll('[data-open]').forEach((t) => t.addEventListener('click', () => { const i = +t.dataset.open; openFolder(i, phone() ? els[i] : t); }));
+drawer.addEventListener('mouseleave', () => hover(-1));
+
+function place() {
+  if (phone()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); return; }
+  const W = drawer.clientWidth, coverW = Math.min(560, Math.max(400, W * 0.4));
+  const strip = Math.max(46, (W - coverW - 32) / n);
+  const fw = Math.min(540, W * 0.42);
+  const H = drawer.clientHeight, step = Math.min(66, (H - 170 - 40 - H * 0.36) / 3);
+  els.forEach((e, i) => { e.style.setProperty('--tab-y', Math.round(H * 0.36 + (i % 4) * step) + 'px'); e.style.left = (32 + i * strip) + 'px'; e.style.width = fw + 'px'; e.style.zIndex = i + 1; e.style.setProperty('--strip', strip + 'px'); });
+  cover.style.left = (W - coverW) + 'px'; cover.style.width = coverW + 'px'; cover.style.zIndex = n + 2;
+  drawer.style.setProperty('--shift', Math.min(240, fw - strip - 40) + 'px');
+}
+function hover(k) { if (phone()) return; els.forEach((e, i) => { e.classList.toggle('lift', i === k); e.classList.toggle('shift', k >= 0 && i > k); }); }
+addEventListener('resize', place); place();
+
+const sheet = document.getElementById('sheet'), body = document.getElementById('sheetBody');
+const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let cur = -1, busy = false, from = null;
+function fill(i) {
+  const f = F[i], prev = F[(i + n - 1) % n], next = F[(i + 1) % n];
+  sheet.style.setProperty('--c-bg', `var(--t-${f.tone})`);
+  document.getElementById('sheetBar').innerHTML = `${ic(f.icon)}<span>${f.title}</span>`;
+  body.innerHTML = `<div class="text reveal">
+      <span class="eyebrow">${ic(f.icon)}${String(i + 1).padStart(2, '0')} of ${n}</span>
+      <h2 id="sheetTitle">${f.title}</h2>
+      <p class="lead">${f.lead}</p>
+      <div class="card"><ul>${f.pts.map(([h, t], k) => `<li><span class="k">${k + 1}</span><span><b>${h}.</b> ${t}</span></li>`).join('')}</ul></div>
+      ${f.id === 'scores' || f.id === 'markings' ? '<p class="note">Shown: J. S. Bach, Minuet in G, BWV Anh. 114, and Cello Suite No. 1, BWV 1007.</p>' : ''}
+    </div>
+    <div class="pics reveal"><div class="dev"><div class="ipad"><img src="img/${f.shot}.webp" alt="${f.cap}" decoding="async"></div>${f.float ? `<div class="float"><img src="img/${f.float}.webp" alt="" decoding="async"></div>` : ''}</div><p class="cap">${f.cap}</p></div>
+    <div class="next"><button data-go="${(i + n - 1) % n}"><span class="ic">${ic(prev.icon)}</span><span><small>Previous</small><b>${prev.title}</b></span></button><button data-go="${(i + 1) % n}"><span class="ic">${ic(next.icon)}</span><span><small>Next</small><b>${next.title}</b></span></button></div>`;
+  body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
+  requestAnimationFrame(room);
+}
+function room() {
+  const p = body.querySelector('.pics'); if (!p) return;
+  const fl = p.querySelector('.float'), ip = p.querySelector('.ipad');
+  if (!fl || !ip) { p.querySelector('.dev').style.setProperty('--room', '0px'); return; }
+  const over = fl.offsetHeight - ip.offsetHeight * 0.55;
+  fl.style.bottom = (-Math.max(0, over)) + 'px';
+  p.querySelector('.dev').style.setProperty('--room', Math.max(0, over) + 'px');
+}
+addEventListener('resize', () => { if (!sheet.hidden) room(); });
+const clip = (r) => `inset(${Math.max(0, r.top)}px ${Math.max(0, innerWidth - r.right)}px ${Math.max(0, innerHeight - r.bottom)}px ${Math.max(0, r.left)}px round 18px)`;
+async function openFolder(i, el) {
+  if (busy) return; busy = true; cur = i; from = el;
+  fill(i);
+  try { history.replaceState(null, '', '#' + F[i].id); } catch {}
+  if (reduce()) { sheet.hidden = false; sheet.classList.add('in'); document.body.style.overflow = 'hidden'; room(); busy = false; document.getElementById('closeBtn').focus(); return; }
+  if (el.classList.contains('folder')) { el.classList.remove('shift'); el.classList.add('pull'); await new Promise((r) => setTimeout(r, 200)); }
+  const r = el.getBoundingClientRect();
+  sheet.hidden = false; sheet.scrollTop = 0; document.body.style.overflow = 'hidden'; room();
+  const a = sheet.animate([{ clipPath: clip(r) }, { clipPath: 'inset(0px 0px 0px 0px round 0px)' }], { duration: 560, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  setTimeout(() => sheet.classList.add('in'), 200);
+  await a.finished.catch(() => {});
+  el.classList.remove('pull'); busy = false;
+  document.getElementById('closeBtn').focus();
+}
+async function closeFolder() {
+  if (busy || sheet.hidden) return; busy = true;
+  const el = (from && from.isConnected) ? from : els[cur];
+  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+  if (!reduce() && el) {
+    sheet.classList.remove('in');
+    const a = sheet.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clip(el.getBoundingClientRect()) }], { duration: 420, easing: 'cubic-bezier(.4,0,.2,1)' });
+    await a.finished.catch(() => {});
+  }
+  sheet.hidden = true; sheet.classList.remove('in'); document.body.style.overflow = '';
+  busy = false; if (el) el.focus({ preventScroll: true });
+}
+function go(i) {
+  if (busy) return; cur = i; from = els[i];
+  const run = () => { fill(i); sheet.scrollTop = 0; try { history.replaceState(null, '', '#' + F[i].id); } catch {} };
+  if (reduce()) { run(); return; }
+  sheet.classList.remove('in');
+  setTimeout(() => { run(); requestAnimationFrame(() => requestAnimationFrame(() => sheet.classList.add('in'))); }, 220);
+}
+document.getElementById('closeBtn').addEventListener('click', closeFolder);
+document.getElementById('prevBtn').addEventListener('click', () => go((cur + n - 1) % n));
+document.getElementById('nextBtn').addEventListener('click', () => go((cur + 1) % n));
+addEventListener('keydown', (e) => {
+  if (sheet.hidden) return;
+  if (e.key === 'Escape') closeFolder();
+  if (e.key === 'ArrowRight') go((cur + 1) % n);
+  if (e.key === 'ArrowLeft') go((cur + n - 1) % n);
+});
+const start = F.findIndex((f) => '#' + f.id === location.hash);
+if (start >= 0) { fill(start); cur = start; from = els[start]; sheet.hidden = false; sheet.classList.add('in'); document.body.style.overflow = 'hidden'; }
+</script>
