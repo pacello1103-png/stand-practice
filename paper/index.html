@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stand · The music stand that practises with you</title>
+<meta property="og:type" content="website">
+<meta property="og:title" content="Stand · The music stand that practises with you">
+<meta property="og:description" content="Read and mark your scores, turn pages hands-free, tune, practise, record yourself and write music. For iPad and iPhone.">
+<meta property="og:url" content="https://pacello1103-png.github.io/stand-practice/paper/">
+<meta property="og:image" content="https://pacello1103-png.github.io/stand-practice/og-paper.jpg">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="https://pacello1103-png.github.io/stand-practice/icon.png">
+
+
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Stand is a music stand, practice room and writing desk for iPad and iPhone.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+svg.i { width: 20px; height: 20px; flex: none; }
+button { font: inherit; }
+.wrap { max-width: 1400px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.drawer { position: relative; height: clamp(560px, 76vh, 780px); margin-block: 26px 18px; overflow-x: clip; }
+.folder { position: absolute; top: 0; bottom: 0; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left; transition: transform .55s var(--ease); will-change: transform; }
+.folder.lift { transform: translateY(-14px); }
+.folder.shift { transform: translateX(var(--shift, 150px)); }
+.folder.pull { transform: translateY(-46px); transition-duration: .22s; }
+.folder .strip { position: absolute; left: 0; top: 0; bottom: 0; width: var(--strip, 70px); display: flex; flex-direction: column; justify-content: space-between; padding: 24px 0 22px; }
+.folder .peek { position: absolute; left: calc(var(--strip, 70px) + 8px); right: 18px; top: 22px; bottom: 22px; overflow: hidden; }
+.folder .peek img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; display: block; transition: filter .5s, opacity .5s, transform .8s var(--ease); }
+.folder:hover .peek img, .folder:focus-visible .peek img { transform: scale(1.03); }
+.folder .contents { list-style: none; margin: 0; padding: 0 40px 0 20px; display: grid; gap: 5px; }
+.folder .name { align-self: flex-start; }
+.cover { cursor: default; }
+.cover::before { display: none; }
+
+/* ---------- open folder ---------- */
+.sheet { position: fixed; inset: 0; z-index: 30; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; background: var(--s-bg); color: var(--s-ink); }
+.sheet .bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding-block: calc(12px + env(safe-area-inset-top, 0px)) 12px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); transition: background .3s, box-shadow .3s; }
+.sheet.scrolled .bar { background: var(--bar-bg); box-shadow: 0 1px 0 var(--s-rule); backdrop-filter: saturate(1.6) blur(18px); -webkit-backdrop-filter: saturate(1.6) blur(18px); }
+.bar .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; white-space: nowrap; overflow: hidden; }
+.bar .t > span { display: flex; align-items: center; gap: 10px; }
+.bar .ch-name { opacity: 0; transform: translateY(8px); transition: opacity .35s var(--ease), transform .45s var(--ease); color: var(--s-muted); overflow: hidden; text-overflow: ellipsis; }
+.sheet.scrolled .bar .ch-name.show { opacity: 1; transform: none; }
+.bar .ch-name::before { content: "/"; margin-right: 10px; opacity: .5; }
+.bar .progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 100%; transform-origin: 0 50%; transform: scaleX(var(--p, 0)); background: var(--s-accent); opacity: .8; }
+.icon { width: 40px; height: 40px; flex: none; border-radius: 12px; border: 0; display: grid; place-items: center; cursor: pointer; background: var(--icon-bg); color: inherit; transition: background .2s, transform .2s; }
+.icon:hover { background: var(--icon-bg-h); }
+.icon:active { transform: scale(.94); }
+.icon svg { width: 18px; height: 18px; }
+
+.sbody { max-width: 1240px; margin: 0 auto; padding-left: max(22px, env(safe-area-inset-left, 0px)); padding-right: max(22px, env(safe-area-inset-right, 0px)); }
+.hero { min-height: calc(100vh - 66px); min-height: calc(100svh - 66px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 56px; padding-block: 30px 40px; position: relative; }
+.htext { display: grid; justify-items: start; gap: 22px; min-width: 0; }
+.hdev { min-width: 0; transform: translateY(40px) scale(.94) rotate(-1.5deg); }
+.sheet.in .hdev.in { transform: translateY(calc(var(--p, 0) * -160px)) rotate(-1.5deg); transition: opacity .9s .25s var(--ease), transform 1.1s .2s var(--ease); }
+.hero h2 { margin: 0; }
+.hero .lead { margin: 0; max-width: 30ch; text-wrap: pretty; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 10px; width: 100%; margin-top: 10px; }
+.tiles button { display: flex; align-items: center; gap: 12px; min-height: 62px; padding: 12px 16px; border: 0; border-radius: var(--tile-r, 16px); background: var(--tile-bg); color: var(--tile-ink); box-shadow: var(--tile-sh); cursor: pointer; text-align: left; font-weight: 600; font-size: 15px; transition: transform .35s var(--ease), background .25s, box-shadow .3s; }
+.tiles button svg { width: 24px; height: 24px; color: var(--tile-icon); }
+.tiles button:hover { transform: translateY(-3px); box-shadow: var(--tile-sh-h); }
+.tiles button:active { transform: scale(.97); }
+.scrollhint { display: inline-flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--s-muted); }
+.scrollhint i { width: 1px; height: 30px; background: currentColor; transform-origin: top; animation: hint 2s var(--ease) infinite; }
+@keyframes hint { 0% { transform: scaleY(0); } 50% { transform: scaleY(1); transform-origin: top; } 51% { transform-origin: bottom; } 100% { transform: scaleY(0); transform-origin: bottom; } }
+
+.story { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; }
+.ch { min-height: 86vh; display: flex; align-items: center; padding-block: 8vh; }
+.chin { display: grid; gap: 16px; max-width: 470px; transition: opacity .6s var(--ease); }
+.ch:not(.now) .chin { opacity: .3; }
+.kicker { display: inline-flex; align-items: center; gap: 8px; justify-self: start; }
+.kicker svg { width: 18px; height: 18px; }
+.ch h3 { margin: 0; text-wrap: balance; }
+.ch p { margin: 0; text-wrap: pretty; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips span { padding: 7px 12px; border-radius: 999px; background: var(--s-card); font-size: 14px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.sq { display: grid; gap: 3px; align-content: start; padding: 13px 14px; border-radius: var(--tile-r, 14px); background: var(--s-card); min-height: 74px; }
+.sq b { font-weight: 600; font-size: 15px; }
+.sq span { font-size: 13.5px; line-height: 1.35; color: var(--s-muted); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.steps li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--tile-r, 14px); background: var(--s-card); font-weight: 500; }
+.steps li span { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--s-accent); color: var(--s-accent-ink); font-size: 13px; font-weight: 700; }
+.inline { display: none; }
+
+.media { position: relative; }
+.stage { position: sticky; top: 0; height: 100vh; height: 100svh; display: grid; align-items: center; }
+.dev { grid-area: 1 / 1; justify-self: center; transition: opacity .7s var(--ease), transform .9s var(--ease), filter .7s var(--ease); }
+.media .dev.after { opacity: 0; transform: translateY(60px) scale(.96); filter: blur(8px); }
+.media .dev.before { opacity: 0; transform: translateY(-60px) scale(.96); filter: blur(8px); }
+.media .dev.on { opacity: 1; transform: none; filter: none; }
+.ipad { width: 100%; padding: 12px; border-radius: 28px; background: var(--bezel); box-shadow: 0 40px 80px -36px rgba(10, 14, 30, .55), 0 0 0 1px rgba(255, 255, 255, .06) inset; }
+.ipad img { display: block; width: 100%; height: auto; aspect-ratio: 1400 / 973; object-fit: cover; border-radius: 17px; background: #eceef3; }
+.phone { width: min(300px, 46%); padding: 10px; border-radius: 46px; background: var(--bezel); box-shadow: 0 40px 80px -36px rgba(10, 14, 30, .55); }
+.phone img { display: block; width: 100%; height: auto; border-radius: 37px; background: #f2f3f7; }
+.media .phone { height: min(76vh, 640px); width: auto; }
+.media .phone img { height: 100%; width: auto; }
+
+.nextf { display: grid; gap: 18px; padding-block: 12vh 70px; }
+.nextcard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: stretch; gap: 0; padding: 0; border: 0; border-radius: 26px; overflow: hidden; background: var(--next-bg); color: var(--next-ink); cursor: pointer; text-align: left; transition: transform .5s var(--ease), box-shadow .5s var(--ease); box-shadow: var(--tile-sh); }
+.nextcard:hover { transform: translateY(-4px); box-shadow: var(--tile-sh-h); }
+.nextcard .nt { display: grid; align-content: center; gap: 8px; padding: 34px 36px; }
+.nextcard small { font-size: 13px; opacity: .7; }
+.nextcard em { font-style: normal; opacity: .75; max-width: 34ch; }
+.nextcard .np { position: relative; overflow: hidden; min-height: 240px; }
+.nextcard .np img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 30% 20%; transition: transform 1s var(--ease); }
+.nextcard:hover .np img { transform: scale(1.05); }
+.others { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.others button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 999px; border: 0; cursor: pointer; background: var(--s-card); color: inherit; font-weight: 500; transition: background .2s; }
+.others button svg { width: 18px; height: 18px; }
+.others button[aria-current] { background: var(--s-accent); color: var(--s-accent-ink); }
+
+/* ---------- motion ---------- */
+.rv { opacity: 0; transform: translateY(26px); transition: opacity .7s var(--ease), transform .9s var(--ease); }
+.sheet.in .rv.in { opacity: 1; transform: none; }
+.rv.grid > *, .rv.chips > *, .rv.steps > *, .rv.tiles > * { opacity: 0; transform: translateY(14px) scale(.98); transition: opacity .5s var(--ease), transform .7s var(--ease), background .25s, box-shadow .3s; }
+.sheet.in .rv.in.grid > *, .sheet.in .rv.in.chips > *, .sheet.in .rv.in.steps > *, .sheet.in .rv.in.tiles > * { opacity: 1; transform: none; }
+.rv > *:nth-child(2) { transition-delay: .05s; } .rv > *:nth-child(3) { transition-delay: .1s; } .rv > *:nth-child(4) { transition-delay: .15s; }
+.rv > *:nth-child(5) { transition-delay: .2s; } .rv > *:nth-child(6) { transition-delay: .25s; } .rv > *:nth-child(7) { transition-delay: .3s; } .rv > *:nth-child(8) { transition-delay: .35s; }
+.hero .rv:nth-child(2) { transition-delay: .06s; } .hero .rv:nth-child(3) { transition-delay: .12s; } .hero .rv:nth-child(4) { transition-delay: .18s; } .hero .rv:nth-child(5) { transition-delay: .5s; }
+.sheet.in .tiles.in > *:hover { transform: translateY(-3px); transition-delay: 0s; }
+.sheet .sbody { transition: opacity .3s var(--ease), transform .4s var(--ease); }
+.sheet.leaving .sbody { opacity: 0; transform: translateY(-24px); }
+
+@media (max-width: 900px) {
+  .story { grid-template-columns: 1fr; gap: 0; }
+  .media { display: none; }
+  .ch { min-height: 0; padding-block: 44px; }
+  .ch:not(.now) .chin { opacity: 1; }
+  .chin { max-width: 640px; }
+  .inline { display: block; margin-top: 8px; }
+  .inline .ipad { padding: 7px; border-radius: 18px; }
+  .inline .ipad img { border-radius: 12px; }
+  .inline .phone { width: min(240px, 62%); margin: 0 auto; border-radius: 36px; padding: 8px; }
+  .inline .phone img { border-radius: 29px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero { min-height: 0; padding-block: 24px 20px; grid-template-columns: 1fr; }
+  .hdev { display: none; }
+  .nextcard { grid-template-columns: 1fr; }
+  .nextcard .np { min-height: 180px; }
+  .nextcard .nt { padding: 24px 22px; }
+}
+@media (max-width: 760px) {
+  .drawer { height: auto; display: grid; margin-top: 14px; }
+  .folder { position: relative; inset: auto; height: auto; min-height: 112px; margin-top: -16px; transform: none; }
+  .folder::before, .folder .tab, .folder .peek { display: none; }
+  .folder .strip { position: relative; width: auto; flex-direction: column; justify-content: flex-start; gap: 8px; padding: 20px 20px 30px; }
+  .folder.shift, .folder.lift { transform: none; }
+  .folder.pull { transform: translateY(-6px); }
+  .cover { order: -1; margin: 0 0 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .folder, .rv, .rv > *, .dev, .chin, .sbody { transition: none !important; }
+  .scrollhint i { animation: none; }
+}
+
+:root {
+  --ground: #7c7666; --ink: #1f1e1b; --ink-soft: #4a473f; --line: rgba(31, 30, 27, .16); --accent: #23397a; --on-ground: #f3efe6;
+  --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "Hanken Grotesk", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --bezel: #1b1a17;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ground: #262420; --on-ground: #eee9de; color-scheme: dark; } }
+:root[data-theme="dark"] { --ground: #262420; --on-ground: #eee9de; color-scheme: dark; }
+body { background: var(--ground); color: var(--on-ground); font: 400 16px/1.55 var(--body); }
+.mono { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-block: 18px 6px; }
+.top .mono { opacity: .8; }
+.top b { font: 800 18px/1 var(--display); font-stretch: 80%; letter-spacing: .02em; text-transform: uppercase; }
+
+.folder { border-radius: 14px 18px 18px 14px; color: var(--c-ink); background: var(--c-bg) var(--grain); background-blend-mode: multiply; box-shadow: -10px 0 24px -12px rgba(0, 0, 0, .55), inset 1px 0 0 rgba(255, 255, 255, .25); }
+.folder::before { content: ""; position: absolute; left: -30px; top: var(--tab-y, 40px); width: 34px; height: 170px; background: inherit; background-blend-mode: multiply; border-radius: 12px 0 0 12px; box-shadow: -6px 0 12px -8px rgba(0, 0, 0, .45); }
+.folder .tab { position: absolute; left: -26px; top: var(--tab-y, 40px); height: 170px; width: 26px; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; z-index: 2; font: 500 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; opacity: .85; white-space: nowrap; }
+.folder .name { writing-mode: vertical-rl; padding-left: 22px; font: 800 40px/1 var(--display); font-stretch: 68%; letter-spacing: .005em; text-transform: uppercase; white-space: nowrap; }
+.folder .sb { display: grid; gap: 14px; }
+.folder .contents li { font: 500 10.5px/1.25 var(--mono); letter-spacing: .07em; text-transform: uppercase; opacity: .72; }
+.folder .contents li::before { content: "— "; opacity: .5; }
+.folder .bars { margin-left: 20px; width: 26px; height: 22px; background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px, currentColor 4px 5px, transparent 5px 8px); opacity: .5; }
+.folder .num { padding-left: 20px; font: 500 10px/1 var(--mono); letter-spacing: .1em; opacity: .7; }
+.folder .peek { border-radius: 6px; background: rgba(0, 0, 0, .08); }
+.folder .peek img { filter: grayscale(.6) sepia(.2) contrast(.95); mix-blend-mode: multiply; }
+.folder:hover .peek img, .folder:focus-visible .peek img { filter: none; mix-blend-mode: normal; }
+
+.cover { color: var(--ink); background: #b9b2a2 var(--grain); background-blend-mode: multiply; }
+.cover .inner { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto; padding: 30px 30px 26px 112px; gap: 18px; }
+.cover .big { position: absolute; left: 18px; top: 26px; bottom: 26px; writing-mode: vertical-rl; transform: rotate(180deg); font: 900 96px/.86 var(--display); font-stretch: 62%; text-transform: uppercase; white-space: nowrap; display: flex; align-items: center; }
+.cover h1 { margin: 0; font: 700 clamp(30px, 3vw, 44px)/1.02 var(--display); font-stretch: 76%; text-wrap: balance; max-width: 15ch; }
+.cover p { margin: 0; max-width: 34ch; color: var(--ink-soft); }
+.cover .meta { display: grid; gap: 4px; font: 500 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.cover .meta span { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 6px; }
+.cover .cta { display: inline-flex; align-items: center; gap: 10px; justify-self: start; padding: 11px 18px; border-radius: 999px; background: var(--accent); color: #fff; font: 600 14px/1 var(--body); }
+.cover .hint { font: 500 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); display: flex; align-items: center; gap: 8px; }
+.cover .hint i { width: 28px; height: 1px; background: currentColor; display: inline-block; }
+
+.also { display: flex; flex-wrap: wrap; gap: 10px 26px; padding-block: 6px 26px; }
+.also span { display: inline-flex; align-items: center; gap: 8px; font: 500 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
+.also svg { width: 16px; height: 16px; }
+.foot { display: grid; grid-template-columns: 1.3fr 1fr; gap: 28px 48px; padding-block: 26px 48px; border-top: 1px solid rgba(243, 239, 230, .18); }
+.foot p { margin: 0; max-width: 62ch; opacity: .82; font-size: 14px; }
+.foot nav { display: flex; gap: 18px; flex-wrap: wrap; justify-content: flex-end; align-items: start; }
+.foot nav a { text-decoration: none; border-bottom: 1px solid rgba(243, 239, 230, .4); padding-bottom: 2px; }
+
+/* open folder */
+.sheet { background: var(--c-bg) var(--grain); background-blend-mode: multiply; color: var(--c-ink); font-family: var(--body);
+  --s-bg: var(--c-bg); --s-ink: var(--c-ink); --s-muted: color-mix(in srgb, var(--c-ink) 66%, transparent); --s-rule: color-mix(in srgb, var(--c-ink) 18%, transparent);
+  --s-card: color-mix(in srgb, var(--c-ink) 8%, transparent); --s-accent: var(--c-ink); --s-accent-ink: var(--c-bg);
+  --tile-bg: color-mix(in srgb, var(--c-ink) 7%, transparent); --tile-ink: var(--c-ink); --tile-icon: var(--c-ink); --tile-r: 10px;
+  --tile-sh: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 14%, transparent); --tile-sh-h: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 30%, transparent), 0 16px 30px -18px rgba(0, 0, 0, .5);
+  --bar-bg: color-mix(in srgb, var(--c-bg) 88%, transparent); --icon-bg: transparent; --icon-bg-h: color-mix(in srgb, var(--c-ink) 10%, transparent); }
+.sheet .icon { box-shadow: inset 0 0 0 1px var(--s-rule); }
+.bar .t { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.bar .t svg { width: 16px; height: 16px; }
+.hero h2 { font: 900 clamp(70px, 12vw, 190px)/.84 var(--display); font-stretch: 62%; text-transform: uppercase; letter-spacing: -.01em; }
+.hero .lead { font: 500 clamp(19px, 1.9vw, 25px)/1.32 var(--body); max-width: 32ch; }
+.eyebrow { display: inline-flex; align-items: center; gap: 10px; font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; opacity: .8; }
+.eyebrow i { width: 34px; height: 1px; background: currentColor; }
+.tiles button { font: 600 14px/1.2 var(--body); }
+.scrollhint { font-family: var(--mono); }
+.kicker { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; opacity: .75; }
+.ch h3 { font: 800 clamp(36px, 3.8vw, 58px)/.94 var(--display); font-stretch: 70%; text-transform: uppercase; letter-spacing: -.003em; }
+.ch p { font-size: 17.5px; line-height: 1.55; max-width: 42ch; }
+.chips span { font: 500 11.5px/1.2 var(--mono); letter-spacing: .05em; text-transform: uppercase; padding: 8px 11px; border-radius: 6px; }
+.sq { border-radius: 8px; }
+.sq b { font-family: var(--display); font-stretch: 80%; font-weight: 700; font-size: 17px; text-transform: uppercase; letter-spacing: .01em; }
+.steps li { border-radius: 8px; }
+.ipad { border-radius: 22px; }
+.ipad img { border-radius: 12px; }
+.nextcard { --next-bg: var(--c-bg); --next-ink: var(--c-ink); background: var(--c-bg) var(--grain); background-blend-mode: multiply; border-radius: 14px; box-shadow: 0 30px 60px -30px rgba(0, 0, 0, .55); }
+.nextcard b { font: 900 clamp(48px, 6vw, 88px)/.88 var(--display); font-stretch: 62%; text-transform: uppercase; }
+.nextcard small { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.nextcard .np img { filter: grayscale(.4) sepia(.15); }
+.others button { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; border-radius: 6px; }
+
+@media (max-width: 760px) {
+  .folder { border-radius: 16px 16px 0 0; box-shadow: 0 -10px 20px -14px rgba(0, 0, 0, .6); }
+  .folder .name { writing-mode: horizontal-tb; padding-left: 0; font-size: 32px; }
+  .folder .sb { gap: 0; }
+  .folder .contents { padding: 0; display: block; }
+  .folder .contents li { display: inline; white-space: normal; }
+  .folder .contents li::before { content: ""; }
+  .folder .contents li + li::before { content: " · "; }
+  .folder .bars, .folder .num { display: none; }
+  .folder:nth-last-child(2) { border-radius: 16px; }
+  .cover { border-radius: 18px 18px 0 0; }
+  .cover .inner { padding: 26px 22px 34px; }
+  .cover .big { position: static; writing-mode: horizontal-tb; transform: none; font-size: clamp(50px, 16vw, 80px); display: block; }
+  .foot { grid-template-columns: 1fr; }
+  .foot nav { justify-content: flex-start; }
+  .cover .inner { position: relative; inset: auto; }
+}
+
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-lib" viewBox="0 0 24 24"><path d="M5 4h4v16H5z M11 4h4v16h-4z M16.5 5.2l3.8-1 3.7 15.5-3.8 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" transform="translate(-1 0)"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 9a8 8 0 0 1 14-3l2 2 M20 4v4h-4 M20 15a8 8 0 0 1-14 3l-2-2 M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7" fill="currentColor"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><circle cx="19" cy="12" r="1.7" fill="currentColor"/></symbol>
+<symbol id="i-pages" viewBox="0 0 24 24"><rect x="4" y="3" width="11" height="15" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 21h9.5a1.5 1.5 0 0 0 1.5-1.5V8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><rect x="3.5" y="5" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="9" width="7" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 10h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M12.4 8.6l1.4 1.4-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-perform" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.4" fill="currentColor"/></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z M14 7l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+<symbol id="i-hl" viewBox="0 0 24 24"><path d="M9 14l-3 3v3h3l3-3 M9 14l7-9 4 4-8 8 M6 21h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+<symbol id="i-finger" viewBox="0 0 24 24"><path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V10 M12 9.5a1.5 1.5 0 0 1 3 0V11 M15 10.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L4.3 15.6a1.5 1.5 0 0 1 2.3-1.9L9 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-lasso" viewBox="0 0 24 24"><path d="M12 4c5 0 8.5 2.4 8.5 5.5S17 15 12 15s-8.5-2.4-8.5-5.5S7 4 12 4z M6.5 13.6c-1 1.4-.6 3.3 1 4.2 1.4.8 2 2.2 1.5 3.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.4" stroke-linecap="round"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-passage" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.2"/><path d="M7 14l3-3 2.5 2 2.5-4 2 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-jump" viewBox="0 0 24 24"><path d="M5 18V9a4 4 0 0 1 4-4h8 M14 2l3 3-3 3 M5 18h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-reps" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3 M20 4v4h-4 M20 12a8 8 0 0 1-14 5.3 M4 20v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-metro" viewBox="0 0 24 24"><path d="M9 3h6l4 18H5L9 3z M7.2 16h9.6 M12 15l5-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+<symbol id="i-scales" viewBox="0 0 24 24"><path d="M3 20h4v-4h4v-4h4V8h4V4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10 M9.3 20V4 M14.6 20v-7 M20 20v-11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 13.5V9.5 M9.5 2.8h5 M12 2.8v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="i-fork" viewBox="0 0 24 24"><path d="M8 3v8a4 4 0 0 0 8 0V3 M12 15v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-harm" viewBox="0 0 24 24"><path d="M4 20V6 M9 20v-9 M14 20v-6 M19 20v-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+<symbol id="i-drone" viewBox="0 0 24 24"><path d="M3 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0 M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 10.5l5-3v9l-5-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+<symbol id="i-takes" viewBox="0 0 24 24"><path d="M4 12h1.5M7.5 8v8M11 5v14M14.5 9v6M18 7v10M21 11v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-ear" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="10.5" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0 M12 17.5V20.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+<symbol id="i-compose" viewBox="0 0 24 24"><path d="M3 7h11M3 11h9M3 15h7M3 19h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.5 19.5l.8-3.3 6.4-6.4a1.6 1.6 0 0 1 2.3 2.3l-6.4 6.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+<symbol id="i-instruments" viewBox="0 0 24 24"><g transform="rotate(38 12 12)" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10.2c-1.75 0-2.7.95-2.7 2.15 0 .85.75 1.25.75 1.85s-1.65 1.05-1.65 2.95c0 2.2 1.65 3.85 3.6 3.85s3.6-1.65 3.6-3.85c0-1.9-1.65-2.35-1.65-2.95s.75-1 .75-1.85c0-1.2-.95-2.15-2.7-2.15z"/><path d="M12 10.2V3.6"/><path d="M12 3.6c0-.9.5-1.4 1.1-1.4"/><path d="M10.8 17.2h2.4"/></g></symbol>
+<symbol id="i-layout" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 8h8M8 10h8M8 14h8M8 16h8" stroke="currentColor" stroke-width="1.1"/></symbol>
+<symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12 M7.5 7.5L12 3l4.5 4.5 M6 11H5v10h14V11h-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-capture" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7 10h10M7 12h10M7 14h10" stroke="currentColor" stroke-width="1" opacity=".75"/><circle cx="10" cy="13.4" r="1.15" fill="currentColor"/><path d="M11.1 13.4V9.6" stroke="currentColor" stroke-width="1"/></symbol>
+<symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z M15 3v4h4 M8.5 10h8 M8.5 12h8 M8.5 14h8 M8.5 16h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+<symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".55"/><rect x="3.8" y="12" width="4.4" height="3" rx="1.2" fill="currentColor"/><rect x="9.8" y="7" width="4.4" height="3" rx="1.2" fill="currentColor"/><rect x="15.8" y="14" width="4.4" height="3" rx="1.2" fill="currentColor"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.5 9.6 4.5 4.5 0 0 0 7 18.5z M12 16v-5.5 M9.8 12.5 12 10.3l2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-sync" viewBox="0 0 24 24"><path d="M3 12h3l2-5 3 10 3-8 2 3h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+<div class="wrap">
+  <header class="top"><b>Stand</b><span class="mono">For iPad and iPhone · v2.9</span></header>
+  <main class="drawer" id="drawer" aria-label="What Stand does"></main>
+  <section class="also" id="also" aria-label="Also in Stand"></section>
+  <footer class="foot">
+    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. Coming to the App Store, for iPadOS and iOS 15 or later. Example scores by J. S. Bach: Minuet in G (BWV Anh. 114) and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007). Music font: Bravura (SIL Open Font License).</p>
+    <nav aria-label="More"><a href="../privacy.html">Privacy policy</a><span>&copy; 2026 Stand</span></nav>
+  </footer>
+</div>
+<section class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle">
+  <div class="bar">
+    <span class="t"><span id="barTitle"></span><span class="ch-name" id="barCh"></span></span>
+    <button class="icon" id="prevBtn" aria-label="Previous folder"><svg><use href="#i-chev-l"/></svg></button>
+    <button class="icon" id="nextBtn" aria-label="Next folder"><svg><use href="#i-chev-r"/></svg></button>
+    <button class="icon" id="closeBtn" aria-label="Close"><svg><use href="#i-x"/></svg></button>
+    <div class="progress"></div>
+  </div>
+  <div class="sbody" id="sheetBody"></div>
+</section>
+<script>
+const F = [
+  { id: 'read', icon: 'lib', title: 'Read', shot: '02_score',
+    lead: 'Your scores on the stand, two pages at a time, turned without lifting a hand.',
+    ch: [
+      { id: 'library', icon: 'lib', name: 'Library', shot: '01_library',
+        h: 'Every score in one place.',
+        p: 'Import PDFs and photos, or scan pages with the camera. Stand evens out the light and makes the paper white, so a photo reads like a clean copy.',
+        chips: ['Import from Files', 'Scan with the camera', 'Folders', 'Search by title or composer'] },
+      { id: 'find', icon: 'search', name: 'Find a score', shot: '32_find',
+        h: 'Any public-domain piece in seconds.',
+        p: 'Search the IMSLP library by composer and piece. Choose the best version for your instrument and it lands in your library, ready to read and mark.',
+        steps: ['Type “Bach cello suite”', 'Choose your instrument', 'Tap a result'] },
+      { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score',
+        h: 'Six ways to turn the page.',
+        p: 'Two pages side by side in landscape, one in portrait. Turn them in whatever way suits the moment.',
+        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye on, left eye back'], ['Listening', 'Follows your playing (Beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
+      { id: 'thisscore', icon: 'more', name: 'This score', shot: '03_more',
+        h: 'Each score set up the way you read it.',
+        p: 'Half-page turns show the top of the next page while you finish this one, so you never wait for a turn.',
+        grid: [['Half-page turns', 'See what comes next'], ['Repeats and jumps', 'D.C., repeats, codas'], ['Bookmarks', 'Jump to a movement'], ['Paper', 'White, warm or night'], ['Bigger music', 'No white margins'], ['Export PDF', 'With or without markings']] },
+      { id: 'pages', icon: 'pages', name: 'Pages', shot: '04_pages',
+        h: 'Fix the edition, not just read it.',
+        p: 'Crop a page to the music you need, cut it between systems, or move lines up so the page turn falls in a better place. Delete a page with one tap, and Undo is right there.',
+        chips: ['Crop', 'Cut between systems', 'Move lines up', 'Delete and undo'] },
+      { id: 'sets', icon: 'set', name: 'Sets', shot: '23_set_editor',
+        h: 'A whole concert in one reading order.',
+        p: 'Choose pages from different scores for an audition, an exam or a concert. After the last page of one piece, the next score opens at the right page. No new PDF to make.',
+        steps: ['New set, give it a name', 'Add music: tap the first and the last page', 'Play: the pedal takes you through'] },
+      { id: 'perform', icon: 'perform', name: 'Perform', shot: '19_perform',
+        h: 'On stage, only the music.',
+        p: 'Perform hides every tool, so a stray touch never opens anything. Page turns, the pedal and winking still work.' },
+    ] },
+  { id: 'mark', icon: 'pen', title: 'Mark', shot: '07_marked',
+    lead: 'Write on the music with the Apple Pencil, the way you would with a pencil on paper.',
+    ch: [
+      { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar',
+        h: 'The first touch never writes.',
+        p: 'Touch the score with the Pencil and the tools open, nothing more. Your next stroke writes. Your finger still turns pages and zooms, so you never write by accident.',
+        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type a word'], ['Eraser', 'Your markings only'], ['Printed eraser', 'White out the edition'], ['Two colours', 'Black and red, ready']] },
+      { id: 'symbols', icon: 'finger', name: 'Symbols', shot: '06_symbols',
+        h: 'Symbols in one tap.',
+        p: 'Choose a symbol, then tap the music where it goes.',
+        chips: ['pp to ff, sfz, fp', 'Down bow, up bow', 'Fingerings 0–4', 'Strings I–IV', 'Fermata, breath, accent', 'rit., a tempo, pizz., arco', 'Glasses: watch out'] },
+      { id: 'slurs', icon: 'music', name: 'Slurs', shot: '07_marked',
+        h: 'Draw a slur, get an engraved one.',
+        p: 'Draw from the first note to the last. Stand draws a clean, tapered slur, curved above or below, on the side you drew.' },
+      { id: 'select', icon: 'lasso', name: 'Select', shot: '08_selection_bar',
+        h: 'Loop it: move it, copy it, or make it a passage.',
+        p: 'Draw a loop around what you wrote to move, resize, copy or delete it. Loop around bars and Passage is offered first.' },
+      { id: 'clean', icon: 'eye', name: 'Clean copy', shot: '02_score',
+        h: 'Your markings never touch the edition.',
+        p: 'Markings are kept apart from the printed page. Hide them all with the eye, or export the score with them for a student, or as a clean copy.',
+        chips: ['Hide all markings', 'Export with markings', 'Export a clean copy'] },
+    ] },
+  { id: 'practise', icon: 'passage', title: 'Practise', shot: '26_study_running',
+    lead: 'Know what to practise, how fast, and how much you really did.',
+    ch: [
+      { id: 'passages', icon: 'passage', name: 'Passages', shot: '10_passages_panel',
+        h: 'A tempo log for every hard spot.',
+        p: 'Loop the bars, give the passage a type, a start tempo and a target. Log the tempo you managed each day: the bar fills toward the target and a small graph shows your best, day by day.',
+        grid: [['Melodic', 'Sing it clean, then speed'], ['Technical', '+5 bpm when it is clean'], ['Shift', 'Slowly and in rhythm'], ['Rhythm', 'The rhythm alone first'], ['Bowing & breath', 'The pattern on its own'], ['What you missed', 'Left alone or stuck']] },
+      { id: 'session', icon: 'jump', name: 'Practice session', shot: '26_study_running',
+        h: 'All your passages, one page turn apart.',
+        p: 'Give each passage a priority. Stand starts with the high ones and the ones furthest from their target. Turning the page goes to the next passage, in any score, with the whole page shown.',
+        chips: ['High · Medium · Low · Skip', 'High priority twice', 'Across all your scores'] },
+      { id: 'reps', icon: 'reps', name: 'Repetitions', shot: '17_reps',
+        h: 'Count clean runs in a row.',
+        p: 'Tap Clean after a good run and Mistake after a slip, and a mistake starts the count again. Set a goal of 3, 5, 7 or 10.' },
+      { id: 'metronome', icon: 'metro', name: 'Metronome', shot: '14_metronome',
+        h: 'A metronome that does more than click.',
+        p: 'Tap the tempo, accent or silence any beat, and let it turn your pages. It keeps going while you tune, record or switch apps.',
+        grid: [['Meter', '1/4 to 12/8'], ['Subdivision', 'Eighths, triplets, 16ths'], ['Speed trainer', 'Smoothly or in steps'], ['Silent bars', 'Keep time yourself'], ['Flash', 'A visual beat one'], ['Sound', 'Click, woodblock, beep']] },
+      { id: 'scales', icon: 'scales', name: 'Scales', shot: '16_scale_tempo',
+        h: 'Scales in long notes, or fast.',
+        p: 'Any key, major, minors and modes, with its own tempo. Each note lasts 4, 3, 2 or 1 beats, or goes 2 to 4 per beat, with a clean click and a drone underneath.',
+        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal or just', 'One bar count-in'] },
+      { id: 'log', icon: 'chart', name: 'Practice log', shot: '27_practice',
+        h: 'See what you really practised.',
+        p: 'Time counts by itself while a score is open or a tool is running. The ring on the home screen fills up toward your daily goal.',
+        grid: [['Daily goal', '15 minutes to 4 hours'], ['Streak', 'Days in a row'], ['Chart', 'Week, month, year'], ['Per piece', 'Minutes on each'], ['Today', 'A note: what is next?'], ['Timer', '25/5, 45/15, 60/20']] },
+      { id: 'plan', icon: 'check', name: 'Weekly plan', shot: '28_plan',
+        h: 'Plan your week in half hours.',
+        p: 'Paint the half hours you want to practise. Past weeks show green for done and red for missed, and a reminder arrives when practice begins.',
+        chips: ['At the start, 10 or 30 min before', 'Carries on week after week', 'On iPad and iPhone'] },
+      { id: 'iphone', icon: 'phone', name: 'iPhone', phone: 'phone_home',
+        h: 'Your practice in your pocket.',
+        p: 'The iPhone shows today, the week and each piece from your iPad. It has the tuner, drone, metronome and scales for when you are away from the stand, and it works as the iPad’s camera.',
+        chips: ['Finds the iPad by itself', 'Encrypted', 'Camera for iPad'] },
+    ] },
+  { id: 'listen', icon: 'fork', title: 'Tune & Record', short: 'Tune', shot: '11_tuner',
+    lead: 'Hear exactly where you are: in tune, in time, and on video.',
+    ch: [
+      { id: 'tuner', icon: 'fork', name: 'Tuner', shot: '11_tuner',
+        h: 'A tuner that learns your intonation.',
+        p: 'The needle shows the cents and the note turns green when you are in tune. Over time it learns which notes you tend to play sharp or flat.',
+        grid: [['Reference A', 'For example 442 Hz'], ['Equal', 'Like the piano'], ['Just', 'Pure thirds and fifths'], ['Pythagorean', 'Pure fifths'], ['Tendency', 'Sharp or flat lately'], ['Small tuner', 'Over the score']] },
+      { id: 'harmonics', icon: 'harm', name: 'Harmonics', shot: '13_harmonics',
+        h: 'Which harmonic, on which string, where to touch.',
+        p: 'Play a natural harmonic and Stand names it. Hear the series of any string, and see how far each overtone is from the piano: the 5th is 14 cents low, the 7th 31.' },
+      { id: 'drone', icon: 'drone', name: 'Drone', shot: '12_drone',
+        h: 'A drone that follows the music.',
+        p: 'A steady note in pure intervals, so every beat you hear is your own intonation. When the music changes key, the drone can follow.',
+        grid: [['I tap', 'Stays until you choose'], ['It listens', 'Moves when the key really changes'], ['My list', 'Your notes, one by one'], ['All keys', 'Every 2 to 16 bars']] },
+      { id: 'record', icon: 'mic', name: 'Record', shot: '61_recording',
+        h: 'Record while you read.',
+        p: 'Audio for the best sound, or video to watch your posture. A count-in bar from the metronome, and the score stays on screen.',
+        chips: ['Audio or video', 'Front, back or iPhone', 'One bar count-in', 'Keep the click'] },
+      { id: 'camera', icon: 'video', name: 'iPhone camera', phone: 'phone_home',
+        h: 'Your iPhone as a second camera.',
+        p: 'Open Stand on the iPhone and tap Camera for iPad. The two find each other by themselves. Set brightness, warmth and zoom from the iPad, and the video comes over after Stop.' },
+      { id: 'recordings', icon: 'takes', name: 'Recordings', shot: '62_recordings',
+        h: 'Listen back slower, at the same pitch.',
+        p: 'Drag across the waveform to loop a passage and play it at 50 to 100% speed. Add a hall or church sound, cut a part, or put the score on your video.',
+        chips: ['Loop', '50–100% speed', 'Studio, hall, church', 'Cut', 'Studio'] },
+      { id: 'video', icon: 'video', name: 'Video over the score', shot: '63_video_over_score',
+        h: 'Watch yourself next to the music.',
+        p: 'Drag a video out of Recordings onto the score. Pinch to zoom on your bow arm up to 5×, slow it down, and the pages still turn under it.' },
+      { id: 'along', icon: 'ear', name: 'Listen along', shot: '18_listen',
+        h: 'Great recordings, one tap away.',
+        p: 'Keep the performances you love with each score, in YouTube, Spotify or Apple Music. Or play along with an audio file, slower and looped between A and B.' },
+    ] },
+  { id: 'write', icon: 'compose', title: 'Write', shot: '40_composer',
+    lead: 'Compose, arrange and copy out music, and keep notebooks.',
+    ch: [
+      { id: 'composer', icon: 'compose', name: 'Composer', shot: '40_composer',
+        h: 'Write with the Pencil, hear it played.',
+        p: 'Notes land where you touch the staff. Two voices on a staff, slurs and hairpins across bars, endings and repeats, and Play with sampled instruments.',
+        chips: ['Whole note to 32nd', 'Voice 1 / Voice 2', 'Tuplets 2–11', 'Transpose by interval or key', 'Opens MusicXML'] },
+      { id: 'instruments', icon: 'instruments', name: 'Instruments', shot: '43_instruments',
+        h: 'More than 100 instruments, each in its own key.',
+        p: 'Woodwinds, brass, percussion, keyboards, guitars, voices and strings, with every transposing instrument and the brass band. Write in concert pitch; the parts come out in the key each player reads.',
+        chips: ['Clarinet in A, B♭, E♭', 'Horn in F or E♭', 'Euphonium, tenor horn', 'Solo to orchestra'] },
+      { id: 'layout', icon: 'layout', name: 'Layout & sound', shot: '45_layout',
+        h: 'Engraved the way it should be.',
+        p: 'Staff size, paper and orientation, empty staves hidden, and staves that never collide. Choose the room and the tuning, from A = 415 to 443.' },
+      { id: 'export', icon: 'share', name: 'Export', shot: '44_export',
+        h: 'Score, parts and MusicXML.',
+        p: 'Everything a band or an orchestra needs, from one score.',
+        grid: [['Score', 'PDF, each in its own key'], ['All parts', 'Transposed, multi-bar rests'], ['Concert pitch', 'For the conductor'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio', 'WAV'], ['On my stand', 'Read and mark it']] },
+      { id: 'capture', icon: 'capture', name: 'Read music', shot: '50_capture_result',
+        h: 'From the printed page to notes.',
+        p: 'Choose lines in a PDF, a scan or a photo. Stand reads the notes, rhythms, rests, accidentals, clef, key and time, and pastes them into any instrument and bar.',
+        steps: ['Composer ▸ Capture', 'Tap or slide over the lines', 'Paste into the score'] },
+      { id: 'notebooks', icon: 'paper', name: 'Notebooks', shot: '66_notebook_insert',
+        h: 'Music paper with a cover.',
+        p: 'Staff, lined or plain paper for exercises, dictation, lesson notes or a practice journal. Add photos in shapes or inside a word, glass cards, washi tape and stickers, and move anything between the pages.' },
+    ] },
+];
+const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Backup to iCloud Drive'], ['sliders', 'Blue or black, light or dark'], ['ear', 'Bluetooth headphones'], ['check', 'Offline, and private']];
+
+(() => {
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 160;
+    const g = c.getContext('2d'); const im = g.createImageData(160, 160);
+    for (let i = 0; i < im.data.length; i += 4) { const v = 235 + Math.random() * 20; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; }
+    g.putImageData(im, 0, 0);
+    document.documentElement.style.setProperty('--grain', `url(${c.toDataURL()})`);
+  } catch {}
+})();
+const PAPER = { read: ['#e9e3d4', '#1f1e1b'], mark: ['#cfc8b6', '#1f1e1b'], practise: ['#a5825a', '#1b150e'], listen: ['#2a2a27', '#ece6d8'], write: ['#8e98a3', '#141618'] };
+const THEME = {
+  tabH: 170,
+  tone(el, f) { el.style.setProperty('--c-bg', PAPER[f.id][0]); el.style.setProperty('--c-ink', PAPER[f.id][1]); },
+  folder(f, i) {
+    return `<span class="tab">FOLDER_0${i + 1} // ${f.title}</span>
+      <span class="strip"><span class="name">${f.title}</span>
+        <span class="sb"><ul class="contents">${f.ch.map((c) => `<li>${c.name}</li>`).join('')}</ul><span class="bars" aria-hidden="true"></span><span class="num">0${i + 1} / 0${F.length}</span></span></span>
+      <span class="peek"><img src="../img/m_${f.shot}.webp" alt="" decoding="async" loading="lazy"></span>`;
+  },
+  cover() {
+    return `<div class="big" aria-hidden="true">Stand_01&ndash;0${F.length}</div>
+      <div class="inner">
+        <span class="hint"><i></i>Pull out a folder</span>
+        <div style="display:grid;gap:16px;align-content:center">
+          <h1>The music stand that practises with you.</h1>
+          <p>Read and mark your scores, turn pages hands-free, tune, keep time, film yourself and plan your week. Then keep notebooks and write your own music, in the same place.</p>
+          <span class="cta">Coming to the App Store</span>
+        </div>
+        <div class="meta"><span><b>Platform</b>iPad &middot; iPhone</span><span><b>Works</b>Offline</span><span><b>Your data</b>Stays on your device</span></div>
+      </div>`;
+  },
+  eyebrow(f, i) { return `<i></i>Folder 0${i + 1} of 0${F.length} · ${f.ch.length} things inside`; },
+};
+
+document.getElementById('also').innerHTML = ALSO.map(([i, t]) => `<span><svg class="i" aria-hidden="true"><use href="#i-${i}"/></svg>${t}</span>`).join('');
+const n = F.length;
+const ic = (id, cls = 'i') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+const pad = (k) => String(k).padStart(2, '0');
+const img = (s) => `../img/m_${s}.webp`;
+const phoneQ = () => matchMedia('(max-width: 760px)').matches;
+const narrow = () => matchMedia('(max-width: 900px)').matches;
+const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- the drawer ---------- */
+const drawer = document.getElementById('drawer');
+const els = [];
+F.forEach((f, i) => {
+  const b = document.createElement('button');
+  b.className = 'folder'; b.dataset.id = f.id;
+  THEME.tone(b, f, i);
+  b.setAttribute('aria-label', `${f.title}: ${f.lead}`);
+  b.innerHTML = THEME.folder(f, i);
+  b.addEventListener('click', () => openFolder(i, b));
+  b.addEventListener('mouseenter', () => hover(i));
+  b.addEventListener('focus', () => hover(i));
+  drawer.append(b); els.push(b);
+});
+const cover = document.createElement('div');
+cover.className = 'folder cover';
+cover.innerHTML = THEME.cover();
+drawer.append(cover);
+drawer.addEventListener('mouseleave', () => hover(-1));
+
+function place() {
+  if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); return; }
+  const W = drawer.clientWidth, H = drawer.clientHeight;
+  const coverW = Math.min(560, Math.max(380, W * 0.38));
+  const strip = Math.max(70, (W - coverW - 34) / n);
+  const fw = Math.min(600, W * 0.46);
+  const step = Math.min(78, (H - THEME.tabH - 40 - H * 0.34) / (n - 1));
+  els.forEach((e, i) => {
+    e.style.left = (34 + i * strip) + 'px'; e.style.width = fw + 'px'; e.style.zIndex = i + 1;
+    e.style.setProperty('--strip', strip + 'px');
+    e.style.setProperty('--tab-y', Math.round(H * 0.34 + i * step) + 'px');
+  });
+  cover.style.left = (W - coverW) + 'px'; cover.style.width = coverW + 'px'; cover.style.zIndex = n + 2;
+  drawer.style.setProperty('--shift', Math.max(120, Math.min(300, fw - strip - 30)) + 'px');
+}
+function hover(k) {
+  if (phoneQ()) return;
+  els.forEach((e, i) => { e.classList.toggle('lift', i === k); e.classList.toggle('shift', k >= 0 && i > k); });
+}
+addEventListener('resize', place); place();
+
+/* ---------- the open folder ---------- */
+const sheet = document.getElementById('sheet'), body = document.getElementById('sheetBody');
+const barT = document.getElementById('barTitle'), barC = document.getElementById('barCh');
+let cur = -1, busy = false, io = null, ioR = null, active = -1;
+
+function extra(c) {
+  if (c.grid) return `<div class="grid rv">${c.grid.map(([t, s]) => `<div class="sq"><b>${t}</b><span>${s}</span></div>`).join('')}</div>`;
+  if (c.steps) return `<ol class="steps rv">${c.steps.map((t, k) => `<li><span>${k + 1}</span>${t}</li>`).join('')}</ol>`;
+  if (c.chips) return `<div class="chips rv">${c.chips.map((t) => `<span>${t}</span>`).join('')}</div>`;
+  return '';
+}
+const frame = (c, cls = '') => c.phone
+  ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${c.name} on iPhone" decoding="async"></div>`
+  : `<div class="dev ipad ${cls}"><img src="${img(c.shot)}" alt="${c.name}" decoding="async"></div>`;
+
+function fill(i) {
+  const f = F[i], next = F[(i + 1) % n];
+  THEME.tone(sheet, f, i);
+  barT.innerHTML = `${ic(f.icon)}<span>${f.title}</span>`; barC.textContent = '';
+  body.innerHTML = `
+    <header class="hero">
+      <div class="htext">
+        <span class="eyebrow rv">${THEME.eyebrow(f, i)}</span>
+        <h2 class="rv" id="sheetTitle">${f.title}</h2>
+        <p class="lead rv">${f.lead}</p>
+        <div class="tiles rv" role="list">${f.ch.map((c, k) => `<button role="listitem" data-to="${k}">${ic(c.icon)}<span>${c.name}</span></button>`).join('')}</div>
+        <span class="scrollhint rv" aria-hidden="true">Scroll<i></i></span>
+      </div>
+      <div class="hdev rv" aria-hidden="true"><div class="dev ipad"><img src="${img(f.shot)}" alt="" decoding="async"></div></div>
+    </header>
+    <div class="story">
+      <div class="chapters">${f.ch.map((c, k) => `
+        <article class="ch" data-k="${k}" id="ch-${c.id}">
+          <div class="chin">
+            <span class="kicker rv">${ic(c.icon)}${c.name}</span>
+            <h3 class="rv">${c.h}</h3>
+            <p class="rv">${c.p}</p>
+            ${extra(c)}
+            <div class="inline rv">${frame(c)}</div>
+          </div>
+        </article>`).join('')}
+      </div>
+      <div class="media" aria-hidden="true"><div class="stage">${f.ch.map((c, k) => frame(c, k === 0 ? 'on' : 'after')).join('')}</div></div>
+    </div>
+    <footer class="nextf">
+      <button class="nextcard" data-go="${(i + 1) % n}">
+        <span class="nt"><small>Next folder</small><b>${next.title}</b><em>${next.lead}</em></span>
+        <span class="np"><img src="${img(next.shot)}" alt="" loading="lazy" decoding="async"></span>
+      </button>
+      <div class="others">${F.map((g, k) => `<button data-go="${k}" ${k === i ? 'aria-current="true"' : ''}>${ic(g.icon)}${g.short || g.title}</button>`).join('')}</div>
+    </footer>`;
+  THEME.tone(body.querySelector('.nextcard'), next, (i + 1) % n);
+  body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
+  body.querySelectorAll('[data-to]').forEach((b) => b.addEventListener('click', () => toCh(+b.dataset.to)));
+  active = -1; watch(); setActive(0);
+}
+function toCh(k) {
+  const el = body.querySelectorAll('.ch')[k]; if (!el) return;
+  const y = el.getBoundingClientRect().top - sheet.getBoundingClientRect().top + sheet.scrollTop - (narrow() ? 70 : 0);
+  sheet.scrollTo({ top: y, behavior: reduce() ? 'auto' : 'smooth' });
+}
+function setActive(k) {
+  if (k === active) return;
+  active = k;
+  const f = F[cur]; if (!f) return;
+  body.querySelectorAll('.ch').forEach((c, j) => c.classList.toggle('now', j === k));
+  body.querySelectorAll('.media .dev').forEach((d, j) => { d.classList.toggle('on', j === k); d.classList.toggle('before', j < k); d.classList.toggle('after', j > k); });
+  body.querySelectorAll('.tiles button').forEach((b, j) => b.classList.toggle('now', j === k));
+  barC.classList.remove('show');
+  requestAnimationFrame(() => { barC.textContent = f.ch[k].name; barC.classList.add('show'); });
+}
+function watch() {
+  io && io.disconnect(); ioR && ioR.disconnect();
+  /* reveal: things rise into place as they come up, and settle back when you scroll away above them */
+  ioR = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting) e.target.classList.add('in');
+    else if (e.boundingClientRect.top > 0) e.target.classList.remove('in');
+  }), { root: sheet, threshold: 0.12 });
+  body.querySelectorAll('.rv').forEach((el) => ioR.observe(el));
+  /* the chapter in the middle of the screen is the one shown on the iPad */
+  io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) setActive(+e.target.dataset.k); }),
+    { root: sheet, rootMargin: '-45% 0px -45% 0px', threshold: 0 });
+  body.querySelectorAll('.ch').forEach((el) => io.observe(el));
+}
+sheet.addEventListener('scroll', () => {
+  const p = sheet.scrollTop / Math.max(1, sheet.scrollHeight - sheet.clientHeight);
+  sheet.style.setProperty('--p', p.toFixed(4));
+  sheet.classList.toggle('scrolled', sheet.scrollTop > 40);
+}, { passive: true });
+
+const clip = (r) => `inset(${Math.max(0, r.top)}px ${Math.max(0, innerWidth - r.right)}px ${Math.max(0, innerHeight - r.bottom)}px ${Math.max(0, r.left)}px round 18px)`;
+function show() { sheet.hidden = false; sheet.scrollTop = 0; document.body.style.overflow = 'hidden'; }
+async function openFolder(i, el) {
+  if (busy) return; busy = true; cur = i;
+  show(); fill(i);
+  try { history.replaceState(null, '', '#' + F[i].id); } catch {}
+  if (reduce()) { sheet.classList.add('in'); busy = false; document.getElementById('closeBtn').focus(); return; }
+  sheet.hidden = true;
+  el.classList.remove('shift'); el.classList.add('pull');
+  await new Promise((r) => setTimeout(r, 190));
+  const r = el.getBoundingClientRect();
+  sheet.hidden = false;
+  const a = sheet.animate([{ clipPath: clip(r) }, { clipPath: 'inset(0px 0px 0px 0px round 0px)' }], { duration: 620, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  setTimeout(() => sheet.classList.add('in'), 180);
+  await a.finished.catch(() => {});
+  el.classList.remove('pull'); busy = false;
+  document.getElementById('closeBtn').focus({ preventScroll: true });
+}
+async function closeFolder() {
+  if (busy || sheet.hidden) return; busy = true;
+  const el = els[cur];
+  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+  if (!reduce() && el) {
+    sheet.classList.remove('in');
+    const a = sheet.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clip(el.getBoundingClientRect()) }], { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)' });
+    await a.finished.catch(() => {});
+  }
+  sheet.hidden = true; sheet.classList.remove('in', 'scrolled'); document.body.style.overflow = '';
+  io && io.disconnect(); ioR && ioR.disconnect();
+  busy = false; if (el) el.focus({ preventScroll: true });
+}
+function go(i) {
+  if (busy) return; busy = true;
+  const run = () => { cur = i; sheet.scrollTop = 0; fill(i); try { history.replaceState(null, '', '#' + F[i].id); } catch {} };
+  if (reduce()) { run(); sheet.classList.add('in'); busy = false; return; }
+  sheet.classList.add('leaving');
+  setTimeout(() => {
+    sheet.classList.remove('in'); run();
+    sheet.classList.remove('leaving');
+    requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('in'); busy = false; }));
+  }, 320);
+}
+document.getElementById('closeBtn').addEventListener('click', closeFolder);
+document.getElementById('prevBtn').addEventListener('click', () => go((cur + n - 1) % n));
+document.getElementById('nextBtn').addEventListener('click', () => go((cur + 1) % n));
+addEventListener('keydown', (e) => {
+  if (sheet.hidden) return;
+  if (e.key === 'Escape') closeFolder();
+  if (e.key === 'ArrowRight') go((cur + 1) % n);
+  if (e.key === 'ArrowLeft') go((cur + n - 1) % n);
+});
+const start = F.findIndex((f) => '#' + f.id === location.hash);
+if (start >= 0) { cur = start; show(); fill(start); sheet.classList.add('in'); }
+
+</script>
+
+</body>
+</html>

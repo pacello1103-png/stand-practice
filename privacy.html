@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stand Privacy Policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Hanken+Grotesk:wght@400;600&display=swap">
+<style>
+:root { --bg: #e6e0d2; --fg: #1f1e1b; --muted: #4a473f; --line: rgba(31,30,27,.16); --accent: #23397a; --card: #d9d2c1;
+  --serif: "Archivo", "Arial Narrow", Arial, sans-serif; --sans: "Hanken Grotesk", -apple-system, "Helvetica Neue", Arial, sans-serif; color-scheme: light; }
+* { box-sizing: border-box; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 17px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 760px; margin: 0 auto; padding-block: 56px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+a { color: var(--accent); text-underline-offset: 3px; }
+.back { color: var(--accent); }
+.back { font-size: 15px; text-decoration: none; }
+h1 { font: 400 clamp(44px, 8vw, 72px)/1 var(--serif); margin: 22px 0 10px; text-wrap: balance; }
+h2 { font: 400 32px/1.15 var(--serif); margin: 48px 0 10px; text-wrap: balance; }
+h3 { font-size: 17px; font-weight: 600; margin: 24px 0 4px; }
+p, li { color: var(--fg); }
+.muted { color: var(--muted); }
+.box { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 22px; margin-top: 22px; }
+.box p { margin: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.tablewrap { overflow-x: auto; margin-top: 12px; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; }
+ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="index.html">← Stand</a>
+  <h1>Privacy policy</h1>
+  <p class="muted">Stand for iPad and iPhone · last updated 20 October 2026</p>
+
+  <div class="box"><p><strong>In short:</strong> Stand has no account, no adverts, no analytics and no tracking. Your scores, markings, notebooks, recordings and practice log are kept on your device. Sound, camera pictures and face tracking are analysed on the device and never sent anywhere. The few things that do leave the device are listed below, with the reason.</p></div>
+
+  <h2>Who is responsible</h2>
+  <p>Stand is made by Paulo da Cunha Andrade, Zürich, Switzerland. For any question about your data, write to the address under <a href="#support">Support</a>. This policy follows the Swiss Federal Act on Data Protection (FADP) and, for users in the EU and UK, the GDPR.</p>
+
+  <h2>What stays on your device</h2>
+  <p>Everything you make or import in Stand is stored only in the app on your device: scores and their markings, compositions, notebooks and photos placed in them, recordings and videos, practice time, settings. Stand does not upload them. You can make a backup yourself with "Back up", which hands a file to the iPad's share sheet (for example to save it in iCloud Drive); where it goes is your choice.</p>
+
+  <h2>Face tracking (wink to turn pages)</h2>
+  <p>This feature is off until you turn it on. When it is on, Stand uses the front camera and Apple's face tracking (ARKit) on devices that support it, to measure whether your eyes are open or closed, so a deliberate wink turns the page.</p>
+  <ul>
+    <li>The measurement happens entirely on your device, in real time.</li>
+    <li>No image of your face, no face geometry and no other face data is stored, sent to anyone, shared with third parties, or used for any other purpose (no advertising, no analytics, no identification).</li>
+    <li>Face tracking stops when you turn the feature off or leave the score.</li>
+  </ul>
+
+  <h2>Microphone</h2>
+  <p>Stand uses the microphone for the tuner, harmonics, the drone that follows your key, turning pages by listening, Studio and your own recordings. Live sound is analysed on the device and is not stored. A recording is saved only when you start one, only inside Stand, and only you can share or export it.</p>
+
+  <h2>Camera and photo library</h2>
+  <p>The camera is used when you scan sheet music, film your practice, or use your iPhone as a camera for your iPad. Photos you choose are added to notebooks inside Stand. Stand writes to your photo library only when you export a video or picture to it.</p>
+
+  <h2>iPhone and iPad together</h2>
+  <p>When your iPhone films for your iPad, or shows your iPad's practice time, the two devices connect directly to each other, the way AirDrop does: nearby over Apple's peer-to-peer Wi-Fi or over your local network (this is why Stand asks for local network access). The live picture, the video and the practice data go straight from one device to the other.</p>
+  <p>If the two cannot find each other directly, they meet through a public connection service (the PeerJS server at 0.peerjs.com) and public STUN servers (Google, Cloudflare). These only pass the technical details needed to connect, which include your devices' network addresses. To recognise devices on the same network, Stand may ask a public service (api.ipify.org) for your public internet address; it is turned into an anonymous room name and is not stored.</p>
+
+  <h2>Things you look up</h2>
+  <p>Some features open or search public websites when you use them:</p>
+  <div class="tablewrap"><table>
+    <tr><th>Feature</th><th>Service</th><th>What is sent</th></tr>
+    <tr><td>Find a score</td><td>IMSLP (imslp.org), Wikidata</td><td>The words you search for</td></tr>
+    <tr><td>Listen</td><td>YouTube, Spotify, Apple Music</td><td>Opens their app or site with the piece's name</td></tr>
+    <tr><td>Buy the edition</td><td>Henle, Stretta, Sheet Music Plus</td><td>Opens their site with the piece's name</td></tr>
+  </table></div>
+  <p class="muted">These services handle requests under their own privacy policies. As with any website, they see your network address.</p>
+
+  <h2>What Stand does not do</h2>
+  <ul>
+    <li>No account, sign-in or email address is needed.</li>
+    <li>No analytics, crash reporting or advertising services are built in.</li>
+    <li>No data is sold, shared for advertising, or used to track you across apps and websites.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Stand is suitable for students of any age. It collects no personal data from anyone, children included.</p>
+
+  <h2>Your rights</h2>
+  <p>Because your data is on your device, you control it directly: delete a score, notebook or recording in Stand, or delete the app to remove everything. You may also contact the developer with any question or request; the developer holds no personal data about you.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version will be published on this page with a new date.</p>
+
+  <h2 id="support">Support</h2>
+  <p>Questions, ideas or a problem with Stand? Write to Paulo, the developer:</p>
+  <div class="box"><p><strong>Email:</strong> <span id="email">stand.support@example.com</span></p></div>
+
+  <h3>The iPhone and iPad do not find each other</h3>
+  <p>Open Stand on both, keep them near each other, and allow "Local Network" for Stand in Settings › Privacy &amp; Security. If they still do not connect, use the six-digit code shown on the iPad.</p>
+  <h3>The tuner does not react the first time</h3>
+  <p>Make sure Stand may use the microphone (Settings › Stand › Microphone). The tuner wakes the sound system itself; if another app was using the microphone, close it and tap Start again.</p>
+  <h3>Pages turn too early or too late</h3>
+  <p>Following works best with clearly printed scores. You can always turn by hand, with a wink, a tap on the edge of the page or a foot pedal.</p>
+</main>
+</body>
+</html>
