@@ -6,7 +6,7 @@ import { sampler, Sampler, DEFAULT_MIX } from '../sampler.js';
 import { getCtx, wantAudio } from '../audio.js';
 import { encodeWav } from '../recorder.js';
 
-export const DYN_VEL = { ppp: 0.14, pp: 0.24, p: 0.36, mp: 0.5, mf: 0.62, f: 0.76, ff: 0.88, fff: 0.97, sfz: 0.9, sf: 0.88, fp: 0.78, rfz: 0.85 };
+export const DYN_VEL = { pppp: 0.08, ppp: 0.14, pp: 0.24, p: 0.36, mp: 0.5, mf: 0.62, f: 0.76, ff: 0.88, fff: 0.97, ffff: 1, sfz: 0.9, sf: 0.88, sffz: 0.97, fz: 0.9, sfp: 0.8, fp: 0.78, rfz: 0.85 };
 
 // The order bars are played in: repeats (twice), first and second endings, D.C. / D.S. with
 // Fine and To Coda.
@@ -130,10 +130,12 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     let vel = DYN_VEL.mf;
     for (let i = 0; i < flat.length; i++) {
       const f = flat[i];
-      if (f.ev.dyn && DYN_VEL[f.ev.dyn] !== undefined) vel = DYN_VEL[f.ev.dyn] * (f.ev.dyn === 'sfz' || f.ev.dyn === 'fp' ? 0.8 : 1);
+      // (sfz, sffz, fz: a strong accent on the note; fp, sfp: loud then soft at once)
+      const dk = f.ev.dyn === 'sffz' || f.ev.dyn === 'fz' ? 'sfz' : f.ev.dyn === 'sfp' ? 'fp' : f.ev.dyn;
+      if (f.ev.dyn && DYN_VEL[f.ev.dyn] !== undefined) vel = DYN_VEL[f.ev.dyn] * (dk === 'sfz' || dk === 'fp' ? 0.8 : 1);
       f.vel = vel;
-      f.accent = f.ev.dyn === 'sfz' || f.ev.dyn === 'sf' || f.ev.dyn === 'rfz' ? 'sfz' : f.ev.dyn === 'fp' ? 'fp' : null;
-      if (f.ev.dyn === 'fp' || f.ev.dyn === 'sfz') vel = DYN_VEL.p + (f.ev.dyn === 'sfz' ? 0.2 : 0);
+      f.accent = dk === 'sfz' || dk === 'sf' || dk === 'rfz' ? 'sfz' : dk === 'fp' ? 'fp' : null;
+      if (dk === 'fp' || dk === 'sfz') vel = DYN_VEL.p + (dk === 'sfz' ? 0.2 : 0);
       if (f.ev.hp === '<' || f.ev.hp === '>') {
         let j = i + 1;
         while (j < flat.length && !flat[j].ev.dyn && flat[j].ev.hp !== 'end') j++;
@@ -214,6 +216,11 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     const pedEnd = (f) => { for (const pd of peds) { if ((f.m > pd.a.m || (f.m === pd.a.m && f.pos >= pd.a.pos)) && (f.m < pd.b.m || (f.m === pd.b.m && f.pos <= pd.b.pos))) { const k = order.indexOf(pd.b.m); if (k >= 0) { const bf = flat.find((q) => q.m === pd.b.m && q.pos >= pd.b.pos) || null; return bf ? bf.t + bf.dur : tAt(k, barMap[k].total); } } } return null; };
     const trillSpans = spans.filter((q) => q.kind === 'trill' && q.st === st.id);
     const inTrill = (f) => trillSpans.some((q) => (f.m > q.a.m || (f.m === q.a.m && f.pos >= q.a.pos)) && (f.m < q.b.m || (f.m === q.b.m && f.pos <= q.b.pos)));
+    // pizz. and arco written over the notes of a string instrument: plucked until arco
+    if (/violin|viola|cello|^bass$|strings/.test(sid)) {
+      let pz = false;
+      for (const f of flat) { const w = String(f.ev.txt || '').toLowerCase(); if (/\barco\b|\bord\./.test(w)) pz = false; if (/pizz/.test(w)) pz = true; f.pizz = pz; }
+    }
     // ---- second pass: notes, with ties joined and ornaments written out
     const open = new Map();
     const add = (n) => notes.push(n);
@@ -222,6 +229,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       if (!ev.notes || ev.rest) { open.clear(); continue; }
       const ids = [ev.id];
       const arts = ev.art || [];
+      const sidF = f.pizz ? 'pizz' : sid, susF = sustained && !f.pizz;
       const fer = arts.some((a) => a === 'ferm' || a === 'fermS' || a === 'fermL') ? fermatas.find((q) => q.m === f.m) : null;
       let dur = f.dur + (fer ? fer.extra : 0);
       const art = arts.find((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)) || null;
@@ -234,7 +242,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         // a grace note just before the beat (an appoggiatura takes a little of the beat instead)
         const gq = Math.min(0.08, dur / 3), gm2 = midiOf(ev.grace.s, ev.grace.a || 0);
         const lead = ev.grace.slash === false ? 0 : gq;
-        add({ part: part.id, sid, midi: gm2, t: Math.max(0, f.t - lead), dur: gq * 1.05, vel: f.vel * 0.85, art: null, env: null, ids, m: f.m, pos: f.pos, connect: false });
+        add({ part: part.id, sid: sidF, midi: gm2, t: Math.max(0, f.t - lead), dur: gq * 1.05, vel: f.vel * 0.85, art: null, env: null, ids, m: f.m, pos: f.pos, connect: false });
         if (!lead) { gOff = gq; dur -= gq; }
       }
       const sorted = ev.notes.slice().sort((x, y) => midiOf(x.s, x.a) - midiOf(y.s, y.a));
@@ -258,10 +266,10 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         if (harmBelow && ni === 0 && sorted.length > 1) pm = midi + 24;
         if (head === 'ghost') v *= 0.5;
         if (head === 'x' && !inst.unpitched) v *= 0.75;
-        const base = { part: part.id, sid, midi: pm, t: t0, dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
+        const base = { part: part.id, sid: sidF, midi: pm, t: t0, dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
         if (head === 'x' && !inst.unpitched) { base.dur = Math.min(base.dur, 0.12); base.art = 'stacciss'; }
         if (harmBelow && ni === 0) { base.harm = true; base.vel = v * 0.7; }
-        if (expr && sustained) {
+        if (expr && susF) {
           if (f.legato && !art) { base.dur = dur + 0.06; base.legato = true; }
           if (f.slurred && flat[flat.indexOf(f) - 1] && flat[flat.indexOf(f) - 1].legato) {
             base.connect = true;

@@ -4,6 +4,7 @@
 // clefs, keys, times and barlines. Instruments, sound, capture, layout and export live in the
 // top bar.
 import * as M from './model.js';
+import { toMidi } from './midi.js';
 import { INST, INSTRUMENTS, FAMILIES, ENSEMBLES, STAFF_SIZES, defaultStaffSize } from './instruments.js';
 import { layoutScore, drawPage, hitTest, timeAtX, xAtTime, drawGhost, HEAD_W, DYNAMICS, GL, clearMetrics, glyph, text, textWidth, gm, drawClef, drawKey, drawTime, drawBarline, drawRepeatStart, drawLine, TEXT_FONT } from './engrave.js';
 import { ScorePlayer, applyScoreSound, renderAudio } from './playback.js';
@@ -35,7 +36,7 @@ export const composeState = C;
 // =====================================================================
 export function initCompose(deps) {
   D = deps;
-  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { applySig: (k, v, st, m, to) => applySig(k, v, st, m, to), readTextBoxes: (r, c) => readTextBoxes(r, c), placeCaptureTexts: (r, a) => placeCaptureTexts(r, a), commitWrite, midiStep, pasteCapture: (st, m) => pasteCapture(st, m), moveSemis, moveNotes, selectBars: (a, b, m0, m1) => selectBars(a, b, m0, m1), transpose, transposeToKey, setDuration, renderTab: () => renderTab(), makePdf: (w) => makePdf(w), tapSelect: (x, y, a) => tapSelect(x, y, a), syncSelBar: () => syncSelBar() };
+  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { applySig: (k, v, st, m, to) => applySig(k, v, st, m, to), readTextBoxes: (r, c) => readTextBoxes(r, c), placeCaptureTexts: (r, a) => placeCaptureTexts(r, a), commitWrite, midiStep, pasteCapture: (st, m) => pasteCapture(st, m), moveSemis, moveNotes, selectBars: (a, b, m0, m1) => selectBars(a, b, m0, m1), transpose, transposeToKey, setDuration, renderTab: () => renderTab(), makePdf: (w) => makePdf(w), tapSelect: (x, y, a) => tapSelect(x, y, a), syncSelBar: () => syncSelBar(), copySel: () => copySel(), cutSel: () => cutSel(), pasteClip: (c, a) => pasteClip(c, a), respell: () => respell(), toggleCautionary: () => toggleCautionary() };
   // the compose tour starts with the first touch on the editor, not when the panel opens
   const composeEl = document.getElementById('compose');
   // The compose tour starts on the first real tap or stroke. It listens for the click (in the capture
@@ -767,6 +768,29 @@ function setAcc(a) {
   if (!evs.length) { C.tool.acc = C.tool.acc === a ? null : a; renderTab(); hint(C.tool.acc === null ? 'Accidental off.' : 'The next note you write gets this accidental.'); return; }
   edit(() => { for (const f of evs) f.ev.notes = f.ev.notes.map((n) => ({ ...n, a })); }, { keepSel: true });
 }
+// the same sound, written another way (F♯ ↔ G♭, B ↔ C♭…): each tap the next spelling
+function respell() {
+  const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest);
+  if (!evs.length) { hint('Select the notes to write another way.'); return; }
+  edit(() => {
+    for (const f of evs) f.ev.notes = f.ev.notes.map((n) => {
+      const midi = M.midiOf(n.s, n.a || 0), opts = [];
+      for (let s = n.s - 2; s <= n.s + 2; s++) { const a = midi - M.midiOf(s, 0); if (a >= -2 && a <= 2) opts.push({ s, a }); }
+      // simple spellings first (no double sharps or flats), then the others
+      opts.sort((x, y) => Math.abs(x.a) - Math.abs(y.a) || x.s - y.s);
+      const k = opts.findIndex((o) => o.s === n.s && o.a === (n.a || 0));
+      const nx = opts[(k + 1) % opts.length] || { s: n.s, a: n.a };
+      return { ...n, s: nx.s, a: nx.a };
+    }).sort((x, y) => x.s - y.s);
+  }, { keepSel: true });
+}
+// a reminder accidental, in brackets, on the selected notes (or taken off)
+function toggleCautionary() {
+  const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest);
+  if (!evs.length) { hint('Select a note first.'); return; }
+  const on = !evs.every((f) => f.ev.notes.every((n) => n.cau));
+  edit(() => { for (const f of evs) f.ev.notes = f.ev.notes.map((n) => { const q = { ...n }; if (on) q.cau = true; else delete q.cau; return q; }); }, { keepSel: true });
+}
 // ---- transposing
 // by an interval: steps (letters) and semitones, both signed
 function transpose(steps, semis, keyTo = null) {
@@ -1007,8 +1031,17 @@ function clearBars() {
 function copySel() {
   let clip = null;
   if (C.selBars) {
-    const lanes = selStaves().map((st) => collect(st, C.selBars.from, 0, C.selBars.to, Infinity));
-    clip = { events: lanes[0], lanes: lanes.length > 1 ? lanes : undefined, from: 'bars', n: C.selBars.to - C.selBars.from + 1 };
+    const sts = selStaves(), from = C.selBars.from, to = C.selBars.to;
+    const lanes = sts.map((st) => collect(st, from, 0, to, Infinity));
+    // what goes with the bars: the second voice, and the lines (slurs, hairpins, trills, 8va…)
+    // that start and end inside them, kept relative to the first bar
+    const extras = sts.map((st) => {
+      const base = st.base || st;
+      const v2 = base.v2 && base.v2.slice(from, to + 1).some((b) => b && b.some((e) => !e.rest)) ? base.v2.slice(from, to + 1).map((b) => M.clone(b || [])) : null;
+      const spans = (C.score.spans || []).filter((q) => q.st === base.id && q.a.m >= from && q.b.m <= to).map((q) => ({ ...M.clone(q), a: { ...q.a, m: q.a.m - from }, b: { ...q.b, m: q.b.m - from } }));
+      return { v2, spans, times: Array.from({ length: to - from + 1 }, (_, k) => M.timeAt(C.score, from + k).join('/')) };
+    });
+    clip = { events: lanes[0], lanes: lanes.length > 1 ? lanes : undefined, extras, from: 'bars', n: to - from + 1 };
   }
   else {
     const evs = selEvents(); if (!evs.length) return;
@@ -1018,6 +1051,13 @@ function copySel() {
   }
   C.clip = clip; setSetting('composeClip', clip);
   D.toast(clip.from === 'bars' ? `Copied ${clip.n} ${clip.n === 1 ? 'bar' : 'bars'}.` : `Copied ${clip.events.length} ${clip.events.length === 1 ? 'note' : 'notes'}.`, 1800);
+}
+// copy, then empty what was copied (bars become rests; notes become rests)
+function cutSel() {
+  if (!C.selBars && !C.sel.size) return;
+  copySel();
+  if (!C.clip) return;
+  if (C.selBars) clearBars(); else deleteSel();
 }
 function collect(st, m0, p0, m1, p1) {
   const out = [];
@@ -1043,13 +1083,14 @@ export function pasteClip(clip, at) {
     const st0 = C.selBars ? C.selBars.st : (selEvents()[0] || {}).st; const m0 = C.selBars ? C.selBars.from : (selEvents()[0] || {}).m;
     if (!st0) { D.toast('Select a bar where the music goes.'); return; }
     const i0 = all.indexOf(st0);
-    edit(() => { clip.lanes.forEach((events, k) => { const st = all[i0 + k]; if (st) pasteClip({ events }, { st, m: m0, pos: 0, quiet: true }); }); });
+    edit(() => { clip.lanes.forEach((events, k) => { const st = all[i0 + k]; if (st) { pasteClip({ events }, { st, m: m0, pos: 0, quiet: true }); pasteExtras(clip.extras && clip.extras[k], st, m0); } }); });
     D.toast('Pasted.', 1400); return;
   }
   let st, m, pos;
   if (at) ({ st, m, pos } = at);
   else if (C.selBars) { st = C.selBars.st; m = C.selBars.from; pos = 0; }
   else { const e = selEvents()[0]; if (!e) { D.toast('Select a bar or a note where the music goes.'); return; } st = e.st; m = e.m; pos = e.pos; }
+  const mStart = m, atBarStart = pos === 0;
   edit(() => {
     for (const src of clip.events) {
       const ev = { ...M.clone(src), id: M.newId() };
@@ -1072,8 +1113,30 @@ export function pasteClip(clip, at) {
       pos += len;
       while (pos >= M.barTicks(M.timeAt(C.score, m))) { pos -= M.barTicks(M.timeAt(C.score, m)); m++; }
     }
+    if (clip.from === 'bars' && !at && atBarStart && clip.extras) pasteExtras(clip.extras[0], st, mStart);
   });
   if (!(at && at.quiet)) D.toast('Pasted.', 1400);
+}
+// the second voice and the lines of copied bars, put back at their new place (only where the bars
+// have the same time as where they came from)
+function pasteExtras(x, st, m0) {
+  if (!x) return;
+  const base = st.base || st;
+  const same = (k) => m0 + k < C.score.measures.length && M.timeAt(C.score, m0 + k).join('/') === x.times[k];
+  if (x.v2) {
+    if (!base.v2) base.v2 = base.bars.map((b, m) => M.restBar(M.timeAt(C.score, m)));
+    x.v2.forEach((bar, k) => { if (same(k)) base.v2[m0 + k] = bar.map((e) => ({ ...M.clone(e), id: M.newId() })); });
+  }
+  if (x.spans && x.spans.length) {
+    const spans = C.score.spans || (C.score.spans = []);
+    for (const q of x.spans) {
+      const a = q.a.m + m0, b = q.b.m + m0;
+      if (!same(q.a.m) || !same(q.b.m)) continue;
+      // (the same line already there is not doubled)
+      if (spans.some((o) => o.kind === q.kind && o.st === base.id && o.a.m === a && o.a.pos === q.a.pos && o.b.m === b && o.b.pos === q.b.pos)) continue;
+      spans.push({ ...M.clone(q), id: M.newId(), st: base.id, a: { ...q.a, m: a }, b: { ...q.b, m: b } });
+    }
+  }
 }
 function insertBars(n, after) {
   const at = C.selBars ? (after ? C.selBars.to + 1 : C.selBars.from) : targetBar() === null ? null : targetBar() + (after ? 1 : 0);
@@ -1264,7 +1327,7 @@ function placeSelBar(bar) {
 // ---- drawn icons: every symbol is drawn with the engraving font and centred on its real shape,
 // so the palette looks the same on every iPad
 const CLEF_GLYPH = { treble: '', bass: '', alto: '', tenor: '', treble8: '', bass8: '', perc: '' };
-const NOTE_GLYPH = { 1: '', 2: '', 4: '', 8: '', 16: '', 32: '' };
+const NOTE_GLYPH = { 1: '', 2: '', 4: '', 8: '', 16: '', 32: '', 64: '' };
 function inkOf(on) { return on ? (css('--accent-ink') || '#fff') : (css('--ink') || '#16181d'); }
 function drawIcon(draw, w, h, on, k = 6.6) {
   const c = document.createElement('canvas');
@@ -1482,12 +1545,13 @@ function renderTab() {
     }
     body.append(vs);
     const g = grid();
-    for (const [d, name] of [[1, 'Whole'], [2, 'Half'], [4, 'Quarter'], [8, 'Eighth'], [16, '16th'], [32, '32nd']]) {
+    for (const [d, name] of [[1, 'Whole'], [2, 'Half'], [4, 'Quarter'], [8, 'Eighth'], [16, '16th'], [32, '32nd'], [64, '64th']]) {
       const on = T.dur === d;
       g.append(mbtn('', name + ' note', on, () => setDuration(d), { draw: (gg, W, H) => gC(gg, T.rest ? GL.rest[d] : NOTE_GLYPH[d], W, H, 3.6), w: 40, h: 34 }));
     }
     const g2 = grid();
-    g2.append(mbtn('', 'Dotted', T.dots === 1, () => { T.dots = T.dots ? 0 : 1; setDuration(T.dur); }, { draw: (gg, W, H) => { gC(gg, NOTE_GLYPH[4], W - 1.2, H, 3.2); glyph(gg, GL.dot, W / 2 + 0.7, H / 2 + 0.75, 3.2); }, small: 'dot' }));
+    g2.append(mbtn('', 'Dotted', T.dots === 1, () => { T.dots = T.dots === 1 ? 0 : 1; setDuration(T.dur); }, { draw: (gg, W, H) => { gC(gg, NOTE_GLYPH[4], W - 1.2, H, 3.2); glyph(gg, GL.dot, W / 2 + 0.7, H / 2 + 0.75, 3.2); }, small: 'dot' }));
+    g2.append(mbtn('', 'Double dotted', T.dots === 2, () => { T.dots = T.dots === 2 ? 0 : 2; setDuration(T.dur); }, { draw: (gg, W, H) => { gC(gg, NOTE_GLYPH[4], W - 2.0, H, 3.2); glyph(gg, GL.dot, W / 2 + 0.2, H / 2 + 0.75, 3.2); glyph(gg, GL.dot, W / 2 + 1.0, H / 2 + 0.75, 3.2); }, small: '2 dots' }));
     g2.append(mbtn('', 'Rest', T.rest, () => { T.rest = !T.rest; renderTab(); }, { draw: (gg, W, H) => gC(gg, GL.rest[4], W, H, 3.4, -0.4), small: 'rest' }));
     g2.append(mbtn('', 'Triplet', tupN() === 3, () => { T.tup = tupN() === 3 ? 0 : 3; setDuration(T.dur); }, { draw: (gg, W, H) => gC(gg, GL.tuplet(3), W, H, 3.4, -0.5), small: 'triplet' }));
     g2.append(mbtn('Chord', 'Add notes to a chord', T.chord, () => { T.chord = !T.chord; renderTab(); hint(T.chord ? 'Write on an existing note to add to its chord.' : 'Writing replaces what is there.'); }, { draw: (gg, W, H) => { const x = W / 2 - 0.6; for (const dy of [-1, 0, 1]) glyph(gg, GL.noteBlack, x, H / 2 + 0.5 + dy, 3.2); }, small: 'chord' }));
@@ -1500,6 +1564,9 @@ function renderTab() {
     lab('Accidentals');
     const ga = grid('five');
     for (const [a, name] of [[-2, 'Double flat'], [-1, 'Flat'], [0, 'Natural'], [1, 'Sharp'], [2, 'Double sharp']]) ga.append(mbtn('', name, T.acc === a, () => setAcc(a), { glyph: GL.acc[a], size: a === 2 ? 4 : 3.6 }));
+    const ga2 = grid('two');
+    ga2.append(mbtn('F♯ ↔ G♭', 'Write the same note another way (J)', false, respell, { textCls: '', small: 'respell' }));
+    ga2.append(mbtn('(♮)', 'Reminder accidental, in brackets', !!(evs[0] && evs[0].ev.notes && evs[0].ev.notes.length && evs[0].ev.notes.every((n) => n.cau)), toggleCautionary, { textCls: '', small: 'reminder' }));
     lab('Selected notes');
     const arc = (gg, W, H, up) => { gg.beginPath(); const y = H * (up ? 0.62 : 0.38), h = up ? -1.3 : 1.3; gg.moveTo(W * 0.18, y); gg.bezierCurveTo(W * 0.35, y + h, W * 0.65, y + h, W * 0.82, y); gg.bezierCurveTo(W * 0.65, y + h * 0.72, W * 0.35, y + h * 0.72, W * 0.18, y); gg.fill(); };
     const gt = grid('four');
@@ -1537,7 +1604,7 @@ function renderTab() {
   } else if (C.tab === 'dyn') {
     const cur = evs[0];
     const g = grid('five');
-    for (const d of ['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'fp']) g.append(mbtn('', d, cur && cur.ev.dyn === d, () => setDyn(d), { glyph: d.split('').map((c) => GL.dyn[c]).join(''), size: d.length > 2 ? 3.2 : 3.8 }));
+    for (const d of ['pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff', 'sf', 'sfz', 'sffz', 'fz', 'rfz', 'fp', 'sfp']) g.append(mbtn('', d, cur && cur.ev.dyn === d, () => setDyn(d), { glyph: d.split('').map((c) => GL.dyn[c]).join(''), size: d.length > 2 ? 3.2 : 3.8 }));
     lab('Hairpins');
     const cg = cards('three');
     const pin = (gg, W, H, open) => { gg.lineWidth = 0.14; gg.beginPath(); const x0 = W * 0.18, x1 = W * 0.82, y = H / 2; if (open) { gg.moveTo(x1, y - 1); gg.lineTo(x0, y); gg.lineTo(x1, y + 1); } else { gg.moveTo(x0, y - 1); gg.lineTo(x1, y); gg.lineTo(x0, y + 1); } gg.stroke(); };
@@ -1594,7 +1661,7 @@ function renderTab() {
     const ms = m === null ? {} : C.score.measures[m] || {};
     cg.append(card('Segno', ms.mark === 'segno', () => setBarMark('mark', 'segno'), (gg, W, H) => gC(gg, GL.segno, W, H, 3.4)));
     cg.append(card('Coda', ms.mark === 'coda', () => setBarMark('mark', 'coda'), (gg, W, H) => gC(gg, GL.coda, W, H, 3.4)));
-    for (const [k, t2] of [['tocoda', 'To Coda'], ['fine', 'Fine'], ['dcfine', 'D.C. al Fine'], ['dscoda', 'D.S. al Coda'], ['dsfine', 'D.S. al Fine'], ['dc', 'D.C.'], ['ds', 'D.S.']]) {
+    for (const [k, t2] of [['tocoda', 'To Coda'], ['fine', 'Fine'], ['dcfine', 'D.C. al Fine'], ['dccoda', 'D.C. al Coda'], ['dscoda', 'D.S. al Coda'], ['dsfine', 'D.S. al Fine'], ['dc', 'D.C.'], ['ds', 'D.S.']]) {
       cg.append(card(t2, ms.jump === k, () => setBarMark('jump', k), (gg, W, H) => { const w = textWidth(gg, t2, 2.1, TEXT_FONT, 'italic'); text(gg, t2, W / 2 - w / 2, H / 2 + 0.7, 2.1, TEXT_FONT, 'italic'); }, { k: 6.4 }));
     }
     body.append(el('p', 'hint', 'Ornaments go on the selected notes. Signs go on the selected bar; they are followed when the score plays.'));
@@ -1635,6 +1702,21 @@ function renderTab() {
         fr.append(b);
       }
       body.append(fr);
+      // several fingers (a double stop, a shift: "1 3", "2-1")
+      const fr2 = el('div', 'cp-row');
+      const fin = el('input'); fin.placeholder = 'Fingers for a chord: 1 3'; fin.setAttribute('aria-label', 'Fingering'); fin.value = cur && cur.fing ? cur.fing : ''; fin.autocapitalize = 'off'; fin.spellcheck = false;
+      const fset = el('button', 'btn small', 'Set');
+      const putF = () => { const sel = selEvents().filter((f) => !f.ev.rest); if (!sel.length) { hint('Select a note first.'); return; } const v = fin.value.trim().replace(/\s+/g, ' '); edit(() => { for (const f of sel) { if (v) f.ev.fing = v; else delete f.ev.fing; } }, { keepSel: true }); renderTab(); };
+      fset.addEventListener('click', putF); fin.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); putF(); } });
+      fr2.append(fin, fset); body.append(fr2);
+      lab('String (I to IV)');
+      const sr = el('div', 'cp-row cp-fing');
+      for (const w of ['I', 'II', 'III', 'IV']) {
+        const b = el('button', 'btn small' + (cur && cur.str === w ? ' on' : ''), w);
+        b.addEventListener('click', () => { const sel = selEvents().filter((f) => !f.ev.rest); if (!sel.length) { hint('Select a note first, then its string.'); return; } edit(() => { for (const f of sel) { if (f.ev.str === w) delete f.ev.str; else f.ev.str = w; } }, { keepSel: true }); renderTab(); });
+        sr.append(b);
+      }
+      body.append(sr);
     }
     lab('Words on the selected note');
     const cg = cards('three');
@@ -1653,18 +1735,25 @@ function renderTab() {
     const row = el('div', 'cp-row');
     const bpm = el('input', 'num'); bpm.type = 'number'; bpm.inputMode = 'numeric'; bpm.min = 20; bpm.max = 300; bpm.value = tempo.bpm;
     const word = el('input'); word.placeholder = 'Allegro, Andante…'; word.value = C.score.measures[m].tempo ? C.score.measures[m].tempo.text || '' : '';
+    // the beat the number counts: a quarter, a dotted quarter (6/8), a half (2/2)…
+    const ct = M.timeAt(C.score, m), compound = ct[1] === 8 && ct[0] % 3 === 0 && ct[0] > 3;
+    const beatNow = C.score.measures[m].tempo || tempo.beat ? (tempo.beat || 4) + (tempo.dotted ? '.' : '') : compound ? '4.' : ct[1] === 2 ? '2' : '4';
+    const unit = el('select', 'cp-select cp-beat'); unit.setAttribute('aria-label', 'Beat');
+    for (const [v, l] of [['4', '♩ ='], ['4.', '♩. ='], ['2', 'Half ='], ['2.', 'Dotted half ='], ['8', '♪ ='], ['8.', '♪. =']]) { const o = el('option', '', l); o.value = v; if (v === beatNow) o.selected = true; unit.append(o); }
+    const beatOf = () => ({ beat: parseInt(unit.value, 10), dotted: unit.value.endsWith('.') });
     const setT = el('button', 'btn small primary', 'Set');
-    setT.addEventListener('click', () => edit(() => { C.score.measures[m].tempo = { bpm: clamp(+bpm.value || 96, 20, 300), beat: tempo.beat || 4, text: word.value.trim() }; }, { keepSel: true }));
-    row.append(bpm, word, setT); body.append(row);
+    setT.addEventListener('click', () => edit(() => { C.score.measures[m].tempo = { bpm: clamp(+bpm.value || 96, 20, 300), ...beatOf(), text: word.value.trim() }; }, { keepSel: true }));
+    row.append(unit, bpm, word, setT); body.append(row);
     const tg = cards('two');
     for (const [w, b] of [['Largo', 50], ['Adagio', 66], ['Andante', 80], ['Moderato', 100], ['Allegretto', 112], ['Allegro', 132], ['Vivace', 156], ['Presto', 180]]) {
-      tg.append(card(w, !!C.score.measures[m].tempo && C.score.measures[m].tempo.text === w, () => edit(() => { C.score.measures[m].tempo = { bpm: b, beat: 4, text: w }; }, { keepSel: true }), (gg, W, H) => {
+      tg.append(card(w, !!C.score.measures[m].tempo && C.score.measures[m].tempo.text === w, () => edit(() => { const u = beatOf(); C.score.measures[m].tempo = { bpm: u.dotted ? Math.round(b / 1.5) : u.beat === 2 ? Math.round(b / 2) : u.beat === 8 ? b * 2 : b, ...u, text: w }; }, { keepSel: true }), (gg, W, H) => {
         const tw = textWidth(gg, w, 1.8, TEXT_FONT, '700'); const total = tw + 4.6; let x = W / 2 - total / 2; text(gg, w, x, H / 2 + 0.6, 1.8, TEXT_FONT, '700'); x += tw + 0.5; glyph(gg, GL.quarterUp, x, H / 2 + 0.6, 2.6); text(gg, '= ' + b, x + 1.2, H / 2 + 0.6, 1.8);
       }, { w: 120 }));
     }
     const g3 = grid('three');
     g3.append(mbtn('Mark', 'Rehearsal mark', !!C.score.measures[m].rehearsal, () => {
-      edit(() => { const used = C.score.measures.filter((x) => x.rehearsal).length; const ms = C.score.measures[m]; ms.rehearsal = ms.rehearsal ? null : String.fromCharCode(65 + (used % 26)); }, { keepSel: true });
+      // (the letters always run A, B, C… from the start: one added before another moves the later ones on)
+      edit(() => { const ms = C.score.measures[m]; ms.rehearsal = ms.rehearsal ? null : 'A'; let k = 0; for (const x of C.score.measures) if (x.rehearsal) { x.rehearsal = k < 26 ? String.fromCharCode(65 + k) : String.fromCharCode(65 + Math.floor(k / 26) - 1) + String.fromCharCode(65 + (k % 26)); k++; } }, { keepSel: true });
     }, { draw: (gg, W, H) => { gg.lineWidth = 0.13; gg.strokeRect(W / 2 - 1.1, H / 2 - 1.3, 2.2, 2.4); text(gg, 'A', W / 2 - 0.65, H / 2 + 0.75, 1.9, TEXT_FONT, '700'); }, small: 'rehearsal' }));
     g3.append(mbtn('No text', 'Remove the words', false, () => setText(null), { textCls: '', small: 'remove' }));
   } else if (C.tab === 'clef') {
@@ -1703,9 +1792,19 @@ function renderTab() {
     lab('Time');
     const g3 = grid('four');
     const curT = M.timeAt(C.score, m);
-    for (const [n, d, sym] of [[2, 4], [3, 4], [4, 4], [4, 4, 'common'], [2, 2], [2, 2, 'cut'], [3, 8], [6, 8], [9, 8], [12, 8], [5, 4], [7, 8]]) {
+    for (const [n, d, sym] of [[2, 4], [3, 4], [4, 4], [4, 4, 'common'], [2, 2], [2, 2, 'cut'], [3, 2], [3, 8], [6, 8], [9, 8], [12, 8], [5, 4], [6, 4], [5, 8], [7, 8]]) {
       const on = curT[0] === n && curT[1] === d && (C.score.measures[m].timeSym || null) === (sym || null);
       g3.append(mbtn('', sym || `${n}/${d}`, on, () => applySig('time', { t: [n, d], sym }, st, m, C.sigOnly && range ? range[1] : null), { draw: (gg, W, H) => { const y = H / 2 - 2; drawTime(gg, [n, d], W / 2 - (n >= 10 ? 1.6 : 0.85), y, sym); }, k: 4.4, h: 40 }));
+    }
+    // any other: two numbers
+    {
+      const row = el('div', 'cp-row');
+      const nIn = el('input', 'num'); nIn.type = 'number'; nIn.inputMode = 'numeric'; nIn.min = 1; nIn.max = 32; nIn.value = curT[0]; nIn.setAttribute('aria-label', 'Beats in a bar');
+      const dSel = el('select', 'cp-select'); for (const d of [1, 2, 4, 8, 16, 32]) { const o = el('option', '', '/ ' + d); o.value = d; if (d === curT[1]) o.selected = true; dSel.append(o); }
+      dSel.setAttribute('aria-label', 'Beat value');
+      const go = el('button', 'btn small primary', 'Set');
+      go.addEventListener('click', () => { const n = Math.round(+nIn.value); if (!(n >= 1 && n <= 32)) { hint('Between 1 and 32 beats.'); return; } applySig('time', { t: [n, +dSel.value] }, st, m, C.sigOnly && range ? range[1] : null); });
+      row.append(el('span', 'cp-sigtext', 'Other'), nIn, dSel, go); body.append(row);
     }
     // ---- transpose: the selected notes, the selected bars, or the whole score (with its key)
     const scope = selEvents().length ? 'the selected notes' : C.selBars ? `bars ${C.selBars.from + 1}–${C.selBars.to + 1}` : 'the whole score';
@@ -1756,10 +1855,31 @@ function renderTab() {
     eg.append(card('2nd ending', !!voltaHere && voltaHere.n === 2, () => addEnding(2), endIcon(2, false), { k: 6.6 }));
     eg.append(card('3rd ending', !!voltaHere && voltaHere.n === 3, () => addEnding(3), endIcon(3, false), { k: 6.6 }));
     body.append(el('p', 'hint', 'Select the bar (or bars) of the ending, then choose it. A 1st ending gets its repeat barline by itself.'));
+    lab('Pickup bar (the first bar, shorter)');
+    {
+      const t0 = M.timeAt(C.score, 1 < C.score.measures.length ? 1 : 0).slice(0, 2), unit = M.WHOLE / t0[1], full = M.barTicks(t0);
+      const compound = t0[1] === 8 && t0[0] % 3 === 0 && t0[0] > 3;
+      const opts = [[0, 'None']];
+      if (t0[1] <= 4) opts.push([unit / 2, '½ beat']);
+      for (let k = 1; k * unit < full; k++) opts.push([k * unit, compound ? `${k} ${t0[1] === 8 ? 'quaver' : 'beat'}${k > 1 ? 's' : ''}` : `${k} beat${k > 1 ? 's' : ''}`]);
+      const sel = el('select', 'cp-select'); sel.setAttribute('aria-label', 'Pickup bar');
+      const now = M.pickupOf(C.score);
+      for (const [v, l] of opts) { const o = el('option', '', l); o.value = v; if (v === now) o.selected = true; sel.append(o); }
+      if (now && !opts.some((o) => o[0] === now)) { const o = el('option', '', 'As it is'); o.value = now; o.selected = true; sel.append(o); }
+      sel.addEventListener('change', () => { const v = +sel.value; edit(() => M.setPickup(C.score, v)); hint(v ? 'The first bar is now a pickup bar; the bar after it is bar 1.' : 'The first bar is a whole bar again.', 2200); });
+      const row = el('div', 'cp-row'); row.append(sel); body.append(row);
+    }
+    lab('Breaks after bar ' + (m === null ? '…' : m + 1));
+    const bk = grid('three');
+    const setBrk = (kind) => { if (m === null) { hint('Select a bar first.'); return; } edit(() => { const q = C.score.measures[m]; if (q.brk === kind) delete q.brk; else q.brk = kind; }, { keepSel: true }); hint(C.score.measures[m].brk ? (kind === 'page' ? 'The next page starts after this bar.' : 'The next line starts after this bar.') : 'Break taken away.', 1800); };
+    bk.append(mbtn('Line', 'Start a new line after this bar', ms.brk === 'sys', () => setBrk('sys'), { textCls: '', small: 'break' }));
+    bk.append(mbtn('Page', 'Start a new page after this bar', ms.brk === 'page', () => setBrk('page'), { textCls: '', small: 'break' }));
     const g3 = grid('three');
     g3.append(mbtn('Delete', 'Delete the selected bars', false, deleteBars, { textCls: '', small: 'bars' }));
     g3.append(mbtn('Clear', 'Empty the selected bars', false, clearBars, { textCls: '', small: 'bars' }));
     g3.append(mbtn('Copy', 'Copy', false, copySel, { textCls: '' }));
+    g3.append(mbtn('Cut', 'Cut: copy, then empty', false, cutSel, { textCls: '' }));
+    g3.append(mbtn('Paste', 'Paste at the selected bar', false, () => pasteClip(C.clip), { textCls: '' }));
     body.append(el('p', 'hint', 'In Select mode, tap a bar; drag across bars and staves to select more.'));
   }
 }
@@ -1903,6 +2023,7 @@ function wireKeys() {
     const k = e.key;
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'c') { e.preventDefault(); copySel(); return; }
+    if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'x') { e.preventDefault(); cutSel(); return; }
     if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'v') { e.preventDefault(); pasteClip(C.clip); return; }
     if (k === ' ') { e.preventDefault(); togglePlay(); return; }
     if (k === 'Backspace' || k === 'Delete') { e.preventDefault(); deleteSel(); return; }
@@ -1919,8 +2040,9 @@ function wireKeys() {
     if (k === 'ArrowUp') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(7); else if (e.shiftKey) moveNotes(1); else moveSemis(1); return; }
     if (k === 'ArrowDown') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(-7); else if (e.shiftKey) moveNotes(-1); else moveSemis(-1); return; }
     const durKey = { 1: 64, 2: 32, 3: 16, 4: 8, 5: 4, 6: 2, 7: 1 }[k];   // the Sibelius keypad
-    if (durKey && durKey <= 32) { setDuration(durKey); return; }
+    if (durKey && durKey <= 64) { setDuration(durKey); return; }
     if (k === '.') { C.tool.dots = C.tool.dots ? 0 : 1; setDuration(C.tool.dur); return; }
+    if ((k === 'j' || k === 'J') && !e.metaKey && !e.ctrlKey && C.sel.size) { e.preventDefault(); respell(); return; }
     // letters write after the selected note
     const L = 'cdefgab'.indexOf(k.toLowerCase());
     if (L >= 0 && !e.metaKey && !e.ctrlKey) {
@@ -2036,6 +2158,7 @@ function wirePanels() {
     catch (err) { console.error(err); D.toast('The parts could not be made.'); }
   });
   $('#exXml').addEventListener('click', () => { D.hidePanel(); D.shareBlob(new Blob([toMusicXML(C.score)], { type: 'application/vnd.recordare.musicxml+xml' }), fileName('.musicxml')); });
+  $('#exMidi').addEventListener('click', () => { D.hidePanel(); try { D.shareBlob(toMidi(C.score), fileName('.mid')); } catch (e) { console.error(e); D.toast('The MIDI file could not be made.'); } });
   $('#exWav').addEventListener('click', async () => {
     D.hidePanel(); D.toast('Recording the score…', 120000);
     try { const blob = await renderAudio(C.score, (f) => { $('#toast').textContent = `Recording the score… ${Math.round(f * 100)}%`; }); $('#toast').hidden = true; D.shareBlob(blob, fileName('.wav')); }

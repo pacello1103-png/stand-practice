@@ -5,7 +5,7 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { voiceView, hasVoice2,
-  WHOLE, barTicks, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
+  WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
 } from './model.js';
 
 // ---------- glyphs (SMuFL code points) ----------
@@ -57,7 +57,7 @@ export function gm(g) {
 export function clearMetrics() { metricCache.clear(); }
 
 const DYN_LETTERS = (d) => d.split('').map((c) => GL.dyn[c]).join('');
-export const DYNAMICS = ['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'sf', 'fp', 'rfz'];
+export const DYNAMICS = ['pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff', 'sfz', 'sf', 'sffz', 'fz', 'sfp', 'fp', 'rfz'];
 
 // ---------- spacing ----------
 const space = (ticks) => 1.3 + 1.65 * Math.log2(1 + (ticks / (WHOLE / 4)) * 2.2);
@@ -77,6 +77,8 @@ function keyPositions(fifths, clef) {
   }
   return flatT.map((p) => fit(p + off)).slice(0, -fifths).map((p) => ({ p, g: GL.acc[-1] }));
 }
+// room before a note for its accidentals (a reminder accidental in brackets needs more)
+const n0acc = (ev) => (ev.notes.some((n) => n.cau) ? 1.8 : 1);
 const keyWidth = (fifths) => (fifths ? Math.abs(fifths) * 1.0 + 0.6 : 0);
 const timeWidth = (time) => (time ? Math.max(String(time[0]).length, String(time[1]).length) * 1.8 + 1.0 : 0);
 
@@ -100,7 +102,8 @@ export function layoutScore(score, opts = {}) {
   const pageW = L.landscape ? phMm : pwMm, pageH = L.landscape ? pwMm : phMm;
   const spMm = (L.staffMm || 7) / 4;
   const W = pageW / spMm, H = pageH / spMm;
-  const margin = { l: 13 / spMm, r: 11 / spMm, t: 13 / spMm, b: 14 / spMm };
+  // (the same margin left and right, as printed music has; a little more at the foot)
+  const margin = { l: 12 / spMm, r: 12 / spMm, t: 13 / spMm, b: 15 / spMm };
   // staves on show
   let info = staffInfo(score).map((x, k) => ({ ...x, k }));
   if (opts.partIndex !== undefined) info = info.filter((x) => x.pi === opts.partIndex);
@@ -122,7 +125,7 @@ export function layoutScore(score, opts = {}) {
         if (ev.clef) o.clef = 1;
         if (ev.full) o.full = true;
         if (ev.dots) o.dots = Math.max(o.dots, ev.dots);
-        if (ev.notes && ev.notes.some((n) => n.a)) { o.acc = 1; hasAcc = true; }
+        if (ev.notes && ev.notes.some((n) => n.a || n.cau)) { o.acc = Math.max(o.acc, n0acc(ev)); hasAcc = true; }
         if (ev.notes && ev.notes.length > 1) o.acc = Math.max(o.acc, ev.notes.filter((n) => n.a).length > 2 ? 2 : o.acc);
         onsets.set(p, o);
         p += len;
@@ -186,14 +189,18 @@ export function layoutScore(score, opts = {}) {
       list.push({ ...g, w });
       used += w;
       gi++;
+      // a line (or page) break chosen after this bar
+      if (score.measures[g.end ?? g.m] && score.measures[g.end ?? g.m].brk) break;
     }
-    systems.push({ groups: list, indent, head, avail, used, first });
+    const lastBar = list.length ? list[list.length - 1] : null;
+    const brk = lastBar ? (score.measures[lastBar.end ?? lastBar.m] || {}).brk || null : null;
+    systems.push({ groups: list, indent, head, avail, used, first, brk });
   }
   // don't leave one bar alone on the last line: bring the bar before it down too
   if (systems.length > 1) {
     const last = systems[systems.length - 1], prev = systems[systems.length - 2];
     const g = prev.groups[prev.groups.length - 1], c = g && cols[g.m];
-    if (last.groups.length === 1 && prev.groups.length >= 3 && !g.multi && !last.groups[0].multi && c && !c.timeChange && !c.keyChange && !c.clefChange && !cols[last.groups[0].m].timeChange && !cols[last.groups[0].m].keyChange) {
+    if (last.groups.length === 1 && prev.groups.length >= 3 && !prev.brk && !g.multi && !last.groups[0].multi && c && !c.timeChange && !c.keyChange && !c.clefChange && !cols[last.groups[0].m].timeChange && !cols[last.groups[0].m].keyChange) {
       prev.groups.pop(); prev.used -= g.w;
       last.groups.unshift(g); last.used += g.w;
     }
@@ -204,9 +211,9 @@ export function layoutScore(score, opts = {}) {
     const flex = sy.used - fixed;
     const last = si === systems.length - 1;
     const want = sy.avail - fixed;
-    const k = last && sy.used / sy.avail < 0.62 ? 1 : want / flex;
+    const k = (last || sy.brk) && sy.used / sy.avail < 0.62 ? 1 : want / flex;
     let x = margin.l + sy.indent + fixed;
-    sy.x0 = margin.l + sy.indent; sy.x1 = last && k === 1 ? x + flex : W - margin.r;
+    sy.x0 = margin.l + sy.indent; sy.x1 = (last || sy.brk) && k === 1 ? x + flex : W - margin.r;
     sy.measures = sy.groups.map((g) => {
       const w = g.w * k;
       const mm = { ...g, x0: x, x1: x + w, k };
@@ -220,7 +227,12 @@ export function layoutScore(score, opts = {}) {
   let page = null, y = 0;
   const newPage = () => { page = { n: pages.length, systems: [], W, H }; pages.push(page); y = margin.t + (pages.length === 1 ? titleHeight(score, spMm, opts) : 0); };
   newPage();
-  const staffGapSame = 6.2, staffGapOther = 7.0, sysGap = 8.0;
+  // Gaps in staff spaces, as engraved music has them: between the staves of one instrument (the
+  // piano's two) 6, between instruments 7; between systems about 9 for one staff (a part: some ten to
+  // twelve lines to a page) and about 12 for several, so each system stands clearly on its own
+  const staffGapSame = 6.2, staffGapOther = 7.0;
+  const sysGapOf = (n) => (n > 1 ? 7.5 : 4.5);
+  let pageNext = false;
   for (const sy of systems) {
     // which staves show on this system (empty staves can be hidden in big scores)
     let shown = info;
@@ -244,10 +256,11 @@ export function layoutScore(score, opts = {}) {
     const height = tops[tops.length - 1] + 4;
     const above = Math.max(2.5, ext[0].above + (sy.measures.some((mm) => score.measures[mm.m].tempo || score.measures[mm.m].text || score.measures[mm.m].rehearsal) ? 3 : 0.5));
     const below = Math.max(2, ext[ext.length - 1].below);
-    if (page.systems.length && y + above + height + below > H - margin.b) newPage();
+    if (page.systems.length && (y + above + height + below > H - margin.b || pageNext)) newPage();
+    pageNext = sy.brk === 'page';
     const top = y + above;
     page.systems.push({ ...sy, top, staves: shown.map((s, i) => ({ ...s, y: top + tops[i] })), height, above, below, concert });
-    y = top + height + below + sysGap;
+    y = top + height + below + sysGapOf(shown.length);
   }
   // spread the systems down the page when the page is mostly full
   for (const pg of pages) {
@@ -256,9 +269,12 @@ export function layoutScore(score, opts = {}) {
     const bottom = last.top + last.height + last.below;
     const free = H - margin.b - bottom;
     const full = bottom / (H - margin.b);
+    // (a page ended on purpose, with room left, keeps its systems together)
     if (full < 0.68 && pg !== pages[pages.length - 1]) continue;
+    if (last.brk === 'page' && full < 0.85) continue;
     if (pg === pages[pages.length - 1] && full < 0.8) continue;
-    const add = Math.min(free / (pg.systems.length - 1), 9);
+    // (a little more room between the systems, never so much that they float apart)
+    const add = Math.min(free / (pg.systems.length - 1), pg.systems[0].staves.length > 1 ? 5 : 3);
     pg.systems.forEach((s, i) => { const d = add * i; s.top += d; s.staves.forEach((st) => { st.y += d; }); });
   }
   return { pages, W, H, spMm, margin, score, opts: L, concert, partIndex: opts.partIndex };
@@ -283,6 +299,7 @@ function staffExtent(score, s, sy, concert) {
       const ott = ottavaAt(score, s.st.id, m, pos);
       if (ev.dyn || ev.hp || (ev.txt && ev.txtBelow)) { below = Math.max(below, 3.2); hasDyn = true; }
       if (ev.txt) above = Math.max(above, 2.8);
+      if (ev.fing || ev.str) above = Math.max(above, 1.6 + (ev.fing ? 1.45 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) + (ev.str ? 1.6 : 0));
       if (ev.chord) above = Math.max(above, ev.txt ? 5.2 : 3.4);
       if (ev.lyric) hasLyr = true;
       if (!ev.notes) continue;
@@ -396,7 +413,7 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   }
   // bar number at the start of each line (not the first)
   const m0 = sys.measures[0].m;
-  if (m0 > 0) text(ctx, String(m0 + 1), x0, top - 1.6, 1.3, TEXT_FONT, 'italic');
+  if (m0 > 0) text(ctx, String(barNumber(score, m0)), x0, top - 1.6, 1.3, TEXT_FONT, 'italic');
   // start of the line: clef, key, time
   const key0 = keyAt(score, m0), time0 = timeAt(score, m0);
   const showTime = sys.first || score.measures[m0].time;
@@ -833,10 +850,10 @@ function layColumns(lay, m) {
     const onsets = new Map();
     let info = staffInfo(score);
     if (lay.partIndex !== undefined) info = info.filter((x) => x.pi === lay.partIndex);
-    for (const s of info) for (const bb of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let p = 0; for (const ev of bb) { const o = onsets.get(p) || { acc: 0, dots: 0 }; if (ev.dots) o.dots = Math.max(o.dots, ev.dots); if (ev.notes && ev.notes.some((n) => n.a)) o.acc = 1; onsets.set(p, o); p += ticksOf(ev, time); } }
+    for (const s of info) for (const bb of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let p = 0; for (const ev of bb) { const o = onsets.get(p) || { acc: 0, dots: 0 }; if (ev.dots) o.dots = Math.max(o.dots, ev.dots); if (ev.notes && ev.notes.some((n) => n.a || n.cau)) o.acc = Math.max(o.acc, n0acc(ev)); onsets.set(p, o); p += ticksOf(ev, time); } }
     if (!onsets.size) onsets.set(0, { acc: 0, dots: 0 });
     const times = [...onsets.keys()].sort((a, b) => a - b);
-    lay._cols.set(m, { segs: times.map((t, i) => ({ t, w: space((i + 1 < times.length ? times[i + 1] : total) - t) + (onsets.get(t).dots ? 0.45 * onsets.get(t).dots : 0), pre: onsets.get(t).acc ? 1.1 : 0 })) });
+    lay._cols.set(m, { segs: times.map((t, i) => ({ t, w: space((i + 1 < times.length ? times[i + 1] : total) - t) + (onsets.get(t).dots ? 0.45 * onsets.get(t).dots : 0), pre: onsets.get(t).acc ? 1.1 * onsets.get(t).acc : 0 })) });
   }
   return lay._cols.get(m);
 }
@@ -1037,8 +1054,19 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       });
       if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ id: ev.id, kind: 'fing', name: String(ev.fing), x0: cxF - 0.7, x1: cxF + 0.7, y0: base - parts.length * 1.45 - 0.1, y1: base + 0.3 });
     }
+    if (ev.str && e.notes.length) {
+      // the string to play it on (I to IV), above the fingering
+      const arts = ev.art || [];
+      const nearUp = !e.up && arts.some((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a));
+      const far = arts.filter((a) => ['ferm', 'fermS', 'fermL', 'trill', 'mord', 'prall', 'turn', 'turnInv', 'up', 'down', 'harm', 'stopped', 'open', 'snap'].includes(a)).length;
+      const topNote = (e.notes[e.notes.length - 1].p - 8) / 2;
+      const nF = ev.fing ? String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0;
+      const yS = s.y - Math.max(1.0, highestAbove(e, s.y) + 0.6, nearUp ? topNote + 2.6 : 0) - far * 2.9 - nF * 1.45 - (nF ? 0.25 : 0);
+      const word = String(ev.str), sw = textWidth(ctx, word, 1.5, TEXT_FONT, '600');
+      text(ctx, word, e.x + HEAD_W / 2 - sw / 2, yS, 1.5, TEXT_FONT, '600');
+    }
     if (ev.txt && !ev.txtBelow) {
-      const ty = s.y - Math.max(1.6, highestAbove(e, s.y) + 1.2) - (ev.fing ? 1.5 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0);
+      const ty = s.y - Math.max(1.6, highestAbove(e, s.y) + 1.2) - (ev.fing ? 1.5 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0) - (ev.str ? 1.6 : 0);
       const st2 = ev.txtStyle === 'plain' || ev.txtStyle === 'tech' || ev.txtStyle === 'box' ? '' : 'italic';
       text(ctx, ev.txt, e.x, ty, 1.7, TEXT_FONT, st2);
       if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ id: ev.id, kind: 'txt', name: ev.txt, x0: e.x - 0.2, x1: e.x + Math.max(1.5, String(ev.txt).length * 0.8), y0: ty - 1.5, y1: ty + 0.5 });
@@ -1140,14 +1168,19 @@ function drawChord(ctx, e, sy, accFor) {
   // accidentals (columns from the right when they would collide)
   let accCol = [];
   e.notes.forEach((n, i) => {
-    const a = accFor(n);
+    let a = accFor(n);
+    // a reminder accidental (chosen on the note): shown even when not needed, in brackets
+    const cau = !!(n.src && n.src.cau) && !n.tieIn;
+    if ((a === null || a === undefined) && cau) a = n.a || 0;
     if (a === null || a === undefined) return;
     const ag = GL.acc[a];
     let col = 0;
     while (accCol.some((q) => q.col === col && Math.abs(q.p - n.p) < 6)) col++;
     accCol.push({ col, p: n.p });
     const w = gm(ag).w;
-    glyph(ctx, ag, e.x - 0.35 - w - col * 1.05 - (side.get(i) && !e.up ? hw : 0), yOf(sy, n.p));
+    const ax = e.x - 0.35 - w - col * 1.05 - (side.get(i) && !e.up ? hw : 0) - (cau ? 0.45 : 0);
+    glyph(ctx, ag, ax, yOf(sy, n.p));
+    if (cau) { glyph(ctx, GL.parenL, ax - 0.5, yOf(sy, n.p)); glyph(ctx, GL.parenR, ax + w + 0.05, yOf(sy, n.p)); }
   });
   if (ev.grace && e.notes.length) drawGrace(ctx, e, sy, accCol.length ? 0.35 + gm(GL.acc[1]).w + Math.max(...accCol.map((q) => q.col)) * 1.05 : 0);
   e.notes.forEach((n, i) => {

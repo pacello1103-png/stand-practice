@@ -23,7 +23,8 @@ export function evTicks(ev) {
   }
   return Math.round(d);
 }
-export const barTicks = (time) => (time[0] * WHOLE) / time[1];
+// (a third number is the length of a pickup bar: the first bar, shorter than the others)
+export const barTicks = (time) => (time[2] > 0 ? time[2] : (time[0] * WHOLE) / time[1]);
 // Standard values that fit, longest first: [ticks, t, dots]
 const VALUES = [];
 for (const t of [1, 2, 4, 8, 16, 32, 64]) { VALUES.push([baseTicks(t) * 1.75, t, 2], [baseTicks(t) * 1.5, t, 1], [baseTicks(t), t, 0]); }
@@ -163,7 +164,29 @@ export function staffInfo(score) {
   score.parts.forEach((p, pi) => p.staves.forEach((st, si) => out.push({ st, part: p, pi, si, inst: INST[p.inst] || INST.piano })));
   return out;
 }
-export function timeAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].time) return score.measures[i].time; return [4, 4]; }
+export function timeAt(score, m) {
+  for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].time) {
+    const t = score.measures[i].time;
+    // the pickup bar (anacrusis): the time of the score, and how long this first bar is
+    if (m === 0 && pickupOf(score)) return [t[0], t[1], pickupOf(score)];
+    return t.length > 2 ? t.slice(0, 2) : t;
+  }
+  return m === 0 && pickupOf(score) ? [4, 4, pickupOf(score)] : [4, 4];
+}
+// the length of the pickup bar, or 0 when the first bar is a whole bar
+export function pickupOf(score) { const p = score.measures[0] && score.measures[0].pickup; return p > 0 && p < (((score.measures[0].time || [4, 4])[0] * WHOLE) / (score.measures[0].time || [4, 4])[1]) ? p : 0; }
+// a pickup bar of this many ticks (0: none); what is in the first bar is kept from its start
+export function setPickup(score, ticks) {
+  const ms = score.measures[0];
+  if (ticks > 0) ms.pickup = ticks; else delete ms.pickup;
+  const tt = timeAt(score, 0);
+  for (const st of allStaves(score)) {
+    st.bars[0] = tidyBar((st.bars[0] || []).map((e) => (e.full ? { ...e } : e)).filter((e, i, a) => !(e.full && a.length > 1)), tt);
+    if (st.v2 && st.v2[0]) st.v2[0] = tidyBar(st.v2[0].map((e) => (e.full ? { ...e } : e)), tt);
+  }
+}
+// the number printed for a bar: a pickup bar is bar 0, so the first whole bar is bar 1
+export const barNumber = (score, m) => m + (pickupOf(score) ? 0 : 1);
 export function keyAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].key !== undefined && score.measures[i].key !== null) return score.measures[i].key; return 0; }
 export function tempoAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].tempo) return score.measures[i].tempo; return { bpm: 96, beat: 4 }; }
 // the clef in force at the end of bar m (a clef may change in the middle of a bar, before an event)
@@ -279,7 +302,8 @@ export function clearEvent(score, st, m, evId) {
 
 // ---------- bars ----------
 export function addBars(score, n, at = score.measures.length) {
-  const time = timeAt(score, Math.max(0, at - 1));
+  const time = timeAt(score, Math.max(0, at - 1)).slice(0, 2);
+  const hadPickup = at === 0 && n > 0 && pickupOf(score);
   for (let k = 0; k < n; k++) {
     score.measures.splice(at, 0, {});
     for (const st of allStaves(score)) { st.bars.splice(at, 0, restBar(time)); if (st.v2) st.v2.splice(at, 0, restBar(time)); }
@@ -289,6 +313,8 @@ export function addBars(score, n, at = score.measures.length) {
   if (at === 0 && n > 0) {
     const old = score.measures[n], first = score.measures[0];
     for (const k of ['time', 'key', 'tempo']) if (old[k] !== undefined && old[k] !== null) { first[k] = old[k]; delete old[k]; }
+    // (bars before a pickup: it is no longer at the start, so it becomes a whole bar)
+    if (hadPickup) { delete old.pickup; const full = timeAt(score, n); for (const st of allStaves(score)) { st.bars[n] = tidyBar(st.bars[n], full); if (st.v2 && st.v2[n]) st.v2[n] = tidyBar(st.v2[n], full); } }
   }
   // clef changes stay on their bars
   for (const st of allStaves(score)) if (st.clefs) { const c = {}; for (const [k, v] of Object.entries(st.clefs)) c[+k >= at && +k > 0 ? +k + n : +k] = v; st.clefs = c; }
@@ -325,7 +351,7 @@ export function deleteBars(score, from, n) {
   }
   if (from < score.measures.length) {
     const ms = score.measures[from];
-    if (!ms.time) { const before = from > 0 ? timeAt(score, from - 1) : null; if (!before || before.join() !== keepTime.join()) ms.time = keepTime; }
+    if (!ms.time) { const before = from > 0 ? timeAt(score, from - 1) : null; if (!before || before.slice(0, 2).join() !== keepTime.slice(0, 2).join()) ms.time = keepTime.slice(0, 2); }
     if (ms.key === undefined || ms.key === null) { if (from === 0 || keyAt(score, from - 1) !== keepKey) ms.key = keepKey; }
     if (!ms.tempo && from > 0 && tempoAt(score, from - 1).bpm !== keepTempo.bpm) ms.tempo = { ...keepTempo };
     for (const st of allStaves(score)) {
@@ -342,10 +368,11 @@ export function deleteBars(score, from, n) {
 }
 // A new time signature: bars from here until the next change are fitted to it.
 export function setTime(score, m, time) {
-  score.measures[m].time = time.slice();
+  score.measures[m].time = time.slice(0, 2);
   for (let i = m; i < score.measures.length; i++) {
     if (i > m && score.measures[i].time) break;
-    for (const st of allStaves(score)) { st.bars[i] = tidyBar(st.bars[i].map((e) => (e.full ? { ...e } : e)), time); if (st.v2) st.v2[i] = tidyBar(st.v2[i].map((e) => (e.full ? { ...e } : e)), time); }
+    const tt = timeAt(score, i);   // (the pickup bar keeps its own length)
+    for (const st of allStaves(score)) { st.bars[i] = tidyBar(st.bars[i].map((e) => (e.full ? { ...e } : e)), tt); if (st.v2) st.v2[i] = tidyBar(st.v2[i].map((e) => (e.full ? { ...e } : e)), tt); }
   }
 }
 

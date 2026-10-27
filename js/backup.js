@@ -50,7 +50,7 @@ async function collect(withTakes) {
     if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) o[k] = pack(x); return o; }
     return v;
   };
-  let files = (await db.all('files')).filter((f) => !String(f.id).startsWith('ipadcopy:'));
+  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
   const takes = withTakes ? await db.all('takes') : [];
   if (!withTakes) files = files.filter((f) => !/^(audio|video):/.test(String(f.id)));
   const lib = pack({ v: 2, made: Date.now(), scores: await db.all('scores'), files, ink: await db.all('ink'), takes, kv: await db.all('kv') });
@@ -61,7 +61,7 @@ async function collect(withTakes) {
 export async function backupSizes() {
   let all = 0, rec = 0;
   for (const f of await db.all('files')) {
-    if (String(f.id).startsWith('ipadcopy:')) continue;
+    if (/^(ipadcopy|follow):/.test(String(f.id))) continue;   // (copies and readings made again by themselves)
     const n = sizeOf(f.data);
     all += n; if (/^(audio|video):/.test(String(f.id))) rec += n;
   }
@@ -198,7 +198,7 @@ export async function makeFolderBackup(withTakes, stamp, folders = [], opt = {})
   const uniq = (p) => { let q = p, k = 2; const dot = p.lastIndexOf('.'); while (used.has(q.toLowerCase())) q = dot > p.lastIndexOf('/') ? `${p.slice(0, dot)} (${k++})${p.slice(dot)}` : `${p} (${k++})`; used.add(q.toLowerCase()); return q; };
   const recOnly = opt.only === 'recordings';
   const scores = recOnly ? [] : await db.all('scores');
-  let files = (await db.all('files')).filter((f) => !String(f.id).startsWith('ipadcopy:'));
+  let files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
   let takes = withTakes ? await db.all('takes') : [];
   if (opt.takeIds) { const want = new Set(opt.takeIds); takes = takes.filter((t) => want.has(t.id)); }
   if (recOnly) { const ids = new Set(takes.flatMap((t) => ['audio:' + t.id, 'video:' + t.id])); files = files.filter((f) => ids.has(String(f.id))); }

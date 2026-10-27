@@ -1747,3 +1747,6 @@ body:not(.phone) .phs-bar { display: none; }
 .fw-bars span + span { border-left: 1.5px solid var(--line); }
 .fw-bars i { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: var(--accent, #2b55c6); border-radius: 2px; transition: left .12s; }
 #followAt { width: 100%; }
+
+/* taken out of the app (kept in the page only so nothing that refers to them breaks) */
+.cut-out { display: none !important; }

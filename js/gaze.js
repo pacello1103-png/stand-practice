@@ -133,7 +133,9 @@ export class Gaze {
       // about 20 frames a second at most; slower when the model is slow (it never takes more than
       // about a fifth of the time on the page's own thread), and a pause while the page is busy
       // turning (globalThis.__busyUntil)
-      const gap = Math.max(48, (this.avgMs || 20) * (this.worker ? 1.15 : 5));
+      // (setting up the eyes: as many frames as can be had; following while you play: about ten a
+      // second is plenty for where you are reading, and leaves the iPad cool for the rest)
+      const gap = Math.max(this.fast ? 48 : 100, (this.avgMs || 20) * (this.worker ? 1.15 : 5));
       const busy = (globalThis.__busyUntil || 0) > now && !this.worker;
       if (v && v.readyState >= 2 && now - lastT >= gap && !busy && !this.pending) {
         lastT = now;

@@ -43,6 +43,7 @@ function fft(re, im, inverse) {
 }
 
 // McLeod Pitch Method. buf: mono samples. Returns {freq, clarity} or null.
+const POOL = new Map();
 export function detectPitch(buf, sr, minRms = 0.003) {
   const N = buf.length;
   let ms = 0;
@@ -50,7 +51,10 @@ export function detectPitch(buf, sr, minRms = 0.003) {
   const rms = Math.sqrt(ms / N);
   if (rms < minRms) return null;
   const M = 1 << Math.ceil(Math.log2(2 * N));
-  const re = new Float64Array(M), im = new Float64Array(M);
+  // (the working arrays kept from one call to the next: this runs many times a second)
+  let W = POOL.get(M); if (!W) { W = { re: new Float64Array(M), im: new Float64Array(M) }; POOL.set(M, W); }
+  const re = W.re, im = W.im;
+  re.fill(0); im.fill(0);
   for (let i = 0; i < N; i++) re[i] = buf[i];
   fft(re, im, false);
   for (let i = 0; i < M; i++) { re[i] = re[i] * re[i] + im[i] * im[i]; im[i] = 0; }

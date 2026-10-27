@@ -4,6 +4,7 @@ import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, voiceView,
   WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
 } from './model.js';
+import * as M0 from './model.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
@@ -41,7 +42,7 @@ export function toMusicXML(score0) {
     for (let m = 0; m < score.measures.length; m++) {
       const ms = score.measures[m];
       const time = timeAt(score, m);
-      w(`<measure number="${m + 1}">`);
+      w(`<measure number="${M0.barNumber(score, m)}"${m === 0 && M0.pickupOf(score) ? ' implicit="yes"' : ''}>`);
       if (ms.start === 'repeat') w('<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>');
       // attributes: at the start and where things change
       const attrs = [];
@@ -126,7 +127,7 @@ export function toMusicXML(score0) {
             const pitch = inst.unpitched ? `<unpitched><display-step>${STEP_NAMES[sc]}</display-step><display-octave>${oct}</display-octave></unpitched>` : `<pitch><step>${STEP_NAMES[sc]}</step>${n.a ? `<alter>${n.a}</alter>` : ''}<octave>${oct}</octave></pitch>`;
             const tieIn = isTiedFrom(voice % 4 === 2 ? voiceView(st, 2, score) : st, m, ev, n0);
             const ties = (tieIn ? '<tie type="stop"/>' : '') + (n0.tie ? '<tie type="start"/>' : '');
-            w(`<note>${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && ev.lyric ? lyricXml(ev.lyric, lyrState) : ''}</note>`);
+            w(`<note>${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && ev.lyric ? lyricXml(ev.lyric, lyrState) : ''}</note>`);
           });
         }
         }
@@ -204,6 +205,7 @@ function notations(ev, n, first, tieIn, extra) {
     if ((ev.art || []).includes('down')) tech.push('<down-bow/>');
     if ((ev.art || []).includes('harm')) tech.push('<harmonic/>');
     if (ev.fing) for (const d of String(ev.fing).split(/[\s,]+/).filter(Boolean)) tech.push(`<fingering>${esc(d)}</fingering>`);
+    if (ev.str) { const k = { I: 1, II: 2, III: 3, IV: 4 }[ev.str]; if (k) tech.push(`<string>${k}</string>`); }
     if (tech.length) parts.push(`<technical>${tech.join('')}</technical>`);
     const orn = (ev.art || []).filter((a) => ORN_XML[a]).map((a) => `<${ORN_XML[a]}/>`);
     const tr = (ev.art || []).find((a) => a === 'trem' || a === 'trem2' || a === 'trem3');
@@ -488,6 +490,7 @@ export function fromMusicXML(xmlText) {
             if (gl && gl.getAttribute('type') === 'stop') { const sp = openSpans.find((x) => x.kind === 'gliss' && x.k === k && !x.b); if (sp) { sp.b = { m, pos: start }; delete sp.k; delete sp.g; score.spans.push(sp); openSpans.splice(openSpans.indexOf(sp), 1); } }
             if (arts.length) ev.art = [...new Set(arts)];
             const fgs = [...el.querySelectorAll('technical fingering')].map((x) => x.textContent.trim()).filter(Boolean); if (fgs.length) ev.fing = fgs.join(' ');
+            { const sn = el.querySelector('technical string'); const k = sn ? parseInt(sn.textContent, 10) : 0; if (k >= 1 && k <= 4) ev.str = ['I', 'II', 'III', 'IV'][k - 1]; }
             // a note can end one slur and start the next
             const slT = [...el.querySelectorAll('slur')].map((x) => x.getAttribute('type'));
             if (slT.includes('start')) { ev.slur = 'start'; if (slT.includes('stop')) ev.slurEnd2 = true; } else if (slT.includes('stop')) ev.slur = 'end';
@@ -508,24 +511,30 @@ export function fromMusicXML(xmlText) {
           (inV2 ? perStaff2 : perStaff)[k].push({ pos: start, ev, dur });
         }
       }
+      // a first bar marked as incomplete, and shorter than the time: a pickup bar
+      if (m === 0 && pi === 0 && mel && mel.getAttribute('implicit') === 'yes') {
+        let len = 0; for (const l of perStaff) for (const x of l) if (!x.ev.full) len = Math.max(len, x.pos + x.dur);
+        if (len > 0 && len < barTicks(time)) ms.pickup = Math.round(len);
+      }
+      const timeB = m === 0 && ms.pickup ? [time[0], time[1], ms.pickup] : time;
       // build each staff's bar, with rests in any gaps
-      const bt = barTicks(time);
+      const bt = barTicks(timeB);
       part.staves.forEach((st, k) => {
         const list = perStaff[k].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
         const evs = []; let p = 0;
         for (const x of list) {
           if (x.pos < p) continue;
-          if (x.pos > p) evs.push(...restsFor(p, x.pos - p, time));
+          if (x.pos > p) evs.push(...restsFor(p, x.pos - p, timeB));
           evs.push(x.ev); p = x.pos + (x.ev.full ? bt : x.dur);
         }
-        if (p < bt) evs.push(...restsFor(p, bt - p, time));
-        st.bars[m] = evs.length ? tidyBar(evs, time) : restBar(time);
+        if (p < bt) evs.push(...restsFor(p, bt - p, timeB));
+        st.bars[m] = evs.length ? tidyBar(evs, timeB) : restBar(timeB);
         if (perStaff2[k].length) {
           const l2 = perStaff2[k].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
           const e2 = []; let p2 = 0;
-          for (const x of l2) { if (x.pos < p2) continue; if (x.pos > p2) e2.push(...restsFor(p2, x.pos - p2, time)); e2.push(x.ev); p2 = x.pos + (x.ev.full ? bt : x.dur); }
-          if (p2 < bt) e2.push(...restsFor(p2, bt - p2, time));
-          st.v2 = st.v2 || []; st.v2[m] = tidyBar(e2, time);
+          for (const x of l2) { if (x.pos < p2) continue; if (x.pos > p2) e2.push(...restsFor(p2, x.pos - p2, timeB)); e2.push(x.ev); p2 = x.pos + (x.ev.full ? bt : x.dur); }
+          if (p2 < bt) e2.push(...restsFor(p2, bt - p2, timeB));
+          st.v2 = st.v2 || []; st.v2[m] = tidyBar(e2, timeB);
         }
       });
     }

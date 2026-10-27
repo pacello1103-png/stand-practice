@@ -10,10 +10,30 @@
 // Works for single lines (any transposing instrument: the follower finds the interval itself) and
 // for chords and the piano.
 
-import { analyse, staffEvents } from './omr.js';
-import { CLEFS, keyAlter, midiOf } from './compose/model.js';
+import { readPage } from './follow-read.js';
 import { getCtx, acquireMic, releaseMic } from './audio.js';
-import { Listener, template, cosine } from './listen.js';
+import { Listener, cosine } from './listen.js';
+
+// The music reader in a thread of its own: reading a page (a second or more) never holds up the
+// score, the drawing or the listening. Pages go one after another. If the thread cannot be had, or
+// fails, pages are read here as before.
+let W = null, wBroken = false, wSeq = 0; const wWait = new Map();
+function readElsewhere(canvas) {
+  if (wBroken || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.resolve(null);
+  if (!W) {
+    try {
+      W = new Worker(new URL('./follow-worker.js', import.meta.url), { type: 'module' });
+      W.onmessage = (e) => { const d = e.data || {}; const w = wWait.get(d.id); if (!w) return; wWait.delete(d.id); clearTimeout(w.t); if (d.error) { wBroken = true; w.res(null); } else w.res(d.r); };
+      W.onerror = () => { wBroken = true; for (const w of wWait.values()) { clearTimeout(w.t); w.res(null); } wWait.clear(); try { W.terminate(); } catch {} W = null; };
+    } catch { wBroken = true; return Promise.resolve(null); }
+  }
+  return createImageBitmap(canvas).then((page) => new Promise((res) => {
+    const id = ++wSeq;
+    const t = setTimeout(() => { wWait.delete(id); res(null); }, 45000);
+    wWait.set(id, { res, t });
+    try { W.postMessage({ id, page }, [page]); } catch { clearTimeout(t); wWait.delete(id); wBroken = true; res(null); }
+  }), () => null);
+}
 
 const SHIFTS = [0, 2, 10, 3, 9, 5, 7, 1, 11, 4, 8, 6];
 // where the music can go from one note to the next thing heard
@@ -39,9 +59,9 @@ const like = (f) => 0.04 + 0.96 * f * f;
 export class PageFollower {
   // render(i, canvas, w, h) draws page i; pages() is the number of pages; turn() turns;
   // onState(text, hearing); half() is where a half-page turn splits the screen (or null)
-  constructor({ render, pages, turn, onState, half, halfWanted, gaze, gazeOff, when }) {
+  constructor({ render, pages, turn, onState, half, halfWanted, gaze, gazeOff, when, store }) {
     // when(): where to turn, 0 (as the bar before the last begins) .. 0.5 (as the last bar begins) .. 1 (with the last notes)
-    Object.assign(this, { render, pages, turnFn: turn, onState, half: half || (() => null), halfWanted: halfWanted || null, gaze: gaze || null, gazeOff: gazeOff || null, whenRaw: when || (() => 0.5) });
+    Object.assign(this, { store: store || null, render, pages, turnFn: turn, onState, half: half || (() => null), halfWanted: halfWanted || null, gaze: gaze || null, gazeOff: gazeOff || null, whenRaw: when || (() => 0.5) });
     // how far the eyes are to be believed: how often they have agreed with the playing lately
     this.trust = 0.5;
     this.cache = new Map(); this.on = false; this.page = 0; this.last = 0;
@@ -96,59 +116,17 @@ export class PageFollower {
   notesOf(i) {
     if (this.cache.has(i)) return this.cache.get(i);
     const p = (async () => {
+      // read before, for this score as it is now: nothing to read again
+      const kept = this.store ? await this.store.get(i).catch(() => null) : null;
+      if (kept && Array.isArray(kept.seq) && kept.at) return kept;
       const c = document.createElement('canvas');
       await this.render(i, c, 1600, 2263);
-      const A = await analyse(c, null, false, { notesOnly: true });   // (notes and bars only: far less memory)
-      const PW = c.width || 1600, PH = c.height || 2263;
+      let r = null;
+      try { r = await readElsewhere(c); } catch { r = null; }
+      if (!r) r = await readPage(c);   // (no thread of its own on this device: read here)
       c.width = c.height = 0;
-      const seq = []; let bar = 0;
-      const nSys = A.systems.length;
-      A.systems.forEach((sys, si) => {
-        const sts = sys.map((k) => A.staves[k]);
-        const sp = sts[0].sp || A.sp || 12;
-        // where the line is on the page (0 at the top, 1 at the bottom)
-        const yn = sts.reduce((a, st) => a + (st.top + st.bottom) / 2, 0) / sts.length / PH;
-        const all = [];
-        let nb = 0;
-        sts.forEach((st, k2) => {
-          const clef0 = CLEFS[st.clef] ? st.clef : k2 > 0 && sts.length === 2 ? 'bass' : 'treble';
-          const bars = staffEvents(st);
-          nb = Math.max(nb, bars.length);
-          // (the clef and key as they change along the line)
-          let key = st.key || 0;
-          bars.forEach((b, bi) => {
-            if (bars.meta && bars.meta[bi] && bars.meta[bi].key !== undefined) key = bars.meta[bi].key;
-            const evs = b.filter((it) => !it.rest);
-            evs.forEach((it, k) => {
-              const bottom = (CLEFS[it.clef] || CLEFS[clef0]).bottom;
-              const pcs = it.ps.map((q) => { const s = bottom + q; const a = it.acc && it.acc[q] !== undefined ? it.acc[q] : keyAlter(key, s); return ((midiOf(s, a) % 12) + 12) % 12; });
-              all.push({ x: it.x, xn: it.x / PW, yn, pcs, bar: bar + bi, half: k >= evs.length / 2 });
-            });
-          });
-        });
-        // notes at the same place on different staves sound together
-        all.sort((a, b) => a.x - b.x);
-        const start = seq.length;
-        for (const e of all) {
-          const prev = seq.length > start ? seq[seq.length - 1] : null;
-          if (prev && Math.abs(prev.x - e.x) < sp * 0.7) { for (const q of e.pcs) if (!prev.pcs.includes(q)) prev.pcs.push(q); prev.half = prev.half && e.half; continue; }
-          seq.push({ ...e, sys: si, nSys });
-        }
-        bar += nb;
-      });
-      for (const e of seq) { e.tpl = template(e.pcs); e.y = (e.sys + 0.5) / Math.max(1, e.nSys); }
-      // where the page turns: in the middle of the last line, as the last bar begins, or with the
-      // last notes (chosen in Settings); the places are kept and chosen when turning
-      let lastBar = -1; for (const n of seq) lastBar = Math.max(lastBar, n.bar);
-      let atBar = seq.findIndex((n) => n.bar === lastBar);
-      if (atBar < 0) atBar = seq.length - 1;
-      const lastSys = seq.length ? seq[seq.length - 1].sys : 0, sysFrom = seq.findIndex((n) => n.sys === lastSys);
-      // (and the bar before it: the place to turn is chosen anywhere from the start of the bar
-      // before the last to the last notes)
-      let atPrev = seq.findIndex((n) => n.bar === lastBar - 1); if (atPrev < 0 || atPrev > atBar) atPrev = atBar;
-      const atEnd = Math.max(atBar, seq.length - 2);
-      void sysFrom;
-      return { seq, turnAt: atBar, at: { prev: atPrev, bar: atBar, end: atEnd }, bars: bar };
+      if (this.store && r.seq.length) this.store.put(i, r).catch(() => {});
+      return r;
     })().catch((err) => { console.warn(err); setTimeout(() => { if (this.cache.get(i) === p) this.cache.delete(i); }, 4000); return { seq: [], turnAt: -1, bars: 0 }; });   // (read again a little later)
     this.cache.set(i, p);
     return p;

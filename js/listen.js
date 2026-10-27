@@ -61,8 +61,14 @@ export class Listener {
   tick() {
     const now = performance.now(), sr = this.ctx.sampleRate, N = this.an.fftSize;
     this.an.getFloatFrequencyData(this.fd);
-    const logm = new Float32Array(this.fd.length);
-    for (let k = 0; k < this.fd.length; k++) { const db = this.fd[k]; const m = db > -160 ? Math.pow(10, db / 20) : 0; this.mag[k] = m; logm[k] = Math.log1p(m * 1000); }
+    // (the loudness steps are needed only up to 5 kHz, and the two working arrays are kept, not
+    // made anew 33 times a second)
+    const kTop = Math.min(this.fd.length, Math.ceil((5000 * N) / sr) + 2);
+    if (!this.logA) { this.logA = new Float32Array(this.fd.length); this.logB = new Float32Array(this.fd.length); }
+    const logm = this.prevLog === this.logA ? this.logB : this.logA;
+    const mag = this.mag, fd = this.fd;
+    for (let k = 0; k < fd.length; k++) { const db = fd[k]; mag[k] = db > -160 ? Math.exp(db * 0.1151292546) : 0; }
+    for (let k = 0; k < kTop; k++) logm[k] = Math.log1p(mag[k] * 1000);
     // spectral flux: how much new energy appeared (positive changes only, 80 Hz .. 5 kHz)
     let fl = 0;
     if (this.prevLog) { const k0 = Math.floor((80 * N) / sr), k1 = Math.floor((5000 * N) / sr); for (let k = k0; k < k1; k++) { const d = logm[k] - this.prevLog[k]; if (d > 0) fl += d; } }

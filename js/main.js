@@ -65,7 +65,10 @@ const S = {
   instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
-async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); setHiddenLayers(S.hidLy); applyOrientation(); }
+async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
+  // (layers are no longer offered: whatever was hidden in one shows again)
+  if (S.hidLy && S.hidLy.length) { S.hidLy = []; saveSettings(); }
+  setHiddenLayers([]); applyOrientation(); }
 // Lock the whole app sideways, so a landscape score reads the right way up while the iPad is held upright.
 function applyOrientation() {
   try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: S.landscapeLock ? 'landscape' : 'auto' }); } catch { /* not on the iPad */ }
@@ -525,8 +528,17 @@ function scoreFile(score, file) {
   if (score.rot && Object.keys(score.rot).length) file.rot = score.rot; else delete file.rot;
   return file;
 }
+const FOLLOW_CLEANED = new Set();
+// what the pages of a score are (its file, pages added, their order, cuts, joins, turns), as a
+// short stamp: markings do not change it, a change to the pages does
+function pagesStamp(sc) {
+  const t = JSON.stringify([sc.fileId, sc.more || null, sc.pageMap || null, sc.cuts || null, sc.glue || null, sc.rot || null, sc.trim ? sc.trimBox || 1 : 0]);
+  let h = 5381; for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
 async function deleteScoreData(s) {
   dropInk(s.id); dropEdited(s.id);
+  for (const x of (await db.keys('files').catch(() => [])).map(String)) if (x.startsWith('follow:' + s.id + ':')) await db.del('files', x).catch(() => {});
   const takes = await db.byIndex('takes', 'score', s.id).catch(() => []);
   for (const t of takes) await deleteTakeData(t.id);
   const inkKeys = (await db.keys('ink')).filter((k) => String(k).startsWith(s.id + ':'));
@@ -1450,6 +1462,19 @@ const follow = {
       halfWanted: () => !!(S.halfTurn && V.spread === 1 && !V.inking),
       gaze: () => eyes.onPage(),
       when: () => followAt(),
+      // each page read once for good (until the score is changed): opening it again costs nothing
+      store: {
+        key: (i) => (V.score ? `follow:${V.score.id}:${pagesStamp(V.score)}:${i}` : null),
+        async get(i) { const k = this.key(i); if (!k) return null; const f = await db.get('files', k); return f && f.r; },
+        async put(i, r) {
+          const k = this.key(i); if (!k) return;
+          await db.put('files', { id: k, kind: 'follow', r, at: Date.now() });
+          // (the readings of the score before it was changed go)
+          const pre = `follow:${V.score.id}:`, mine = k.slice(0, k.lastIndexOf(':') + 1);
+          if (FOLLOW_CLEANED.has(mine)) return; FOLLOW_CLEANED.add(mine);
+          for (const x of (await db.keys('files').catch(() => [])).map(String)) if (x.startsWith(pre) && !x.startsWith(mine)) await db.del('files', x).catch(() => {});
+        },
+      },
       // the eyes put right while playing: a little of how far above or below the playing they are
       gazeOff: (dn) => {
         const g = eyes.gaze; if (!g || !g.cal) return;
@@ -1494,7 +1519,7 @@ const eyes = {
       // (turned off altogether: the face model's memory goes too)
       if (this.gaze && !(S.followTurn && S.followEyes) && !EC.on) this.gaze.dispose();
     }
-    if (this.running && this.gaze) this.gaze.cal = this.cal();
+    if (this.running && this.gaze) { this.gaze.cal = this.cal(); if (!EC.on) this.gaze.fast = !!S.wink; }   // (winks need every frame)
   },
   sample(smp) {
     // winks, while the camera is ours
@@ -1567,7 +1592,7 @@ async function ecCamera() {
   // (one camera and one face model for both: the set-up and the following)
   if (!eyes.gaze) eyes.gaze = new Gaze();
   EC.gaze = eyes.gaze;
-  EC.on = true; sendFace();
+  EC.on = true; EC.gaze.fast = true; sendFace();
   const ok = EC.gaze.on || (await EC.gaze.start());
   if (!ok) return false;
   const v = $('#eyeCalVid'); if (EC.gaze.stream && v.srcObject !== EC.gaze.stream) { v.srcObject = EC.gaze.stream; v.play().catch(() => {}); }
@@ -1598,7 +1623,7 @@ async function openEyeCal() {
 }
 $('#eyeCalCancel').addEventListener('click', () => closeEyeCal());
 function closeEyeCal() {
-  EC.on = false; EC.phase = ''; $('#eyeCal').hidden = true; $('#eyeCal').classList.remove('running', 'result');
+  EC.on = false; if (EC.gaze) EC.gaze.fast = !!S.wink; EC.phase = ''; $('#eyeCal').hidden = true; $('#eyeCal').classList.remove('running', 'result');
   ecRelease();
   if (EC.gaze && !eyes.running) EC.gaze.stop();
   syncEyesUI(); follow.sync();
@@ -1836,6 +1861,11 @@ async function sharpen() {
 // page), it is made sharp again. (Writing looked blurred after the Pencil lifted on the iPad.)
 setInterval(() => {
   if (!V.doc || Z.s <= 1.05 || TURN() || (GS && GS.kind) || $('#score').hidden) return;
+  // (nothing moved since the markings were last made sharp: they are as sharp as they can be; very
+  // zoomed in, the memory limit keeps them a little under the screen's sharpness, and drawing them
+  // again every second made the iPad work for nothing)
+  const here = Z.s + ':' + Z.x + ':' + Z.y + ':' + V.pages.length + ':' + (V.pages[0] && V.pages[0].art && V.pages[0].art.width);
+  if (Z.sharpWhere === here && V.pages.every((p) => !p.layer || p.layer.view)) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   for (const p of V.pages) {
     if (!p.ink || !p.layer) continue;
@@ -1847,6 +1877,7 @@ function sharpenInk() {
   clearTimeout(Z.inkT);
   if (!V.pages.length) return;
   if (GS && (GS.kind === 'ink' || GS.kind === 'erase' || GS.kind === 'smart')) { Z.inkT = setTimeout(sharpenInk, 300); return; }
+  Z.sharpWhere = Z.s + ':' + Z.x + ':' + Z.y + ':' + V.pages.length + ':' + (V.pages[0] && V.pages[0].art && V.pages[0].art.width);
   const dpr = Math.min(window.devicePixelRatio || 1, 3), sr = stage.getBoundingClientRect();
   for (const p of V.pages) {
     if (!p.layer || !p.ink || !p.art) continue;
@@ -4176,6 +4207,7 @@ function pasteAt(entry, at) {
 function startPinch() {
   const t = touches(); if (t.length < 2) return;
   const [a, b] = t;
+  try { flushInk(); } catch {}   // (what was just written is kept on the iPad before zooming)
   GS = { kind: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx0: (a.x + b.x) / 2, cy0: (a.y + b.y) / 2, base: { s: Z.s, x: Z.x, y: Z.y }, t0: now() };
 }
 
