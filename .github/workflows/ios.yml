@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   ipa:
-    runs-on: macos-15
+    # (the Intel Macs: the Apple-chip ones are often too busy and the build waited for hours)
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
