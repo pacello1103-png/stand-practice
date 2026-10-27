@@ -4,16 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Stand · The music stand that practises with you</title>
+<meta name="theme-color" content="#7c7666" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262420" media="(prefers-color-scheme: dark)">
+<meta name="format-detection" content="telephone=no">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Stand">
 <meta property="og:title" content="Stand · The music stand that practises with you">
 <meta property="og:description" content="Read and mark your scores, turn pages hands-free, tune, practise, record yourself and write music. For iPad and iPhone.">
 <meta property="og:url" content="https://pacello1103-png.github.io/stand-practice/app/">
 <meta property="og:image" content="https://pacello1103-png.github.io/stand-practice/og-app.jpg">
 <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://pacello1103-png.github.io/stand-practice/app/">
 <link rel="icon" href="https://pacello1103-png.github.io/stand-practice/icon.png">
-
-
+<link rel="apple-touch-icon" href="https://pacello1103-png.github.io/stand-practice/icon.png">
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="Stand is a music stand, practice room and writing desk for iPad and iPhone.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,12 +25,15 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..700&display=swap">
 <style>
 * { box-sizing: border-box; }
-body { margin: 0; -webkit-font-smoothing: antialiased; }
+html { overflow-x: hidden; overflow-x: clip; }
+body { margin: 0; -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body.locked { position: fixed; left: 0; right: 0; overflow: hidden; }
 a { color: inherit; }
 svg.i { width: 20px; height: 20px; flex: none; }
 button { font: inherit; }
 .wrap { max-width: 1400px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .drawer { position: relative; height: clamp(560px, 76vh, 780px); margin-block: 26px 18px; overflow-x: clip; }
+.folder { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .folder { position: absolute; top: 0; bottom: 0; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left; transition: transform .55s var(--ease); will-change: transform; }
 .folder.lift { transform: translateY(-14px); }
 .folder.shift { transform: translateX(var(--shift, 150px)); }
@@ -34,7 +41,7 @@ button { font: inherit; }
 .folder .strip { position: absolute; left: 0; top: 0; bottom: 0; width: var(--strip, 70px); display: flex; flex-direction: column; justify-content: space-between; padding: 24px 0 22px; }
 .folder .peek { position: absolute; left: calc(var(--strip, 70px) + 8px); right: 18px; top: 22px; bottom: 22px; overflow: hidden; }
 .folder .peek img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; display: block; transition: filter .5s, opacity .5s, transform .8s var(--ease); }
-.folder:hover .peek img, .folder:focus-visible .peek img { transform: scale(1.03); }
+.folder:focus-visible .peek img, .folder.lift .peek img { transform: scale(1.03); }
 .folder .contents { list-style: none; margin: 0; padding: 0 40px 0 20px; display: grid; gap: 5px; }
 .folder .name { align-self: flex-start; }
 .cover { cursor: default; }
@@ -65,7 +72,7 @@ button { font: inherit; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 10px; width: 100%; margin-top: 10px; }
 .tiles button { display: flex; align-items: center; gap: 12px; min-height: 62px; padding: 12px 16px; border: 0; border-radius: var(--tile-r, 16px); background: var(--tile-bg); color: var(--tile-ink); box-shadow: var(--tile-sh); cursor: pointer; text-align: left; font-weight: 600; font-size: 15px; transition: transform .35s var(--ease), background .25s, box-shadow .3s; }
 .tiles button svg { width: 24px; height: 24px; color: var(--tile-icon); }
-.tiles button:hover { transform: translateY(-3px); box-shadow: var(--tile-sh-h); }
+@media (hover: hover) { .tiles button:hover { transform: translateY(-3px); box-shadow: var(--tile-sh-h); } }
 .tiles button:active { transform: scale(.97); }
 .scrollhint { display: inline-flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--s-muted); }
 .scrollhint i { width: 1px; height: 30px; background: currentColor; transform-origin: top; animation: hint 2s var(--ease) infinite; }
@@ -105,13 +112,12 @@ button { font: inherit; }
 
 .nextf { display: grid; gap: 18px; padding-block: 12vh 70px; }
 .nextcard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: stretch; gap: 0; padding: 0; border: 0; border-radius: 26px; overflow: hidden; background: var(--next-bg); color: var(--next-ink); cursor: pointer; text-align: left; transition: transform .5s var(--ease), box-shadow .5s var(--ease); box-shadow: var(--tile-sh); }
-.nextcard:hover { transform: translateY(-4px); box-shadow: var(--tile-sh-h); }
+@media (hover: hover) { .nextcard:hover { transform: translateY(-4px); box-shadow: var(--tile-sh-h); } .nextcard:hover .np img { transform: scale(1.05); } }
 .nextcard .nt { display: grid; align-content: center; gap: 8px; padding: 34px 36px; }
 .nextcard small { font-size: 13px; opacity: .7; }
 .nextcard em { font-style: normal; opacity: .75; max-width: 34ch; }
 .nextcard .np { position: relative; overflow: hidden; min-height: 240px; }
 .nextcard .np img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 30% 20%; transition: transform 1s var(--ease); }
-.nextcard:hover .np img { transform: scale(1.05); }
 .others { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .others button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 999px; border: 0; cursor: pointer; background: var(--s-card); color: inherit; font-weight: 500; transition: background .2s; }
 .others button svg { width: 18px; height: 18px; }
@@ -125,7 +131,7 @@ button { font: inherit; }
 .rv > *:nth-child(2) { transition-delay: .05s; } .rv > *:nth-child(3) { transition-delay: .1s; } .rv > *:nth-child(4) { transition-delay: .15s; }
 .rv > *:nth-child(5) { transition-delay: .2s; } .rv > *:nth-child(6) { transition-delay: .25s; } .rv > *:nth-child(7) { transition-delay: .3s; } .rv > *:nth-child(8) { transition-delay: .35s; }
 .hero .rv:nth-child(2) { transition-delay: .06s; } .hero .rv:nth-child(3) { transition-delay: .12s; } .hero .rv:nth-child(4) { transition-delay: .18s; } .hero .rv:nth-child(5) { transition-delay: .5s; }
-.sheet.in .tiles.in > *:hover { transform: translateY(-3px); transition-delay: 0s; }
+@media (hover: hover) { .sheet.in .tiles.in > *:hover { transform: translateY(-3px); transition-delay: 0s; } }
 .sheet .sbody { transition: opacity .3s var(--ease), transform .4s var(--ease); }
 .sheet.leaving .sbody { opacity: 0; transform: translateY(-24px); }
 
@@ -147,8 +153,8 @@ button { font: inherit; }
   .nextcard .np { min-height: 180px; }
   .nextcard .nt { padding: 24px 22px; }
 }
-@media (max-width: 760px) {
-  .drawer { height: auto; display: grid; margin-top: 14px; }
+@media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
+  .drawer { height: auto; display: grid; grid-template-columns: minmax(0, 1fr); margin-top: 14px; }
   .folder { position: relative; inset: auto; height: auto; min-height: 112px; margin-top: -16px; transform: none; }
   .folder::before, .folder .tab, .folder .peek { display: none; }
   .folder .strip { position: relative; width: auto; flex-direction: column; justify-content: flex-start; gap: 8px; padding: 20px 20px 30px; }
@@ -159,6 +165,11 @@ button { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .folder, .rv, .rv > *, .dev, .chin, .sbody { transition: none !important; }
   .scrollhint i { animation: none; }
+}
+
+@supports not (color: color-mix(in srgb, red, blue)) {
+  html .sheet { --s-muted: var(--c-ink); --s-rule: rgba(128, 128, 128, .32); --s-card: rgba(128, 128, 128, .16); --tile-bg: rgba(128, 128, 128, .14);
+    --tile-sh: inset 0 0 0 1px rgba(128, 128, 128, .3); --tile-sh-h: inset 0 0 0 1px rgba(128, 128, 128, .5), 0 16px 30px -18px rgba(0, 0, 0, .5); --bar-bg: var(--c-bg); --icon-bg-h: rgba(128, 128, 128, .2); }
 }
 
 :root {
@@ -197,7 +208,7 @@ body { background: var(--stage); color: var(--ink); font: 400 16px/1.5 var(--fon
 .folder .num { padding-left: 22px; font: 600 11px/1 var(--font); opacity: .5; }
 .folder .peek { border-radius: 14px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); }
 .folder .peek img { filter: grayscale(1) contrast(.9); opacity: .55; }
-.folder:hover .peek img, .folder:focus-visible .peek img { filter: none; opacity: 1; }
+.folder:focus-visible .peek img, .folder.lift .peek img { filter: none; opacity: 1; }
 
 .cover { background: var(--surface); color: var(--ink); box-shadow: -14px 0 30px -14px rgba(14, 20, 45, .45), var(--shadow); border-radius: 24px; }
 .cover .inner { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto; padding: 32px 34px 30px; gap: 18px; }
@@ -252,7 +263,7 @@ body { background: var(--stage); color: var(--ink); font: 400 16px/1.5 var(--fon
 .others button svg { color: var(--accent-text); }
 .others button[aria-current] svg { color: inherit; }
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
   .folder { border-radius: 20px 20px 0 0; box-shadow: 0 -10px 22px -14px rgba(14, 20, 45, .5); }
   .folder .strip { padding-left: 20px; }
   .folder .name { writing-mode: horizontal-tb; padding-left: 0; font-size: 30px; }
@@ -273,7 +284,6 @@ body { background: var(--stage); color: var(--ink); font: 400 16px/1.5 var(--fon
 </style>
 </head>
 <body>
-
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-lib" viewBox="0 0 24 24"><path d="M5 4h4v16H5z M11 4h4v16h-4z M16.5 5.2l3.8-1 3.7 15.5-3.8 1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" transform="translate(-1 0)"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
@@ -322,8 +332,8 @@ body { background: var(--stage); color: var(--ink); font: 400 16px/1.5 var(--fon
   <main class="drawer" id="drawer" aria-label="What Stand does"></main>
   <section class="also" id="also" aria-label="Also in Stand"></section>
   <footer class="foot">
-    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. Coming to the App Store, for iPadOS and iOS 15 or later. Example scores by J. S. Bach: Minuet in G (BWV Anh. 114) and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007). Music font: Bravura (SIL Open Font License).</p>
-    <nav aria-label="More"><a href="../privacy.html">Privacy policy</a><span>&copy; 2026 Stand</span></nav>
+    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. For iPad and iPhone, iPadOS and iOS 15 or later. Example scores by J. S. Bach: Minuet in G (BWV Anh. 114) and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007). Music font: Bravura (SIL Open Font License).</p>
+    <nav aria-label="More"><a href="../privacy.html">Privacy policy</a><a href="../terms.html">Terms of use</a><a href="../privacy.html#support">Support</a><span>&copy; 2026 Stand</span></nav>
   </footer>
 </div>
 <section class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle">
@@ -346,13 +356,13 @@ const F = [
         p: 'Import PDFs and photos, or scan pages with the camera. Stand evens out the light and makes the paper white, so a photo reads like a clean copy.',
         chips: ['Import from Files', 'Scan with the camera', 'Folders', 'Search by title or composer'] },
       { id: 'find', icon: 'search', name: 'Find a score', shot: '32_find',
-        h: 'Any public-domain piece in seconds.',
+        h: 'Free public-domain scores in seconds.',
         p: 'Search the IMSLP library by composer and piece. Choose the best version for your instrument and it lands in your library, ready to read and mark.',
         steps: ['Type “Bach cello suite”', 'Choose your instrument', 'Tap a result'] },
       { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score',
         h: 'Six ways to turn the page.',
         p: 'Two pages side by side in landscape, one in portrait. Turn them in whatever way suits the moment.',
-        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye on, left eye back'], ['Listening', 'Follows your playing (Beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
+        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing (beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
       { id: 'thisscore', icon: 'more', name: 'This score', shot: '03_more',
         h: 'Each score set up the way you read it.',
         p: 'Half-page turns show the top of the next page while you finish this one, so you never wait for a turn.',
@@ -375,11 +385,11 @@ const F = [
       { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar',
         h: 'The first touch never writes.',
         p: 'Touch the score with the Pencil and the tools open, nothing more. Your next stroke writes. Your finger still turns pages and zooms, so you never write by accident.',
-        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type a word'], ['Eraser', 'Your markings only'], ['Printed eraser', 'White out the edition'], ['Two colours', 'Black and red, ready']] },
+        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type a word'], ['Eraser', 'Your markings only'], ['Printed eraser', 'White out the edition'], ['Two colours', 'Black and red, one tap away']] },
       { id: 'symbols', icon: 'finger', name: 'Symbols', shot: '06_symbols',
         h: 'Symbols in one tap.',
         p: 'Choose a symbol, then tap the music where it goes.',
-        chips: ['pp to ff, sfz, fp', 'Down bow, up bow', 'Fingerings 0–4', 'Strings I–IV', 'Fermata, breath, accent', 'rit., a tempo, pizz., arco', 'Glasses: watch out'] },
+        chips: ['pp to ff, sfz, fp', 'Down bow, up bow', 'Fingerings 0–4', 'Strings I–IV', 'Fermata, breath, accent', 'rit., a tempo, pizz., arco', 'Glasses (watch out!)'] },
       { id: 'slurs', icon: 'music', name: 'Slurs', shot: '07_marked',
         h: 'Draw a slur, get an engraved one.',
         p: 'Draw from the first note to the last. Stand draws a clean, tapered slur, curved above or below, on the side you drew.' },
@@ -397,7 +407,7 @@ const F = [
       { id: 'passages', icon: 'passage', name: 'Passages', shot: '10_passages_panel',
         h: 'A tempo log for every hard spot.',
         p: 'Loop the bars, give the passage a type, a start tempo and a target. Log the tempo you managed each day: the bar fills toward the target and a small graph shows your best, day by day.',
-        grid: [['Melodic', 'Sing it clean, then speed'], ['Technical', '+5 bpm when it is clean'], ['Shift', 'Slowly and in rhythm'], ['Rhythm', 'The rhythm alone first'], ['Bowing & breath', 'The pattern on its own'], ['What you missed', 'Left alone or stuck']] },
+        grid: [['Melodic', 'Sing it clean, then speed'], ['Technical', '+5 bpm when it is clean'], ['Shift', 'Slowly and in rhythm'], ['Rhythm', 'The rhythm alone first'], ['Bowing & breath', 'The pattern on its own'], ['What you missed', 'Passages left alone too long']] },
       { id: 'session', icon: 'jump', name: 'Practice session', shot: '26_study_running',
         h: 'All your passages, one page turn apart.',
         p: 'Give each passage a priority. Stand starts with the high ones and the ones furthest from their target. Turning the page goes to the next passage, in any score, with the whole page shown.',
@@ -408,22 +418,22 @@ const F = [
       { id: 'metronome', icon: 'metro', name: 'Metronome', shot: '14_metronome',
         h: 'A metronome that does more than click.',
         p: 'Tap the tempo, accent or silence any beat, and let it turn your pages. It keeps going while you tune, record or switch apps.',
-        grid: [['Meter', '1/4 to 12/8'], ['Subdivision', 'Eighths, triplets, 16ths'], ['Speed trainer', 'Smoothly or in steps'], ['Silent bars', 'Keep time yourself'], ['Flash', 'A visual beat one'], ['Sound', 'Click, woodblock, beep']] },
+        grid: [['Meter', '1/4 to 12/8'], ['Subdivision', 'Eighths, triplets, 16ths'], ['Speed trainer', 'Smoothly or in steps'], ['Silent bars', 'Keep time yourself'], ['Flash', 'See beat one'], ['Sound', 'Click, woodblock, beep']] },
       { id: 'scales', icon: 'scales', name: 'Scales', shot: '16_scale_tempo',
         h: 'Scales in long notes, or fast.',
         p: 'Any key, major, minors and modes, with its own tempo. Each note lasts 4, 3, 2 or 1 beats, or goes 2 to 4 per beat, with a clean click and a drone underneath.',
-        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal or just', 'One bar count-in'] },
+        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal or just tuning', 'One bar count-in'] },
       { id: 'log', icon: 'chart', name: 'Practice log', shot: '27_practice',
         h: 'See what you really practised.',
         p: 'Time counts by itself while a score is open or a tool is running. The ring on the home screen fills up toward your daily goal.',
-        grid: [['Daily goal', '15 minutes to 4 hours'], ['Streak', 'Days in a row'], ['Chart', 'Week, month, year'], ['Per piece', 'Minutes on each'], ['Today', 'A note: what is next?'], ['Timer', '25/5, 45/15, 60/20']] },
+        grid: [['Daily goal', '15 minutes to 4 hours'], ['Streak', 'Days in a row'], ['Chart', 'Week, month, year'], ['Per piece', 'Minutes on each'], ['Today', 'A note on what is next'], ['Timer', '25/5, 45/15, 60/20']] },
       { id: 'plan', icon: 'check', name: 'Weekly plan', shot: '28_plan',
         h: 'Plan your week in half hours.',
         p: 'Paint the half hours you want to practise. Past weeks show green for done and red for missed, and a reminder arrives when practice begins.',
         chips: ['At the start, 10 or 30 min before', 'Carries on week after week', 'On iPad and iPhone'] },
       { id: 'iphone', icon: 'phone', name: 'iPhone', phone: 'phone_home',
         h: 'Your practice in your pocket.',
-        p: 'The iPhone shows today, the week and each piece from your iPad. It has the tuner, drone, metronome and scales for when you are away from the stand, and it works as the iPad’s camera.',
+        p: 'The iPhone shows today, the week and each piece from your iPad. Away from the stand it has the tuner, harmonics, drone, metronome, scales, repetitions, a practice timer and recording, and it works as the iPad’s camera.',
         chips: ['Finds the iPad by itself', 'Encrypted', 'Camera for iPad'] },
     ] },
   { id: 'listen', icon: 'fork', title: 'Tune & Record', short: 'Tune', shot: '11_tuner',
@@ -435,11 +445,11 @@ const F = [
         grid: [['Reference A', 'For example 442 Hz'], ['Equal', 'Like the piano'], ['Just', 'Pure thirds and fifths'], ['Pythagorean', 'Pure fifths'], ['Tendency', 'Sharp or flat lately'], ['Small tuner', 'Over the score']] },
       { id: 'harmonics', icon: 'harm', name: 'Harmonics', shot: '13_harmonics',
         h: 'Which harmonic, on which string, where to touch.',
-        p: 'Play a natural harmonic and Stand names it. Hear the series of any string, and see how far each overtone is from the piano: the 5th is 14 cents low, the 7th 31.' },
+        p: 'Play a natural harmonic and Stand names it. Hear the series of any string, and see how far each overtone is from the piano: the 5th harmonic is 14 cents flat, the 7th 31 cents flat.' },
       { id: 'drone', icon: 'drone', name: 'Drone', shot: '12_drone',
         h: 'A drone that follows the music.',
         p: 'A steady note in pure intervals, so every beat you hear is your own intonation. When the music changes key, the drone can follow.',
-        grid: [['I tap', 'Stays until you choose'], ['It listens', 'Moves when the key really changes'], ['My list', 'Your notes, one by one'], ['All keys', 'Every 2 to 16 bars']] },
+        grid: [['I tap', 'Stays until you change it'], ['It listens', 'Follows when the key really changes'], ['My list', 'Your notes, in your order'], ['All keys', 'Moves on every 2 to 16 bars']] },
       { id: 'record', icon: 'mic', name: 'Record', shot: '61_recording',
         h: 'Record while you read.',
         p: 'Audio for the best sound, or video to watch your posture. A count-in bar from the metronome, and the score stays on screen.',
@@ -450,7 +460,7 @@ const F = [
       { id: 'recordings', icon: 'takes', name: 'Recordings', shot: '62_recordings',
         h: 'Listen back slower, at the same pitch.',
         p: 'Drag across the waveform to loop a passage and play it at 50 to 100% speed. Add a hall or church sound, cut a part, or put the score on your video.',
-        chips: ['Loop', '50–100% speed', 'Studio, hall, church', 'Cut', 'Studio'] },
+        chips: ['Loop A to B', '50–100% speed', 'Studio, hall, church', 'Cut'] },
       { id: 'video', icon: 'video', name: 'Video over the score', shot: '63_video_over_score',
         h: 'Watch yourself next to the music.',
         p: 'Drag a video out of Recordings onto the score. Pinch to zoom on your bow arm up to 5×, slow it down, and the pages still turn under it.' },
@@ -485,7 +495,13 @@ const F = [
         p: 'Staff, lined or plain paper for exercises, dictation, lesson notes or a practice journal. Add photos in shapes or inside a word, glass cards, washi tape and stickers, and move anything between the pages.' },
     ] },
 ];
-const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Backup to iCloud Drive'], ['sliders', 'Blue or black, light or dark'], ['ear', 'Bluetooth headphones'], ['check', 'Offline, and private']];
+const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['ear', 'Bluetooth headphones'], ['check', 'Works offline, no account, no tracking']];
+
+/* App Store: paste the link here on launch day and the buttons become "Download on the App Store". */
+const APP_STORE_URL = '';
+const ctaHTML = () => APP_STORE_URL
+  ? `<a class="cta" href="${APP_STORE_URL}" target="_blank" rel="noopener">Download on the App Store</a>`
+  : `<span class="cta">Coming soon to the App Store</span>`;
 
 const TONE = { read: 'white', mark: 'sunk2', practise: 'tint', listen: 'navy', write: 'deep' };
 const THEME = {
@@ -507,7 +523,7 @@ const THEME = {
         <div style="display:grid;gap:16px;align-content:center">
           <h1>The music stand that practises with you.</h1>
           <p>Read and mark your scores, turn pages hands-free, tune, keep time, film yourself and plan your week. Then keep notebooks and write your own music, in the same place.</p>
-          <span class="cta">Coming to the App Store</span>
+          ${ctaHTML()}
           <span class="hint"><i></i>Open a folder to see what is inside</span>
         </div>
         <div class="meta"><span><b>Platform</b>iPad and iPhone</span><span><b>Works</b>Offline</span><span><b>Your data</b>Stays on your device</span></div>
@@ -521,7 +537,9 @@ const n = F.length;
 const ic = (id, cls = 'i') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
 const pad = (k) => String(k).padStart(2, '0');
 const img = (s) => `../img/m_${s}.webp`;
-const phoneQ = () => matchMedia('(max-width: 760px)').matches;
+const PHONE_MQ = '(max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px)';
+const phoneQ = () => matchMedia(PHONE_MQ).matches;
+const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
 const narrow = () => matchMedia('(max-width: 900px)').matches;
 const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -535,8 +553,9 @@ F.forEach((f, i) => {
   b.setAttribute('aria-label', `${f.title}: ${f.lead}`);
   b.innerHTML = THEME.folder(f, i);
   b.addEventListener('click', () => openFolder(i, b));
-  b.addEventListener('mouseenter', () => hover(i));
-  b.addEventListener('focus', () => hover(i));
+  b.addEventListener('mouseenter', () => { if (canHover()) hover(i); });
+  b.addEventListener('focus', () => { if (b.matches(':focus-visible')) hover(i); });
+  b.addEventListener('blur', () => hover(-1));
   drawer.append(b); els.push(b);
 });
 const cover = document.createElement('div');
@@ -546,11 +565,12 @@ drawer.append(cover);
 drawer.addEventListener('mouseleave', () => hover(-1));
 
 function place() {
-  if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); return; }
+  if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); drawer.classList.remove('tight'); return; }
   const W = drawer.clientWidth, H = drawer.clientHeight;
   const coverW = Math.min(560, Math.max(380, W * 0.38));
   const strip = Math.max(70, (W - coverW - 34) / n);
   const fw = Math.min(600, W * 0.46);
+  drawer.classList.toggle('tight', strip < 120);
   const step = Math.min(78, (H - THEME.tabH - 40 - H * 0.34) / (n - 1));
   els.forEach((e, i) => {
     e.style.left = (34 + i * strip) + 'px'; e.style.width = fw + 'px'; e.style.zIndex = i + 1;
@@ -657,11 +677,31 @@ sheet.addEventListener('scroll', () => {
 }, { passive: true });
 
 const clip = (r) => `inset(${Math.max(0, r.top)}px ${Math.max(0, innerWidth - r.right)}px ${Math.max(0, innerHeight - r.bottom)}px ${Math.max(0, r.left)}px round 18px)`;
-function show() { sheet.hidden = false; sheet.scrollTop = 0; document.body.style.overflow = 'hidden'; }
+/* lock the page behind the open folder, so iPhone Safari cannot scroll it away underneath */
+let savedY = 0;
+function lock() {
+  if (document.body.classList.contains('locked')) return;
+  savedY = scrollY; document.body.style.top = -savedY + 'px'; document.body.classList.add('locked');
+}
+function unlock() {
+  if (!document.body.classList.contains('locked')) return;
+  document.body.classList.remove('locked'); document.body.style.top = '';
+  scrollTo(0, savedY); requestAnimationFrame(() => { if (Math.abs(scrollY - savedY) > 2) scrollTo(0, savedY); });
+}
+function show() { lock(); sheet.hidden = false; sheet.scrollTop = 0; }
+/* the folder is a history step, so the iPhone back swipe or the browser Back button closes it instead of leaving the site */
+let pushed = false;
+try { history.scrollRestoration = 'manual'; } catch {}
+const setHash = (id, push) => {
+  try {
+    if (push) { history.pushState({ stand: id }, '', '#' + id); pushed = true; }
+    else history.replaceState(pushed ? { stand: id } : null, '', id ? '#' + id : location.pathname + location.search);
+  } catch {}
+};
 async function openFolder(i, el) {
   if (busy) return; busy = true; cur = i;
-  show(); fill(i);
-  try { history.replaceState(null, '', '#' + F[i].id); } catch {}
+  hover(-1); show(); fill(i);
+  setHash(F[i].id, true);
   if (reduce()) { sheet.classList.add('in'); busy = false; document.getElementById('closeBtn').focus(); return; }
   sheet.hidden = true;
   el.classList.remove('shift'); el.classList.add('pull');
@@ -674,22 +714,25 @@ async function openFolder(i, el) {
   el.classList.remove('pull'); busy = false;
   document.getElementById('closeBtn').focus({ preventScroll: true });
 }
-async function closeFolder() {
+async function closeFolder(fromHistory = false) {
   if (busy || sheet.hidden) return; busy = true;
   const el = els[cur];
-  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
-  if (!reduce() && el) {
+  if (!fromHistory) setHash('', false);
+  pushed = false;
+  if (!reduce() && el && !(fromHistory && !canHover())) {
     sheet.classList.remove('in');
     const a = sheet.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clip(el.getBoundingClientRect()) }], { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)' });
     await a.finished.catch(() => {});
   }
-  sheet.hidden = true; sheet.classList.remove('in', 'scrolled'); document.body.style.overflow = '';
+  sheet.hidden = true; sheet.classList.remove('in', 'scrolled', 'leaving'); sheet.getAnimations().forEach((a) => a.cancel());
+  unlock(); hover(-1);
+  els.forEach((e) => e.classList.remove('pull', 'lift', 'shift'));
   io && io.disconnect(); ioR && ioR.disconnect();
-  busy = false; if (el) el.focus({ preventScroll: true });
+  busy = false; if (el && canHover()) el.focus({ preventScroll: true });
 }
 function go(i) {
   if (busy) return; busy = true;
-  const run = () => { cur = i; sheet.scrollTop = 0; fill(i); try { history.replaceState(null, '', '#' + F[i].id); } catch {} };
+  const run = () => { cur = i; sheet.scrollTop = 0; fill(i); setHash(F[i].id, false); };
   if (reduce()) { run(); sheet.classList.add('in'); busy = false; return; }
   sheet.classList.add('leaving');
   setTimeout(() => {
@@ -698,17 +741,37 @@ function go(i) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('in'); busy = false; }));
   }, 320);
 }
-document.getElementById('closeBtn').addEventListener('click', closeFolder);
+/* close: step back through history when we added the step, otherwise just close */
+function requestClose() {
+  if (busy || sheet.hidden) return;
+  if (pushed && history.state && history.state.stand) history.back();
+  else closeFolder();
+}
+document.getElementById('closeBtn').addEventListener('click', requestClose);
+addEventListener('popstate', () => {
+  const k = F.findIndex((f) => '#' + f.id === location.hash);
+  if (k < 0) { if (!sheet.hidden) { busy = false; closeFolder(true); } return; }
+  if (sheet.hidden) { cur = k; pushed = true; show(); fill(k); sheet.classList.add('in'); }
+  else if (k !== cur) { busy = false; go(k); }
+});
+/* coming back to the page from another site (Safari back-forward cache): never leave the page locked or half-open */
+addEventListener('pageshow', (e) => {
+  if (!e.persisted) return;
+  busy = false; els.forEach((x) => x.classList.remove('pull', 'lift', 'shift'));
+  if (sheet.hidden) { unlock(); document.body.classList.remove('locked'); document.body.style.top = ''; }
+  else sheet.classList.add('in');
+});
 document.getElementById('prevBtn').addEventListener('click', () => go((cur + n - 1) % n));
 document.getElementById('nextBtn').addEventListener('click', () => go((cur + 1) % n));
 addEventListener('keydown', (e) => {
   if (sheet.hidden) return;
-  if (e.key === 'Escape') closeFolder();
+  if (e.key === 'Escape') requestClose();
   if (e.key === 'ArrowRight') go((cur + 1) % n);
   if (e.key === 'ArrowLeft') go((cur + n - 1) % n);
 });
 const start = F.findIndex((f) => '#' + f.id === location.hash);
 if (start >= 0) { cur = start; show(); fill(start); sheet.classList.add('in'); }
+matchMedia(PHONE_MQ).addEventListener?.('change', () => { hover(-1); place(); });
 
 </script>
 

@@ -12,21 +12,25 @@ const THEME = {
   tabH: 170,
   tone(el, f) { el.style.setProperty('--c-bg', PAPER[f.id][0]); el.style.setProperty('--c-ink', PAPER[f.id][1]); },
   folder(f, i) {
-    return `<span class="tab">FOLDER_0${i + 1} // ${f.title}</span>
-      <span class="strip"><span class="name">${f.title}</span>
-        <span class="sb"><ul class="contents">${f.ch.map((c) => `<li>${c.name}</li>`).join('')}</ul><span class="bars" aria-hidden="true"></span><span class="num">0${i + 1} / 0${F.length}</span></span></span>
+    return `<span class="tab">Folder 0${i + 1} · ${f.short || f.title}</span>
+      <span class="strip"><span class="name">${f.title}</span><span class="flead">${f.lead}</span>
+        <span class="sb"><ul class="contents">${f.ch.map((c) => `<li>${c.name}</li>`).join('')}</ul><span class="bars" aria-hidden="true"></span><span class="num">0${i + 1} / 0${F.length}</span>
+          <span class="open" aria-hidden="true">Open<svg><use href="#i-chev-r"/></svg></span></span></span>
       <span class="peek"><img src="img/m_${f.shot}.webp" alt="" decoding="async" loading="lazy"></span>`;
   },
   cover() {
-    return `<div class="big" aria-hidden="true">Stand_01&ndash;0${F.length}</div>
+    return `<div class="big" aria-hidden="true">Stand</div><div class="spine-note" aria-hidden="true">Read · Mark · Practise · Tune &amp; Record · Write</div>
       <div class="inner">
-        <span class="hint"><i></i>Pull out a folder</span>
-        <div style="display:grid;gap:16px;align-content:center">
+        <span class="hint"><i></i><span class="hint-wide">Open a folder to see inside</span><span class="hint-phone">Tap a folder to see inside</span></span>
+        <div class="ctext">
           <h1>The music stand that practises with you.</h1>
-          <p>Read and mark your scores, turn pages hands-free, tune, keep time, film yourself and plan your week. Then keep notebooks and write your own music, in the same place.</p>
-          <span class="cta">Coming to the App Store</span>
+          <p>Read and mark your scores, turn pages hands-free, practise the hard bars, tune, film yourself and write your own music. One app, on iPad and iPhone.</p>
+          <div class="cta-row">${ctaHTML()}<span class="ctanote">No account · Offline · Private</span></div>
         </div>
-        <div class="meta"><span><b>Platform</b>iPad &middot; iPhone</span><span><b>Works</b>Offline</span><span><b>Your data</b>Stays on your device</span></div>
+        <div class="shots" aria-hidden="true">
+          <div class="dev ipad"><img src="img/s_07_marked.webp" alt="" decoding="async" fetchpriority="high"></div>
+          <div class="dev phone"><img src="img/m_phone_tuner.webp" alt="" decoding="async"></div>
+        </div>
       </div>`;
   },
   eyebrow(f, i) { return `<i></i>Folder 0${i + 1} of 0${F.length} · ${f.ch.length} things inside`; },

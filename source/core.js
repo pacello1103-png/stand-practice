@@ -2,7 +2,9 @@ const n = F.length;
 const ic = (id, cls = 'i') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
 const pad = (k) => String(k).padStart(2, '0');
 const img = (s) => `img/m_${s}.webp`;
-const phoneQ = () => matchMedia('(max-width: 760px)').matches;
+const PHONE_MQ = '(max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px)';
+const phoneQ = () => matchMedia(PHONE_MQ).matches;
+const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
 const narrow = () => matchMedia('(max-width: 900px)').matches;
 const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -11,27 +13,29 @@ const drawer = document.getElementById('drawer');
 const els = [];
 F.forEach((f, i) => {
   const b = document.createElement('button');
-  b.className = 'folder'; b.dataset.id = f.id;
+  b.className = 'folder'; b.dataset.id = f.id; b.style.setProperty('--i', i);
   THEME.tone(b, f, i);
   b.setAttribute('aria-label', `${f.title}: ${f.lead}`);
   b.innerHTML = THEME.folder(f, i);
   b.addEventListener('click', () => openFolder(i, b));
-  b.addEventListener('mouseenter', () => hover(i));
-  b.addEventListener('focus', () => hover(i));
+  b.addEventListener('mouseenter', () => { if (canHover()) hover(i); });
+  b.addEventListener('focus', () => { if (b.matches(':focus-visible')) hover(i); });
+  b.addEventListener('blur', () => hover(-1));
   drawer.append(b); els.push(b);
 });
 const cover = document.createElement('div');
-cover.className = 'folder cover';
+cover.className = 'folder cover'; cover.style.setProperty('--i', n);
 cover.innerHTML = THEME.cover();
 drawer.append(cover);
 drawer.addEventListener('mouseleave', () => hover(-1));
 
 function place() {
-  if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); return; }
+  if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); drawer.classList.remove('tight'); return; }
   const W = drawer.clientWidth, H = drawer.clientHeight;
   const coverW = Math.min(560, Math.max(380, W * 0.38));
   const strip = Math.max(70, (W - coverW - 34) / n);
   const fw = Math.min(600, W * 0.46);
+  drawer.classList.toggle('tight', strip < 120);
   const step = Math.min(78, (H - THEME.tabH - 40 - H * 0.34) / (n - 1));
   els.forEach((e, i) => {
     e.style.left = (34 + i * strip) + 'px'; e.style.width = fw + 'px'; e.style.zIndex = i + 1;
@@ -46,11 +50,23 @@ function hover(k) {
   els.forEach((e, i) => { e.classList.toggle('lift', i === k); e.classList.toggle('shift', k >= 0 && i > k); });
 }
 addEventListener('resize', place); place();
+/* the folders are dealt onto the table when the page opens; on a computer the first one then lifts once, to show they open */
+let touched = false;
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((t) => addEventListener(t, () => { touched = true; }, { once: true, passive: true }));
+if (!reduce()) {
+  drawer.classList.add('intro');
+  setTimeout(() => drawer.classList.remove('intro'), 1500);
+  let seen = false; try { seen = sessionStorage.getItem('stand-nudge') === '1'; sessionStorage.setItem('stand-nudge', '1'); } catch {}
+  if (!seen) setTimeout(() => {
+    if (touched || !canHover() || phoneQ() || !sheet.hidden) return;
+    hover(0); setTimeout(() => { if (!touched) hover(-1); }, 1100);
+  }, 1900);
+}
 
 /* ---------- the open folder ---------- */
 const sheet = document.getElementById('sheet'), body = document.getElementById('sheetBody');
 const barT = document.getElementById('barTitle'), barC = document.getElementById('barCh');
-let cur = -1, busy = false, io = null, ioR = null, active = -1;
+let cur = -1, busy = false, io = null, ioR = null, active = -1, origin = null;
 
 function extra(c) {
   if (c.grid) return `<div class="grid rv">${c.grid.map(([t, s]) => `<div class="sq"><b>${t}</b><span>${s}</span></div>`).join('')}</div>`;
@@ -64,6 +80,7 @@ const frame = (c, cls = '') => c.phone
 
 function fill(i) {
   const f = F[i], next = F[(i + 1) % n];
+  const endcta = `<div class="endcta"><div><b>Stand</b><span>Everything in this folder, and the four others, in one app.</span></div>${ctaHTML()}</div>`;
   THEME.tone(sheet, f, i);
   barT.innerHTML = `${ic(f.icon)}<span>${f.title}</span>`; barC.textContent = '';
   body.innerHTML = `
@@ -97,11 +114,12 @@ function fill(i) {
         <span class="np"><img src="${img(next.shot)}" alt="" loading="lazy" decoding="async"></span>
       </button>
       <div class="others">${F.map((g, k) => `<button data-go="${k}" ${k === i ? 'aria-current="true"' : ''}>${ic(g.icon)}${g.short || g.title}</button>`).join('')}</div>
+      ${endcta}
     </footer>`;
   THEME.tone(body.querySelector('.nextcard'), next, (i + 1) % n);
   body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
   body.querySelectorAll('[data-to]').forEach((b) => b.addEventListener('click', () => toCh(+b.dataset.to)));
-  active = -1; watch(); setActive(0);
+  active = -1; watch(); setActive(0); if (typeof sizeDevs === 'function') sizeDevs(body);
 }
 function toCh(k) {
   const el = body.querySelectorAll('.ch')[k]; if (!el) return;
@@ -138,11 +156,31 @@ sheet.addEventListener('scroll', () => {
 }, { passive: true });
 
 const clip = (r) => `inset(${Math.max(0, r.top)}px ${Math.max(0, innerWidth - r.right)}px ${Math.max(0, innerHeight - r.bottom)}px ${Math.max(0, r.left)}px round 18px)`;
-function show() { sheet.hidden = false; sheet.scrollTop = 0; document.body.style.overflow = 'hidden'; }
+/* lock the page behind the open folder, so iPhone Safari cannot scroll it away underneath */
+let savedY = 0;
+function lock() {
+  if (document.body.classList.contains('locked')) return;
+  savedY = scrollY; document.body.style.top = -savedY + 'px'; document.body.classList.add('locked');
+}
+function unlock() {
+  if (!document.body.classList.contains('locked')) return;
+  document.body.classList.remove('locked'); document.body.style.top = '';
+  scrollTo(0, savedY); requestAnimationFrame(() => { if (Math.abs(scrollY - savedY) > 2) scrollTo(0, savedY); });
+}
+function show() { lock(); sheet.hidden = false; sheet.scrollTop = 0; }
+/* the folder is a history step, so the iPhone back swipe or the browser Back button closes it instead of leaving the site */
+let pushed = false;
+try { history.scrollRestoration = 'manual'; } catch {}
+const setHash = (id, push) => {
+  try {
+    if (push) { history.pushState({ stand: id }, '', '#' + id); pushed = true; }
+    else history.replaceState(pushed ? { stand: id } : null, '', id ? '#' + id : location.pathname + location.search);
+  } catch {}
+};
 async function openFolder(i, el) {
-  if (busy) return; busy = true; cur = i;
-  show(); fill(i);
-  try { history.replaceState(null, '', '#' + F[i].id); } catch {}
+  if (busy) return; busy = true; cur = i; origin = el;
+  hover(-1); show(); fill(i);
+  setHash(F[i].id, true);
   if (reduce()) { sheet.classList.add('in'); busy = false; document.getElementById('closeBtn').focus(); return; }
   sheet.hidden = true;
   el.classList.remove('shift'); el.classList.add('pull');
@@ -155,22 +193,28 @@ async function openFolder(i, el) {
   el.classList.remove('pull'); busy = false;
   document.getElementById('closeBtn').focus({ preventScroll: true });
 }
-async function closeFolder() {
+async function closeFolder(fromHistory = false) {
   if (busy || sheet.hidden) return; busy = true;
-  const el = els[cur];
-  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
-  if (!reduce() && el) {
+  const el = origin && document.contains(origin) ? origin : els[cur];
+  if (!fromHistory) setHash('', false);
+  pushed = false;
+  if (!reduce() && el && !(fromHistory && !canHover())) {
     sheet.classList.remove('in');
     const a = sheet.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clip(el.getBoundingClientRect()) }], { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)' });
     await a.finished.catch(() => {});
   }
-  sheet.hidden = true; sheet.classList.remove('in', 'scrolled'); document.body.style.overflow = '';
+  origin = null;
+  sheet.hidden = true; sheet.classList.remove('in', 'scrolled', 'leaving'); sheet.getAnimations().forEach((a) => a.cancel());
+  unlock(); hover(-1);
+  document.querySelectorAll('.pull').forEach((e) => e.classList.remove('pull'));
+  els.forEach((e) => e.classList.remove('lift', 'shift'));
   io && io.disconnect(); ioR && ioR.disconnect();
-  busy = false; if (el) el.focus({ preventScroll: true });
+  busy = false; if (el && canHover()) el.focus({ preventScroll: true });
 }
 function go(i) {
   if (busy) return; busy = true;
-  const run = () => { cur = i; sheet.scrollTop = 0; fill(i); try { history.replaceState(null, '', '#' + F[i].id); } catch {} };
+  origin = null;
+  const run = () => { cur = i; sheet.scrollTop = 0; fill(i); setHash(F[i].id, false); };
   if (reduce()) { run(); sheet.classList.add('in'); busy = false; return; }
   sheet.classList.add('leaving');
   setTimeout(() => {
@@ -179,14 +223,52 @@ function go(i) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sheet.classList.add('in'); busy = false; }));
   }, 320);
 }
-document.getElementById('closeBtn').addEventListener('click', closeFolder);
+/* close: step back through history when we added the step, otherwise just close */
+function requestClose() {
+  if (busy || sheet.hidden) return;
+  if (pushed && history.state && history.state.stand) history.back();
+  else closeFolder();
+}
+document.getElementById('closeBtn').addEventListener('click', requestClose);
+addEventListener('popstate', () => {
+  const k = F.findIndex((f) => '#' + f.id === location.hash);
+  if (k < 0) { if (!sheet.hidden) { busy = false; closeFolder(true); } return; }
+  if (sheet.hidden) { cur = k; pushed = true; show(); fill(k); sheet.classList.add('in'); }
+  else if (k !== cur) { busy = false; go(k); }
+});
+/* coming back to the page from another site (Safari back-forward cache): never leave the page locked or half-open */
+addEventListener('pageshow', (e) => {
+  if (!e.persisted) return;
+  busy = false; els.forEach((x) => x.classList.remove('pull', 'lift', 'shift'));
+  if (sheet.hidden) { unlock(); document.body.classList.remove('locked'); document.body.style.top = ''; }
+  else sheet.classList.add('in');
+});
 document.getElementById('prevBtn').addEventListener('click', () => go((cur + n - 1) % n));
 document.getElementById('nextBtn').addEventListener('click', () => go((cur + 1) % n));
 addEventListener('keydown', (e) => {
   if (sheet.hidden) return;
-  if (e.key === 'Escape') closeFolder();
+  if (e.key === 'Escape') requestClose();
   if (e.key === 'ArrowRight') go((cur + 1) % n);
   if (e.key === 'ArrowLeft') go((cur + n - 1) % n);
 });
+/* highlights on the home page open a folder at the right chapter */
+async function openAt(id, chId, el) {
+  const i = F.findIndex((f) => f.id === id); if (i < 0) return;
+  await openFolder(i, el || els[i]);
+  const k = F[i].ch.findIndex((c) => c.id === chId);
+  if (k > 0) setTimeout(() => toCh(k), reduce() ? 0 : 120);
+}
+document.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openAt(b.dataset.open, b.dataset.ch, b.closest('.high') || b)));
+const barCta = document.getElementById('barCta'); if (barCta) barCta.innerHTML = ctaHTML();
+/* every iPad and iPhone picture knows its own width, so bezel and corners stay in proportion */
+const devRO = 'ResizeObserver' in window ? new ResizeObserver((es) => es.forEach((e) => e.target.style.setProperty('--w', e.target.offsetWidth + 'px'))) : null;
+function sizeDevs(root = document) {
+  root.querySelectorAll('.dev').forEach((d) => {
+    d.style.setProperty('--w', (d.offsetWidth || 0) + 'px');
+    if (devRO && !d.dataset.ro) { devRO.observe(d); d.dataset.ro = '1'; }
+  });
+}
+sizeDevs();
 const start = F.findIndex((f) => '#' + f.id === location.hash);
 if (start >= 0) { cur = start; show(); fill(start); sheet.classList.add('in'); }
+matchMedia(PHONE_MQ).addEventListener?.('change', () => { hover(-1); place(); });

@@ -18,7 +18,7 @@ const THEME = {
         <div style="display:grid;gap:16px;align-content:center">
           <h1>The music stand that practises with you.</h1>
           <p>Read and mark your scores, turn pages hands-free, tune, keep time, film yourself and plan your week. Then keep notebooks and write your own music, in the same place.</p>
-          <span class="cta">Coming to the App Store</span>
+          ${ctaHTML()}
           <span class="hint"><i></i>Open a folder to see what is inside</span>
         </div>
         <div class="meta"><span><b>Platform</b>iPad and iPhone</span><span><b>Works</b>Offline</span><span><b>Your data</b>Stays on your device</span></div>
