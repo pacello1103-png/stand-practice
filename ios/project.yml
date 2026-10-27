@@ -62,7 +62,7 @@ targets:
           - _stand-link._tcp
           - _stand-link._udp
         UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: false
+        LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:

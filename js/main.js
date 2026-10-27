@@ -981,6 +981,24 @@ let wakeLock = null;
 async function keepAwake() { try { if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
 const PAPER_COLOR = { white: '#ffffff', cream: '#FBF6EA', night: '#ffffff' };
 
+// Where you are (the score and its page), so that if the page ever has to start again (iOS short
+// of memory), it opens again right there instead of in the library.
+function rememberPlace() { try { if (V.score && !V.score.preview) localStorage.setItem('standPlace', JSON.stringify({ id: V.score.id, page: V.page, t: Date.now() })); } catch {} }
+async function reopenPlace() {
+  let p = null; try { p = JSON.parse(localStorage.getItem('standPlace') || 'null'); } catch {}
+  if (!p || !p.id || Date.now() - (p.t || 0) > 6 * 3600e3 || !scores.some((x) => x.id === p.id)) return;
+  await openScore(p.id, { page: () => p.page || 0 });
+  toast('Stand had to start again: you are back where you were.', 3000);
+}
+// iOS short of memory: what can be drawn again later goes now (pages away from the one on screen,
+// the score kept for the iPhone when it is not being sent)
+window.standMemoryLow = () => {
+  try {
+    const keep = new Set(V.pages.map((p) => p.art));
+    for (const [k, pr] of [...V.cache.entries()]) pr.then((c) => { if (!keep.has(c)) { V.cache.delete(k); INCACHE.delete(c); freeCanvas(c); } }, () => {});
+  } catch {}
+  try { if (PH.doc && Date.now() - PH.t > 5000) phoneDocClose(); } catch {}
+};
 async function openScore(id, opts = {}) {
   if (LIB.editing) setLibEditing(false);
   const peek = scores.find((x) => x.id === id) || await db.get('scores', id);
@@ -1008,6 +1026,7 @@ async function openScore(id, opts = {}) {
   Z.s = 1; Z.x = 0; Z.y = 0;
   V.page = clamp(opts.page ? opts.page() : score.lastPage || 0, 0, V.doc.pages - 1);
   score.opened = Date.now(); db.put('scores', score);
+  rememberPlace();
   hidePanel(); clearSelection();
   if (file.kind === 'paper') setTimeout(() => sectionTour('notebook', { force: true }), 600);
   else if (!opts.page) setTimeout(() => { if (!$('#score').hidden && !openPanel) sectionTour('score', { force: true }); }, 900);
@@ -1035,6 +1054,7 @@ async function closeScore() {
   const sc = V.score;
   if (RUN.on) endRun();
   $('#score').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
+  try { localStorage.removeItem('standPlace'); } catch {}
   step0(() => finishTextBox());
   const step = (fn) => { try { const r = fn(); if (r && r.catch) r.catch((e) => console.warn(e)); } catch (e) { console.warn(e); } };
   step(() => finishText(true));
@@ -1361,6 +1381,7 @@ function goTo(page, fade = true) {
   // (the eyes' model, when it shares this thread, waits while the page is drawn)
   globalThis.__busyUntil = performance.now() + 700;
   V.page = clamp(page, 0, V.doc.pages - 1); V.half = false; V.score.lastPage = V.page;
+  rememberPlace();
   if (V.page === 0) V.usedJumps.clear();
   layout(fade);
 }
@@ -7816,6 +7837,29 @@ async function newTakeIds(all) {
   const done = new Set(await getSetting('backupTakesDone', []));
   return takes.filter((t) => !done.has(t.id)).map((t) => t.id);
 }
+// The Stand folder in Files (On My iPad › Stand), written by the app itself (newer iPad apps only)
+const NSAVE = () => (window.standCaps || {}).files && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standSave;
+const canSaveHere = () => !!NSAVE();
+const saveWait = new Map();
+window.standSaved = (r) => { const w = r && saveWait.get(r.id); if (w) { saveWait.delete(r.id); w(r); } };
+const b64Of = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
+async function saveInStandFolder(blob, folder, name) {
+  const H = NSAVE(); if (!H) throw new Error('no folder');
+  const id = uid();
+  const done = new Promise((res) => saveWait.set(id, res));
+  H.postMessage({ op: 'begin', id, folder, name });
+  const PIECE = 2 * 1024 * 1024;
+  try { for (let o = 0; o < blob.size; o += PIECE) H.postMessage({ op: 'chunk', id, data: await b64Of(blob.slice(o, o + PIECE)) }); }
+  catch (e) { H.postMessage({ op: 'cancel', id }); saveWait.delete(id); throw e; }
+  H.postMessage({ op: 'end', id });
+  const r = await Promise.race([done, new Promise((res) => setTimeout(() => res({ ok: false, error: 'timeout' }), 180000))]);
+  saveWait.delete(id);
+  if (!r.ok) throw new Error(r.error || 'not saved');
+  return r.path;
+}
+// a little time in the background for work that should not stop half way (newer iPad apps only)
+function nativeBusy(on, why) { try { if ((window.standCaps || {}).busy) window.webkit.messageHandlers.standBusy.postMessage({ on: !!on, why }); } catch {} }
+window.__nativeBusy = nativeBusy;
 const canShareAll = (vols) => { try { const fs = vols.map((v) => new File([v.blob], v.name, { type: 'application/zip' })); return !!(navigator.canShare && navigator.canShare({ files: fs })); } catch { return false; } };
 async function backupNow({ auto = false } = {}) {
   const btn = $('#bkMake'); if (btn.disabled) return; btn.disabled = true;
@@ -7858,7 +7902,20 @@ async function backupNow({ auto = false } = {}) {
       ? `Your backup is <b>${vols.length} files</b>, named by what they hold. ${all ? 'Tap <b>Save all at once</b>, or save them one by one' : 'Save them one by one'}: in the sheet choose <b>Save to Files</b>, then <b>iCloud Drive › Stand</b> (make the folder Stand the first time). Opened in Files, each file is a folder with your scores as PDFs and your recordings.`
       : 'In the sheet that opens, choose <b>Save to Files</b>, then <b>iCloud Drive › Stand</b> (make the folder Stand the first time). Opened in Files, the file is a folder with your scores as PDFs (in the folders of your library).';
     $('#bkFiles').hidden = false;
-    if (vols.length === 1 || auto) ul.querySelector('.btn').click();
+    // the app can write to its own folder in Files: the backup is saved there at once, every part
+    // (the older library backups go, the three newest stay); Share still sends a copy elsewhere
+    if (canSaveHere()) {
+      nativeBusy(true, 'backup');
+      try {
+        toast('Saving the backup in Files › Stand › Backups…', 120000);
+        for (const li of ul.children) { const v = vols[[...ul.children].indexOf(li)]; await saveInStandFolder(v.blob, 'Backups', v.name); const go = li.querySelector('.btn'); markSaved(li, go); go.textContent = 'Share'; go.classList.remove('primary'); }
+        const nLib = vols.filter((v) => v.kind === 'Library').length;
+        try { NSAVE().postMessage({ op: 'keep', folder: 'Backups', prefix: 'Stand – Library – ', count: Math.max(3, nLib * 3) }); } catch {}
+        $('#bkHow').innerHTML = 'Saved in <b>Files › On My iPad › Stand › Backups</b>. They stay on this iPad, so if Stand is deleted they go with it: from time to time tap <b>Share</b> and save a copy in <b>iCloud Drive</b> too.';
+        toast('Backup saved in Files › Stand › Backups', 3500);
+      } catch (err) { toast('The backup could not be saved in the Stand folder (' + (err.message || err) + '). Use Share instead.', 6000); }
+      nativeBusy(false, 'backup');
+    } else if (vols.length === 1 || auto) ul.querySelector('.btn').click();
   } catch (err) { console.error(err); toast('The backup could not be made: ' + (err.message || err), 5000); }
   btn.disabled = false;
 }
@@ -7868,6 +7925,18 @@ $$('#bkTakesWhich button').forEach((b) => b.addEventListener('click', () => { BK
 $('#bkTakes').addEventListener('change', () => { $('#bkTakesWhich').hidden = !$('#bkTakes').checked; });
 // automatic: when the time has come and something changed, the banner offers the finished backup
 $$('#bkAuto button').forEach((b) => b.addEventListener('click', async () => { await setSetting('backupAuto', b.dataset.auto); $$('#bkAuto button').forEach((x) => x.classList.toggle('on', x === b)); renderBackupBanner(); }));
+// with the Stand folder there is nothing to choose: when a backup is due it is made by itself, while
+// the library is on screen and nothing else is going on (once a day at most)
+setInterval(async () => {
+  try {
+    if (!canSaveHere() || document.visibilityState !== 'visible' || !$('#score').hidden || openPanel || recState || $('#bkMake').disabled) return;
+    if (Date.now() - (window.__autoBkAt || 0) < 864e5 || !scores.length) return;
+    const auto = await getSetting('backupAuto', 'week'); if (auto === 'off') return;
+    const st = await backupState(); if (!(st.stale && st.days >= (auto === 'day' ? 1 : 7))) return;
+    window.__autoBkAt = Date.now();
+    await backupNow({ auto: true });
+  } catch {}
+}, 60000);
 $('#bkBannerGo').addEventListener('click', async () => { showPanel('backup'); renderBackup(); if ((await getSetting('backupAuto', 'week')) !== 'off') backupNow({ auto: true }); });
 $('#bkInput').addEventListener('change', async (e) => {
   const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
@@ -8507,6 +8576,8 @@ function showWelcome() {
   if (PHONE && !S.phoneToured && !window.__noTour) setTimeout(() => startTour({ phone: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 700);
   renderGoal(); syncWinkUI(); syncTapUI(); initPracticeSync();
   setHomeTab(scores.length ? (S.hometab || 'mine') : 'mine');
+  // started again by the app after the page stopped (memory): back to the score and page
+  if (/[?&]recover=1/.test(location.search)) { try { history.replaceState(null, '', location.pathname); } catch {} setTimeout(() => reopenPlace().catch(() => {}), 300); }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   // the most searched composers' works, loaded quietly so the first searches are instant
   setTimeout(() => { if (navigator.onLine === false || PHONE) return; loadComposers().then((list) => warmUp([...list].sort((a, b) => b.p - a.p).slice(0, 10).map((c) => c.c))).catch(() => {}); }, 5000);

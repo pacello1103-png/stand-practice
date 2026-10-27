@@ -27,6 +27,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         configureAudioSession()
+        StandDiagnostics.shared.start()
+        StandLog.write("app started \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] ?? "") (\(Bundle.main.infoDictionary?["CFBundleVersion"] ?? ""))")
         UIApplication.shared.isIdleTimerDisabled = true   // the screen stays on while you practise
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = WebViewController()
@@ -124,6 +126,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     private let face = FaceTurner()
     private let tapper = StandTapper()
     private let video = NativeVideo()
+    private let files = StandFiles()
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -131,10 +134,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation"] {
+        for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 1, busy: 1, recover: 1, memory: 1 };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 
@@ -154,6 +157,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         face.onEvent = { [weak self] event in self?.send("standFaceEvent", event) }
         tapper.onEvent = { [weak self] event in self?.send("standTapEvent", event) }
         video.onEvent = { [weak self] event in self?.send("standVideoEvent", event) }
+        files.send = { [weak self] fn, payload in self?.send(fn, payload) }
         // Apple Pencil double-tap (and squeeze on Pencil Pro) switches to the eraser and back.
         let pencil = UIPencilInteraction()
         pencil.delegate = self
@@ -283,6 +287,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             }
         case "standAudio":
             standSetSpeakerOverride(body["speaker"] as? Bool ?? false)
+        case "standSave":
+            files.save(body)
+        case "standBusy":
+            files.busy(body)
+        case "standDiag":
+            files.diag(body)
         case "standScan":
             guard PageScanner.available else { return }
             face.stop()   // the scanner needs the camera
@@ -344,9 +354,19 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     }
 
     // Reload if the web content process is ever terminated in the background.
+    // (the page opens again where you were: the score and the page it was on)
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        let state = UIApplication.shared.applicationState == .active ? "in use" : "in the background"
+        StandLog.write("the page stopped (\(state)), opened again")
         pageReady = false
-        webView.reload()
+        webView.load(URLRequest(url: URL(string: "stand://app/index.html?recover=1")!))
+    }
+
+    // iOS is short of memory: the page lets go of what it can draw again later
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        StandLog.write("memory warning")
+        webView?.evaluateJavaScript("window.standMemoryLow && window.standMemoryLow()", completionHandler: nil)
     }
 }
 

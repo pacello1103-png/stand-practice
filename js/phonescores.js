@@ -165,6 +165,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const want = PS.list.filter((s) => !PS.removed.has(s.id) && have.get(s.id) !== s.stamp);
     if (!want.length) return;
     PS.sync = { n: want.length, done: 0, failed: 0 }; sub();
+    // (leaving the app for a moment does not stop it: iOS gives the newer apps some time)
+    try { window.__nativeBusy && window.__nativeBusy(true, 'download'); } catch {}
     for (const s of want) {
       if (PS.removed.has(s.id)) { PS.sync.done++; continue; }
       try { await fetchScore(s, (k, n) => { PS.sync.page = `${s.title} · page ${k} of ${n}`; sub(); }); } catch (e) {
@@ -177,6 +179,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       PS.sync.done++; sub(); if (!pane.hidden) render();
     }
     const failed = PS.sync.failed, full = PS.sync.full; PS.sync = null; sub(); if (!pane.hidden) render();
+    try { window.__nativeBusy && window.__nativeBusy(false, 'download'); } catch {}
     if (full) toast('This iPhone is full: some scores could not be downloaded. Remove some downloads (Edit) or free some space.', 6000);
     else if (failed && !pane.hidden) toast('Some scores could not be downloaded. They come next time your iPad is found.');
     if (PS.again && !full && !failed) syncAll();
