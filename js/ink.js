@@ -82,9 +82,23 @@ function maskImage(src) {
   }
   return m;
 }
+// every whiteout of these markings loaded, so they are drawn (an export, a picture of the page)
+export function preloadMasks(items) {
+  // (never waits for ever: a picture that will not load is left out after a moment)
+  return Promise.all(items.filter((s) => s && s.t === 'mask' && s.d).map((s) => { const m = maskImage(s.d); return m.ready ? null : new Promise((res) => { const done = () => res(); m.img.addEventListener('load', done, { once: true }); m.img.addEventListener('error', done, { once: true }); setTimeout(done, 3000); if (m.img.complete) { m.ready = !!m.img.naturalWidth; res(); } }); }));
+}
 let tintCanvas = null;
 
 // Passages: a marked part of the music (any instrument). The kind sets the colour.
+// ---------- layers of markings ----------
+// A marking may belong to a named layer ('ly': e.g. notes taken while listening to someone play).
+// Markings with no layer are the player's own. A hidden layer is not drawn anywhere (page, export,
+// thumbnails, the iPhone) and cannot be touched, erased or selected until it is shown again.
+let hidLy = new Set(), activeLy = '';
+export function setHiddenLayers(ids) { hidLy = new Set(ids || []); }
+export function setActiveLayer(id) { activeLy = id || ''; }
+export const isHiddenItem = (s) => !!(s && s.ly && hidLy.has(s.ly));
+const tagNew = (s) => { if (activeLy && s && !('ly' in s) && s.t !== 'passage' && s.t !== 'bg') s.ly = activeLy; return s; };
 export const PASSAGE_KINDS = {
   melodic: { label: 'Melodic', color: '#2b6fd6' },
   technical: { label: 'Technical', color: '#d12f2f' },
@@ -92,25 +106,35 @@ export const PASSAGE_KINDS = {
   rhythm: { label: 'Rhythm', color: '#0f8f8f' },
   bowing: { label: 'Bowing & breath', color: '#ea7a17' },
 };
+// a passage is a light frame: a faint tint and a thin line a little outside the music, its name a
+// small see-through tag sitting on the top line, so nothing in it or around it is hidden
 function drawPassage(ctx, s, W, H) {
   const c = (PASSAGE_KINDS[s.kind] || PASSAGE_KINDS.melodic).color;
-  const x = s.x0 * W, y = s.y0 * H, w = (s.x1 - s.x0) * W, h = (s.y1 - s.y0) * H;
+  const pad = Math.max(2, W / 400);
+  const x = Math.min(s.x0, s.x1) * W - pad, y = Math.min(s.y0, s.y1) * H - pad;
+  const w = Math.abs(s.x1 - s.x0) * W + pad * 2, h = Math.abs(s.y1 - s.y0) * H + pad * 2;
   ctx.globalAlpha = 1;
-  ctx.fillStyle = c + '14';
-  ctx.strokeStyle = c; ctx.lineWidth = Math.max(1.5, W / 700);
-  ctx.setLineDash([]);
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = c + '0a';
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill();
+  ctx.globalAlpha = 0.45;
+  ctx.strokeStyle = c; ctx.lineWidth = Math.max(1, W / 1100);
+  ctx.setLineDash([]); ctx.stroke();
   const label = (s.name || PASSAGE_KINDS[s.kind]?.label || 'Passage').slice(0, 28);
-  const fs = Math.max(11, Math.round(W / 95));
+  const fs = Math.max(10, Math.round(W / 110));
   ctx.font = `600 ${fs}px -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif`;
-  const tw = ctx.measureText(label).width + fs;
-  ctx.fillStyle = c;
-  ctx.beginPath(); ctx.roundRect(x, y - fs * 1.35, tw, fs * 1.35, 5); ctx.fill();
-  ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
-  ctx.fillText(label, x + fs * 0.5, y - fs * 0.68);
+  const tw = ctx.measureText(label).width + fs * 0.9, th = fs * 1.25;
+  const lx = x + Math.min(10, w * 0.05), ly = y - th / 2;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath(); ctx.roundRect(lx, ly, tw, th, th / 2); ctx.fill();
+  ctx.fillStyle = c + '1f'; ctx.fill();
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = c; ctx.textBaseline = 'middle';
+  ctx.fillText(label, lx + fs * 0.45, ly + th / 2 + 0.5);
 }
 
 export function drawItem(ctx, s, W, H, live) {
+  if (isHiddenItem(s) || s.t === 'note') return;   // (notes are cards over the page, never drawn into it)
   ctx.save();
   if (s.t === 'passage') { drawPassage(ctx, s, W, H); ctx.restore(); return; }
   if (s.t === 'stamp') { drawStamp(ctx, s, W, H); ctx.restore(); return; }
@@ -223,6 +247,7 @@ function textHalfWidth(s) {
 
 // ---------- geometry helpers (selection, eraser) ----------
 export function itemBounds(s) {
+  if (s.t === 'note') return { x0: s.x, y0: s.y, x1: s.x + 0.04, y1: s.y + 0.03 };
   if (s.t === 'passage') return { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 };
   if (s.t === 'stamp' && s.k === 'txt') {
     const hw = textHalfWidth(s) + s.s * 0.15, hh = s.s * 0.55;
@@ -268,7 +293,7 @@ function inPoly(x, y, poly) {
 export function itemsInLasso(items, poly) {
   const sel = [];
   items.forEach((s, i) => {
-    if (s.t === 'passage') return;
+    if (s.t === 'passage' || s.t === 'note' || isHiddenItem(s)) return;
     if (s.t === 'stamp') { if (inPoly(s.x, s.y, poly)) sel.push(i); return; }
     if (s.t === 'mask') { if (inPoly(s.x + s.w / 2, s.y + s.h / 2, poly)) sel.push(i); return; }
     if (s.t === 'bg' || s.lock) return;
@@ -284,6 +309,7 @@ export function itemsInLasso(items, poly) {
 export function transformItem(s, dx, dy, k, ox, oy) {
   const tx = (x) => ox + (x - ox) * k + dx, ty = (y) => oy + (y - oy) * k + dy;
   if (s.t === 'passage') return { ...s, x0: tx(s.x0), y0: ty(s.y0), x1: tx(s.x1), y1: ty(s.y1) };
+  if (s.t === 'note') return { ...s, x: tx(s.x), y: ty(s.y) };
   if (s.t === 'stamp') return { ...s, x: tx(s.x), y: ty(s.y), s: s.s * k };
   if (s.t === 'mask') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
   if (s.t === 'img') return { ...s, x: tx(s.x), y: ty(s.y), w: s.w * k, h: s.h * k };
@@ -295,7 +321,7 @@ export function transformItem(s, dx, dy, k, ox, oy) {
 }
 
 export function itemHit(s, x, y, r, W, H) {
-  if (s.t === 'passage') return false;
+  if (s.t === 'passage' || s.t === 'note' || isHiddenItem(s)) return false;
   if (s.t === 'stamp' && s.k === 'txt') { const b = itemBounds(s); return x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r; }
   if (s.t === 'stamp') { const d = Math.hypot((s.x - x) * W, (s.y - y) * H); return d < Math.max(r * W, s.s * W); }
   if (s.t === 'mask') return x >= s.x - r && x <= s.x + s.w + r && y >= s.y - r && y <= s.y + s.h + r;
@@ -376,6 +402,22 @@ export function smartMask(art, stroke, spread = 3) {
   return { item: { t: 'mask', x: bx0 / W, y: by0 / H, w: mw / W, h: mh / H, d: mc.toDataURL('image/png') }, rejected, count: accepted.length };
 }
 
+// Markings not yet written to the database, by page: the newest list is kept here at once, so a page
+// laid out again (a turn of the iPad, the keyboard) shows it, and nothing written is lost.
+const LIVE = new Map();      // key -> { items, t (timer) }
+function writeLive(key) {
+  const e = LIVE.get(key); if (!e) return Promise.resolve();
+  clearTimeout(e.t); e.t = 0;
+  const items = e.items;
+  // (kept here while the write fails: it is tried again with the next change, or when leaving)
+  return db.put('ink', { key, items }).then(() => { const n = LIVE.get(key); if (n && n.items === items && !n.t) LIVE.delete(key); }, () => {});
+}
+// write everything waiting now (closing a score, the app going to the background)
+export function flushInk() { return Promise.all([...LIVE.keys()].map(writeLive)); }
+// forget what waits for a score (it is being deleted)
+export function dropInk(scoreId) { for (const [k, e] of LIVE) if (k.startsWith(scoreId + ':')) { clearTimeout(e.t); LIVE.delete(k); } }
+export function liveInk(key) { const e = LIVE.get(key); return e ? e.items : null; }
+
 export class InkLayer {
   constructor(ink, scoreId, page) {
     this.canvas = ink; this.scoreId = scoreId; this.page = page;
@@ -383,8 +425,10 @@ export class InkLayer {
     this._saveT = 0; this.loaded = this.load();
   }
   async load() {
-    const rec = await db.get('ink', this.key).catch(() => null);
-    const stored = rec ? (rec.items || rec.strokes || []).map(normalise) : [];
+    const live = LIVE.get(this.key);
+    const rec = live ? null : await db.get('ink', this.key).catch(() => null);
+    const live2 = LIVE.get(this.key);   // (written to while reading)
+    const stored = live2 ? live2.items.slice() : rec ? (rec.items || rec.strokes || []).map(normalise) : [];
     // anything added while loading is kept on top of what was stored
     this.items = this.touched ? [...stored, ...this.items] : stored;
     if (this.items.some((s) => s.t === 'stamp')) await loadMusicFont();
@@ -393,11 +437,12 @@ export class InkLayer {
   }
   save() {
     this.touched = true;
-    clearTimeout(this._saveT);
-    this._saveT = setTimeout(() => {
-      if (!this.ready) { this.loaded.then(() => this.save()); return; }   // never overwrite markings not yet loaded
-      db.put('ink', { key: this.key, items: this.items }).catch(() => {});
-    }, 300);
+    if (!this.ready) { clearTimeout(this._saveT); this._saveT = setTimeout(() => this.loaded.then(() => this.save()), 50); return; }   // never overwrite markings not yet loaded
+    const key = this.key, old = LIVE.get(key);
+    if (old) clearTimeout(old.t);
+    const e = { items: this.items, t: 0 };
+    LIVE.set(key, e);
+    e.t = setTimeout(() => { e.t = 0; writeLive(key); }, 300);
   }
   // The canvas can hold the whole page, or (zoomed in) only the part on screen at full sharpness:
   // view is that part as page fractions { x, y, w, h }.
@@ -421,19 +466,45 @@ export class InkLayer {
       drawItem(ctx, s, W, H, false);
     });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this._hide = hide;
+    if (v) this._baseLater();
+    if (this.onItems) this.onItems();
   }
-  resize(w, h) { const had = !!this.view; this.view = null; if (had || this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
-  setView(view, w, h) { this.view = view; this.canvas.width = Math.max(1, Math.round(w)); this.canvas.height = Math.max(1, Math.round(h)); this.redraw(); }
+  resize(w, h) { const had = !!this.view; this.view = null; this._dropBase(); if (had || this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
+  setView(view, w, h) { const pw = this.view ? null : [this.canvas.width, this.canvas.height]; this.view = view; if (pw) this.pageSize = pw; this.canvas.width = Math.max(1, Math.round(w)); this.canvas.height = Math.max(1, Math.round(h)); this.redraw(); this._base(); }
+  // Zoomed in, the sharp canvas holds only the part on screen. Under it, the whole page's markings
+  // at a lower sharpness (the part the sharp canvas covers left empty), so while you pinch out or
+  // move the page every marking is already there, in its place, before the sharp part is redrawn.
+  _baseLater() { clearTimeout(this._baseT); this._baseT = setTimeout(() => this._base(), 120); }
+  _dropBase() { clearTimeout(this._baseT); if (this.base) { this.base.width = this.base.height = 0; this.base.remove(); this.base = null; } }
+  _base() {
+    clearTimeout(this._baseT);
+    const v = this.view, c = this.canvas;
+    if (!v || !c.parentNode || !this.pageSize) { if (!v) this._dropBase(); return; }
+    let b = this.base;
+    if (!b) { b = this.base = document.createElement('canvas'); b.className = 'ink ink-base'; }
+    if (b.nextSibling !== c) c.parentNode.insertBefore(b, c);
+    const W = Math.max(1, Math.round(this.pageSize[0] * 0.6)), H = Math.max(1, Math.round(this.pageSize[1] * 0.6));
+    if (b.width !== W || b.height !== H) { b.width = W; b.height = H; }
+    const ctx = b.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
+    const hide = this._hide; this.items.forEach((s, i) => { if (!(hide && hide.has(i))) drawItem(ctx, s, W, H, false); });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // (where the sharp part is, nothing: a highlighter drawn twice would look darker)
+    const x0 = Math.ceil(v.x * W), y0 = Math.ceil(v.y * H), x1 = Math.floor((v.x + v.w) * W), y1 = Math.floor((v.y + v.h) * H);
+    if (x1 > x0 && y1 > y0) ctx.clearRect(x0, y0, x1 - x0, y1 - y0);
+  }
   commit(item) {
+    tagNew(item);
     this.items = [...this.items, item];
     const ctx = this.canvas.getContext('2d');
     this.prep(ctx); drawItem(ctx, item, this.fullW, this.fullH, false); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (this.view) this._baseLater();
     this.save();
   }
   // Erases like a real eraser: the part of a pen or highlighter stroke under the eraser goes,
   // the rest of the stroke stays. Symbols, words and whiteouts go as a whole.
   eraseAt(x, y, r, whole) { return this.eraseMany([[x, y]], r, whole); }
-  flushErase() {}
   // Rub out along several points at once (one redraw for a whole move of the Pencil).
   eraseMany(pts, r, whole) {
     const W = this.fullW, H = this.fullH;
@@ -452,7 +523,11 @@ export class InkLayer {
     return changed;
   }
   flushErase() { if (!this.erasing) return; this.erasing = false; this.redraw(); this.save(); }
-  setItems(items) { this.items = items; this.redraw(); this.save(); }
+  // (things added at the end are new: they go in the layer being written in; undo passes raw)
+  setItems(items, raw) {
+    if (!raw && activeLy) { const had = new Set(this.items); for (let i = this.items.length; i < items.length; i++) if (!had.has(items[i])) items[i] = tagNew({ ...items[i] }); }
+    this.items = items; this.redraw(); this.save();
+  }
 }
 
 // Remove the part of a stroke inside a circle; returns the pieces that remain.
@@ -476,7 +551,8 @@ function cutStroke(pts, x, y, r, W, H) {
 }
 
 export async function loadItems(key) {
+  const live = LIVE.get(key); if (live) return live.items.slice();
   const rec = await db.get('ink', key).catch(() => null);
   return rec ? (rec.items || rec.strokes || []).map(normalise) : [];
 }
-export function saveItems(key, items) { return db.put('ink', { key, items }).catch(() => {}); }
+export function saveItems(key, items) { const e = LIVE.get(key); if (e) { clearTimeout(e.t); LIVE.delete(key); } return db.put('ink', { key, items }).catch(() => {}); }

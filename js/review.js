@@ -165,6 +165,7 @@ function editEdges(on) {
   R.editing = on; R.q = null;
   $('#revStage').classList.toggle('editing', on);
   $('#revEdgeBar').hidden = !on;
+  if (on) $('#revStage').style.setProperty('--barh', ($('#revEdgeBar').offsetHeight + 12 + 32) + 'px');
   $('.rev-side').style.opacity = on ? 0.4 : ''; $('.rev-side').style.pointerEvents = on ? 'none' : '';
   draw();
 }

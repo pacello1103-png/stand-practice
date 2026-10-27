@@ -82,7 +82,8 @@ export function stop() {
 export function toggle() { if (pomo.running) pause(); else start(); }
 
 function tick() {
-  if (!pomo.running || Date.now() < pomo.end) { render(); return; }
+  if (!pomo.running) return;            // nothing changes while stopped (saves battery)
+  if (Date.now() < pomo.end) { render(); return; }
   if (pomo.phase === 'work') {
     if (pomo.round >= pomo.rounds) {
       pomo.phase = 'idle'; pomo.running = false; chime(false);

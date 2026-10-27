@@ -1,23 +1,27 @@
+import { pixDropFile } from './pixcache.js';
 import { db, getSetting, setSetting, uid } from './db.js';
-import { getCtx, unlock, micErrorText } from './audio.js';
+import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
 import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } from './temperament.js';
 import { ScalePlayer, SCALE_TYPES } from './scales.js';
 import { Recorder, Player, computePeaks, peakOf, ROOMS } from './recorder.js';
-import { VideoRecorder, decodeVideoAudio, videoThumb } from './video.js';
+import { VideoRecorder, decodeVideoAudio, videoThumb, devShape } from './video.js';
 import { paintCover, COVER_PHOTOS, PHOTO_CATS, photoById } from './covers.js';
-import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage } from './notebook.js';
-import { openDocument, makeThumb, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
+import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage, PAGE_W as NB_PW, PAGE_H as NB_PH } from './notebook.js';
+import { usableFiles, filesAsPictures } from './addpages.js';
+import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
+import { openDocument, sizesKey, makeThumb, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
-import { PracticeHost, fetchPractice, hasKnownIpad } from './sync.js';
+import { PracticeHost, fetchPractice, hasKnownIpad, askIpad } from './sync.js';
+import { initPhoneScores } from './phonescores.js';
 import { cloudAvailable, cloudSet, cloudGet, onCloudChange } from './cloud.js';
 import { ask } from './dialog.js';
-import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS } from './ink.js';
+import { InkLayer, COLORS, STAMPS, drawItem, loadMusicFont, setPaperColor, setMaskReadyHandler, itemBounds, itemsInLasso, transformItem, smartMask, saveItems, loadItems, itemHit, textFont, measureTextBox, preloadAssets, PASSAGE_KINDS, setHiddenLayers, setActiveLayer, isHiddenItem, flushInk, dropInk, preloadMasks } from './ink.js';
 import { initPassages, loadPassages, renderPassages, markRegion, dropScorePassages, allPassages, setPriority, priorityOf, missed as passMissed, progress as passProgress } from './passages.js';
-import { exportPdf } from './export.js';
+import { exportPicture, exportPdf } from './export.js';
 import { cutPcm, segmentsFor, segmentsLength, renderVideoCut } from './cut.js';
 import { initReview, openReview } from './review.js';
 import * as P from './pomodoro.js';
@@ -27,11 +31,12 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
-import { CameraHost, CameraPhone } from './link.js';
+import { CameraHost, CameraPhone, directWatch } from './link.js';
 import { PageFollower } from './follow.js';
+import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
 import { startTour } from './tour.js';
-import { makeBackup as buildBackup, restoreBackup as restoreFiles, backupSizes, lastChange } from './backup.js';
+import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange } from './backup.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -60,7 +65,7 @@ const S = {
   instrument: 'cello', system: 'equal', key: 0, pureFifths: true,
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
-async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); applyOrientation(); }
+async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {}); setHiddenLayers(S.hidLy); applyOrientation(); }
 // Lock the whole app sideways, so a landscape score reads the right way up while the iPad is held upright.
 function applyOrientation() {
   try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: S.landscapeLock ? 'landscape' : 'auto' }); } catch { /* not on the iPad */ }
@@ -124,9 +129,11 @@ const SECTION_TOURS = {
     { title: 'Zoom and pages', text: 'Zoom in for detail, add pages and see all your pages here.', at: '#zoomBtn' },
   ],
   score: [
-    { title: 'Your score', text: 'Tap the right or left edge to turn the page, or swipe. A Bluetooth pedal works too.', at: null },
-    { title: 'Markings', text: 'Write fingerings, bowings and dynamics with the Pencil. The Pencil opens the markings by itself when it touches the page.', at: '#inkBtn' },
+    { title: 'Your score', text: 'Tap the right or left edge to turn the page, or swipe. A Bluetooth pedal works too. A tap in the middle shows or hides this bar.', at: null },
+    { title: 'Markings', text: 'Write fingerings, bowings and dynamics with the Pencil. The Pencil opens the markings by itself when it touches the page. Hold a pen for its colours and sizes.', at: '#inkBtn' },
     { title: 'Practice tools', text: 'The metronome, tuner, scales, recordings and passages open over the score, so you never leave the music.', at: '[data-panel="metronome"]' },
+    { title: 'Passages', text: 'Choose the Select tool in Markings and draw around a hard part: Passage keeps it, to practise later in a session that jumps from passage to passage.', at: '[data-panel="passages"]' },
+    { title: 'Pages', text: 'In More › Pages you see every page: hold one to delete it, or hold and drag it to put it somewhere else. Move lines up joins the end of one page to the next.', at: '[data-panel="settings"]' },
     { title: 'Turning pages for you', text: 'In More you can turn on winking to turn pages, a tap on the stand, or turning by listening (Beta).', at: '[data-panel="settings"]' },
     { title: 'Perform', text: 'Perform hides everything but the music. Leave it with two deliberate taps on the pill.', at: '#performBtn' },
   ],
@@ -139,13 +146,21 @@ const SECTION_TOURS = {
     { title: 'Following you', text: 'In "It listens" mode the drone moves to the key you are playing in. "My list" steps through notes you choose, also with a pedal.', at: '#droneModeSeg' },
   ],
   passages: [
-    { title: 'Passages', text: 'Mark the hard parts of a piece and track them. Choose the Select tool in Markings, draw around a passage, then tap Mark passage.', at: null },
+    { title: 'Passages', text: 'Mark the hard parts of a piece and track them. Choose the Select tool in Markings, draw around a passage, then tap Passage.', at: null },
   ],
   listen: [
     { title: 'Listen', text: 'Add a recording to play along with the score: slower without changing pitch, and loop any part.', at: null },
   ],
   goal: [
     { title: 'Practice log', text: 'Your practice time, day by day and piece by piece. Stand counts it while a score or a tool is open.', at: null },
+  ],
+  studio: [
+    { title: 'Studio', text: 'Your video with the score on it, ready to share. Everything here is a copy: the recording itself never changes.', at: '#stStage' },
+    { title: 'Add the score', text: 'Choose the score (from your library, a photo or a PDF) and tap the lines you play. They appear over the video.', at: '#stAddScore' },
+    { title: 'Following you', text: 'Sync listens to the recording and moves the music along with your playing. You can also tap at the start of each bar.', at: '#stSyncBtn' },
+    { title: 'Picture', text: 'Format chooses the shape (9:16 for Reels and Stories, 16:9, square) and the look. Drag the video to choose the part on show.', at: '#stFormatBtn' },
+    { title: 'Timeline', text: 'Drag the ends of the sound to trim it, the bars of the score to move them, and add images that come and go.', at: '#stTimeline' },
+    { title: 'Export', text: 'Makes the finished video and opens the share sheet: save it to Photos or send it.', at: '#stExport' },
   ],
   phonecam: [
     { title: 'Camera for iPad', text: 'Open Stand on your iPad, choose the iPhone as camera in Record, and keep both near each other. They find each other by themselves.', at: '#pcStatus' },
@@ -172,7 +187,9 @@ function showPanel(name, tab) {
     if (SECTION_TOURS[tn] && name !== 'compose') setTimeout(() => sectionTour(tn, { force: openPanel === name }), 350); }   // compose waits until you start writing
   $$(`[data-panel="${name}"]`).forEach((b) => { if (!b.dataset.tab || b.dataset.tab === tab) b.classList.add('on'); });
   if (name === 'tuner') setTunerTab(tab || currentTunerTab);
-  if (name === 'takes') refreshTakes();
+  // Recordings opens on the list (a recording left open last time is closed), unless its video
+  // is over the score right now
+  if (name === 'takes') { if (!VF.on && $('#player').hidden) $('#panel-takes').classList.remove('viewing'); if (!VF.on && !$('#player').hidden && !player.playing) { $('#player').hidden = true; $('#panel-takes').classList.remove('viewing'); currentTake = null; } refreshTakes(); }
   if (name === 'metronome') drawRamp();
   if (name === 'settings') fillScoreSettings();
   if (name === 'scales') renderScaleStrip();
@@ -242,7 +259,7 @@ function renderGrid() {
   // inside a folder the library shows only its scores; a search looks through every score
   if (FOLD.current && !folderOf(FOLD.current)) FOLD.current = null;
   const inFolder = !q && FOLD.current ? FOLD.current : null;
-  const list = scores.filter((s) => (!q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q))
+  const list = scores.filter((s) => !s.preview && (!q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q))
     && (q || (inFolder ? s.folder === inFolder : !s.folder)));
   const by = S.sort;
   list.sort((a, b) => by === 'title' ? a.title.localeCompare(b.title)
@@ -260,6 +277,8 @@ function renderGrid() {
     if (s.thumb) {
       if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
       th.style.backgroundImage = `url(${thumbURLs.get(s.id)})`;
+      // no white paper showing at the edges of a dark cover
+      th.classList.add('has-pic');
     }
     th.append(el('span', 'badge', s.pages + (s.pages === 1 ? ' page' : ' pages')));
     b.append(th, el('div', 'ttl', s.title), el('div', 'cmp', s.kind === 'comp' ? (s.composer ? s.composer + ' · ' : '') + 'Your composition' : s.composer || (s.seconds > 59 ? fmtMinutes(s.seconds) + ' practised' : 'Not practised yet')));
@@ -285,15 +304,23 @@ function renderGrid() {
 // folder (or on "Library" at the top of a folder) to move them there.
 const LD = { on: null };
 function libDragSource(card, id) {
-  let start = null;
-  card.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY, id: e.pointerId }; });
+  let start = null, holdT = 0;
+  card.addEventListener('pointerdown', (e) => {
+    start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    // a finger: held still a moment on a chosen score, then it moves (else the list scrolls)
+    clearTimeout(holdT);
+    if (e.pointerType === 'touch' && LIB.editing && LIB.sel.has(id)) holdT = setTimeout(() => { if (start && !LD.on) { beginLibDrag(e, card); LD.on.ghost.style.left = start.x + 'px'; LD.on.ghost.style.top = start.y + 'px'; if (navigator.vibrate) try { navigator.vibrate(8); } catch {} } }, 320);
+  });
   card.addEventListener('pointermove', (e) => {
     if (!start || LD.on || e.pointerId !== start.id) return;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) >= 10) clearTimeout(holdT);
+    if (e.pointerType === 'touch') return;   // (a finger drags after holding)
     if (!LIB.editing || !LIB.sel.has(id)) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 10) return;
     beginLibDrag(e, card);
   });
-  card.addEventListener('pointerup', () => { start = null; });
+  card.addEventListener('pointerup', () => { start = null; clearTimeout(holdT); });
+  card.addEventListener('pointercancel', () => { start = null; clearTimeout(holdT); });
   card.addEventListener('touchmove', (e) => { if (LD.on) e.preventDefault(); }, { passive: false });
 }
 function beginLibDrag(e, card) {
@@ -306,11 +333,14 @@ function beginLibDrag(e, card) {
   document.body.append(ghost);
   LD.on = { ghost, ids, over: null, card };
   document.body.classList.add('lib-dragging');
+  $('#libOut').hidden = !FOLD.current;   // (inside a folder: a place to drop it out of the folder)
   try { card.setPointerCapture(e.pointerId); } catch {}
   const move = (ev) => {
     ghost.style.left = ev.clientX + 'px'; ghost.style.top = ev.clientY + 'px';
     ghost.hidden = true; const t = document.elementFromPoint(ev.clientX, ev.clientY); ghost.hidden = false;
-    const over = t && (t.closest('.card.folder') || t.closest('#folderBack'));
+    // a folder, "Library" at the top of a folder, or another score (both go in a new folder)
+    let over = t && (t.closest('.card.folder') || t.closest('#folderBack') || t.closest('#libOut'));
+    if (!over && t && !FOLD.current) { const c = t.closest('.card[data-sid]'); if (c && !LD.on.ids.includes(c.dataset.sid)) over = c; }
     if (over !== LD.on.over) { if (LD.on.over) LD.on.over.classList.remove('drop-on'); if (over) over.classList.add('drop-on'); LD.on.over = over; }
     // near the top or bottom edge, the library scrolls
     const lib = $('#library'), r = lib.getBoundingClientRect();
@@ -319,12 +349,25 @@ function beginLibDrag(e, card) {
   const tick = () => { if (!LD.on) return; if (LD.on.scroll) $('#library').scrollTop += LD.on.scroll; requestAnimationFrame(tick); };
   const end = () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
-    const d = LD.on; LD.on = null; document.body.classList.remove('lib-dragging'); ghost.remove();
+    const d = LD.on; LD.on = null; document.body.classList.remove('lib-dragging'); ghost.remove(); $('#libOut').hidden = true;
     // a click follows the drag; it must not toggle the score
-    d.card.addEventListener('click', (ev) => { ev.stopImmediatePropagation(); ev.preventDefault(); }, { capture: true, once: true });
+    // (only the click coming right now: a drag with a finger makes none, and the next real tap must work)
+    const block = (ev) => { ev.stopImmediatePropagation(); ev.preventDefault(); };
+    d.card.addEventListener('click', block, { capture: true, once: true });
+    setTimeout(() => d.card.removeEventListener('click', block, { capture: true }), 400);
     if (!d.over) return;
     d.over.classList.remove('drop-on');
-    const target = d.over.id === 'folderBack' ? null : d.over.dataset.folder;
+    // onto another score: a new folder for them all, named at once
+    if (d.over.dataset.sid) {
+      const sid = d.over.dataset.sid;
+      LIB.sel = new Set([...d.ids, sid]); $$('#grid .card[data-sid]').forEach((c) => c.classList.toggle('picked', LIB.sel.has(c.dataset.sid))); syncLibActions();
+      const comps = [...LIB.sel].map((x) => (scores.find((y) => y.id === x) || {}).composer || '').map((c) => c.trim());
+      openFolderSheet('new');
+      if (comps[0] && comps.every((c) => c === comps[0])) $('#folderName').value = comps[0].split(/\s+/).pop();
+      d.over.classList.add('drop-merged'); setTimeout(() => d.over.classList.remove('drop-merged'), 600);
+      return;
+    }
+    const target = d.over.id === 'folderBack' || d.over.id === 'libOut' ? null : d.over.dataset.folder;
     for (const sid of d.ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; if (target) sc.folder = target; else delete sc.folder; db.put('scores', sc); }
     setLibEditing(false); renderGrid();
     toast(target ? `Moved ${d.ids.length === 1 ? 'it' : d.ids.length + ' scores'} to ${folderOf(target).name}.` : 'Moved to the library.');
@@ -347,13 +390,15 @@ function folderCard(f) {
   const th = el('div', 'thumb folder-tile');
   th.append(icon('i-folder'), el('span', 'folder-count num', String(n)));
   b.append(th, el('div', 'ttl', f.name), el('div', 'cmp', n === 1 ? '1 score' : n + ' scores'));
-  b.addEventListener('click', () => { FOLD.current = f.id; renderGrid(); });
+  b.addEventListener('click', () => { if (LIB.editing) setLibEditing(false); FOLD.current = f.id; renderGrid(); });
   return b;
 }
 function openFolderSheet(mode, id) {
   FP.mode = mode; FP.id = id || null; FP.armed = false;
+  // (a new folder made while scores are selected takes them in)
+  FP.withSel = mode === 'new' && LIB.editing && LIB.sel.size > 0;
   const f = id ? folderOf(id) : null;
-  $('#folderSheetTitle').textContent = mode === 'move' ? 'Move to folder' : f ? 'Folder' : 'New folder';
+  $('#folderSheetTitle').textContent = mode === 'move' ? 'Move to folder' : f ? 'Folder' : FP.withSel ? (LIB.sel.size === 2 ? 'New folder for these two' : `New folder for these ${LIB.sel.size}`) : 'New folder';
   $('#folderNameBox').hidden = mode === 'move';
   $('#folderMoveBox').hidden = mode !== 'move';
   $('#folderActions').hidden = mode === 'move';
@@ -381,7 +426,7 @@ function openFolderSheet(mode, id) {
       renderGrid();
       toast(target ? `Moved to ${folderOf(target).name}.` : 'Moved to the library.');
     };
-    const rows = [['', 'Library (no folder)'], ...[...FOLD.list].sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name])];
+    const rows = [['', FOLD.current ? 'Out of the folder (the library)' : 'Library (no folder)'], ...[...FOLD.list].filter((x) => x.id !== FOLD.current).sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name])];
     for (const [val, label] of rows) {
       const b = el('button', 'folder-row', label);
       b.addEventListener('click', () => choose(val || null));
@@ -395,7 +440,8 @@ function openFolderSheet(mode, id) {
   if (mode !== 'move') setTimeout(() => $('#folderName').focus(), 80);
 }
 $('#newFolder').addEventListener('click', () => openFolderSheet('new'));
-$('#folderBack').addEventListener('click', () => { FOLD.current = null; renderGrid(); });
+$('#folderBack').addEventListener('click', () => { if (LIB.editing) setLibEditing(false); FOLD.current = null; renderGrid(); });
+$('#libNewFolder').addEventListener('click', () => openFolderSheet('new'));
 $('#folderRename').addEventListener('click', () => openFolderSheet('rename', FOLD.current));
 $('#folderSave').addEventListener('click', async () => {
   const name = $('#folderName').value.trim().slice(0, 40);
@@ -403,6 +449,12 @@ $('#folderSave').addEventListener('click', async () => {
   if (FP.mode === 'new') {
     const f = { id: uid(), name, created: Date.now() };
     FOLD.list.push(f); FOLD.current = f.id;
+    if (FP.withSel) {
+      const ids = [...LIB.sel];
+      for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; sc.folder = f.id; db.put('scores', sc); }
+      setLibEditing(false);
+      toast(`${ids.length === 1 ? 'Moved it' : 'Moved ' + ids.length + ' scores'} to ${name}.`);
+    }
   } else {
     const f = folderOf(FP.id); if (f) f.name = name;
   }
@@ -416,14 +468,28 @@ $('#folderDelete').addEventListener('click', async () => {
   FOLD.current = null; saveFolders(); hidePanel(); renderGrid();
 });
 $('#libMove').addEventListener('click', () => { if (LIB.sel.size) openFolderSheet('move'); });
+// inside a folder: the selected scores go back to the library, out of any folder
+$('#libOutBtn').addEventListener('click', () => {
+  const ids = [...LIB.sel]; if (!ids.length) return;
+  for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (sc) { delete sc.folder; db.put('scores', sc); } }
+  setLibEditing(false); renderGrid();
+  toast(ids.length === 1 ? 'Taken out of the folder: it is in the library.' : `${ids.length} scores taken out of the folder.`, 2000);
+});
+$('#folderSelect').addEventListener('click', () => setLibEditing(!LIB.editing));
+// a tap on an empty part of the library leaves selecting
+$('#library').addEventListener('click', (e) => {
+  if (!LIB.editing || LD.on) return;
+  if (e.target.closest('.card, button, input, select, .lib-actions, .seg, a, label, .tile, .panel')) return;
+  setLibEditing(false);
+});
 
 // ---------- select and delete scores ----------
 const LIB = { editing: false, sel: new Set(), confirm: false };
 function setLibEditing(on) {
   LIB.editing = on; LIB.sel.clear(); LIB.confirm = false;
   $('#grid').classList.toggle('editing', on); $('#libActions').hidden = !on;
-  $('#libEdit').textContent = on ? 'Done' : 'Select';
-  if (on && FOLD.list.length) toast('Choose scores, then drag them onto a folder.', 2600);
+  $('#libEdit').textContent = on ? 'Done' : 'Select'; $('#folderSelect').textContent = on ? 'Done' : 'Select';
+  if (on) toast(FOLD.list.length ? 'Tap more scores, then Move or New folder. Or drag onto a folder, or onto another score.' : 'Tap more scores, then New folder. Or drag it onto another score to make a folder.', 2800);
   $$('#grid .card').forEach((c) => c.classList.remove('picked'));
   syncLibActions();
 }
@@ -431,8 +497,10 @@ function syncLibActions() {
   const n = LIB.sel.size;
   LIB.confirm = false;
   $('#libCount').textContent = n ? (n === 1 ? '1 score selected' : n + ' scores selected') : 'Tap scores to select';
+  $('#libNewFolder').disabled = !n;
   $('#libDelete').disabled = !n;
   $('#libMove').disabled = !n;
+  $('#libOutBtn').hidden = !FOLD.current; $('#libOutBtn').disabled = !n;
   $('#libDelete span').textContent = 'Delete';
   $('#libDelete').classList.remove('confirming');
 }
@@ -451,13 +519,22 @@ $('#libDelete').addEventListener('click', async () => {
   await refreshLibrary();
   toast(ids.length === 1 ? 'Score deleted' : ids.length + ' scores deleted');
 });
+// what a score adds to its file when opened: pages from other files, pages turned round
+function scoreFile(score, file) {
+  if (score.more && score.more.length) file.more = score.more; else delete file.more;
+  if (score.rot && Object.keys(score.rot).length) file.rot = score.rot; else delete file.rot;
+  return file;
+}
 async function deleteScoreData(s) {
+  dropInk(s.id); dropEdited(s.id);
   const takes = await db.byIndex('takes', 'score', s.id).catch(() => []);
   for (const t of takes) await deleteTakeData(t.id);
   const inkKeys = (await db.keys('ink')).filter((k) => String(k).startsWith(s.id + ':'));
   for (const k of inkKeys) await db.del('ink', k);
   dropScorePassages(s.id);
   await db.del('files', s.fileId).catch(() => {});
+  if (s.fileId) pixDropFile(s.fileId);
+  for (const id of s.more || []) { await db.del('files', id).catch(() => {}); pixDropFile(id); }
   await db.del('files', 'ref:' + s.id).catch(() => {});
   await db.del('scores', s.id);
   if (thumbURLs.has(s.id)) { URL.revokeObjectURL(thumbURLs.get(s.id)); thumbURLs.delete(s.id); }
@@ -476,7 +553,18 @@ $$('#sortSeg button').forEach((b) => b.addEventListener('click', () => {
 }));
 
 function niceTitle(name) {
-  return name.replace(/\.(pdf|jpe?g|png|heic|webp)$/i, '').replace(/^IMSLP\d+-/, '').replace(/^PMLP\d+-/, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
+  return String(name || '').replace(/\.(pdf|jpe?g|png|heic|heif|webp|tiff?)$/i, '').replace(/^(IMSLP|PMLP)\d+-/i, '').replace(/[_]+/g, ' ').replace(/%20/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
+}
+// A file name like "Bach - Cello Suite No.1" or "Cello_Suite_No.1_(Bach,_Johann_Sebastian)": the
+// composer part comes out, the rest is the title.
+function titleFromName(name, composer) {
+  let t = niceTitle(name).replace(/\s*\((?:[^()]*,[^()]*)\)\s*$/, '').replace(/\s+(score|parts?|part|solo part|complete|full score)$/i, '');
+  if (composer) {
+    const last = composer.split(/\s+/).pop();
+    const parts = t.split(/\s+[-–—]\s+/);
+    if (parts.length > 1) { const i = parts.findIndex((p) => p.toLowerCase().includes(last.toLowerCase()) && p.split(' ').length <= 4); if (i >= 0) { parts.splice(i, 1); t = parts.join(' - '); } }
+  }
+  return t || niceTitle(name);
 }
 // Files downloaded from IMSLP through Stand get their real title and composer.
 async function imslpMetaFor(name) {
@@ -495,8 +583,8 @@ async function addPdf(data, name, meta) {
   const thumb = await makeThumb(doc);
   meta = meta || await imslpMetaFor(name);
   const info = await readScoreInfo(doc, name, await loadComposers());
-  const title = (meta && meta.title) || info.title || niceTitle(name);
   const composer = (meta && meta.composer) || info.composer || '';
+  const title = (meta && meta.title) || info.title || titleFromName(name, composer);
   const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: FOLD.current || undefined };
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
@@ -530,19 +618,43 @@ $('#scanInput').addEventListener('change', (e) => {
   openReview(files, 'Scan ' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + '.jpg');
 });
 const label = (sc) => (sc.composer ? `${sc.title} — ${sc.composer}` : sc.title);
+// Many PDFs at once: one after another, each saved as soon as it is read (so nothing is lost if
+// one is damaged or the iPad is busy), with how far it has got, and a short pause between them so
+// the iPad keeps up. A file that cannot be read is skipped and named at the end.
+const IMP = { busy: false, queue: [] };
+async function importPdfs(list) {
+  IMP.queue.push(...list);
+  if (IMP.busy) { toast(`${IMP.queue.length} more to add…`, 2500); return; }
+  IMP.busy = true;
+  let added = 0, last = null, total = IMP.queue.length, done = 0;
+  const failed = [];
+  setHomeTab('mine');
+  try {
+    while (IMP.queue.length) {
+      const it = IMP.queue.shift(); done++;
+      total = Math.max(total, done + IMP.queue.length);
+      toast(total > 1 ? `Adding ${done} of ${total}: ${niceTitle(it.name)}…` : 'Adding ' + niceTitle(it.name) + '…', 120000);
+      try {
+        const buf = await it.data();
+        last = await addPdf(buf, it.name, it.meta || null); added++;
+        await refreshLibrary();
+      } catch (err) { console.error(err); failed.push(it.name); }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  } finally { IMP.busy = false; }
+  if (failed.length) toast((added ? `${added} added. ` : '') + `Could not open ${failed.length === 1 ? failed[0] : failed.length + ' files'} (not a PDF, or damaged).`, 6000);
+  else if (added) toast(added === 1 ? 'Added: ' + label(last) : `${added} scores added`, 4000);
+  else $('#toast').hidden = true;
+  return { added, last };
+}
 $('#importInput').addEventListener('change', async (e) => {
   const files = [...e.target.files]; e.target.value = '';
   if (!files.length) return;
   const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  const imgs = files.filter((f) => f.type.startsWith('image/'));
-  let added = 0, last = null;
-  toast(files.length > 1 ? `Importing ${files.length} files…` : 'Importing…', 10000);
-  for (const f of pdfs) {
-    try { last = await addPdf(await f.arrayBuffer(), f.name); added++; } catch (err) { console.error(err); toast(`Could not open ${f.name}. Is it a PDF?`); }
-  }
-  setHomeTab('mine');
-  await refreshLibrary();
-  if (added) toast(added === 1 ? 'Added: ' + label(last) : `${added} scores added`, 4000);
+  const imgs = files.filter((f) => !pdfs.includes(f) && (f.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp|tiff?)$/i.test(f.name)));
+  const other = files.filter((f) => !pdfs.includes(f) && !imgs.includes(f));
+  if (pdfs.length) await importPdfs(pdfs.map((f) => ({ name: f.name, data: () => f.arrayBuffer() })));
+  if (other.length) setTimeout(() => toast(`${other.length === 1 ? other[0].name + ' is' : other.length + ' files are'} not a PDF or a picture, so ${other.length === 1 ? 'it was' : 'they were'} left out.`, 4000), pdfs.length ? 3500 : 0);
   if (imgs.length) openReview(imgs, imgs[0].name);
 });
 // Files arriving from the iPad app: a PDF caught while browsing IMSLP, or "Open in Stand" from Files.
@@ -556,22 +668,28 @@ window.standIncoming = async (msg) => {
     if (!$('#score').hidden) await closeScore();
     hidePanel();
     // a backup opened from Files
-    if (/\.standbackup$/i.test(msg.name || paths[0] || '')) {
+    const isZipBackup = /\.zip$/i.test(msg.name || paths[0] || '') && /stand backup/i.test(msg.name || paths[0] || '');
+    if (/\.standbackup$/i.test(msg.name || paths[0] || '') || isZipBackup) {
       toast('Bringing your library back…', 120000);
-      const r = await restoreFiles(blobs.map((b, i) => new File([b], (msg.names && msg.names[i]) || msg.name || 'backup.standbackup')));
+      window.__restoring = true;
+      let r; try { r = await restoreFiles(blobs.map((b, i) => new File([b], (msg.names && msg.names[i]) || msg.name || 'backup.standbackup'))); } catch (e) { window.__restoring = false; throw e; }
       const miss = r.missing.filter((m) => m.lack.length);
       toast(miss.length ? `Restored ${r.scores} scores. This backup has more files: open Settings › Backup › Restore and choose all of them.` : `Restored ${r.scores} scores. Starting again…`, miss.length ? 8000 : 2500);
       setTimeout(() => location.reload(), miss.length ? 8000 : 2500);
       return;
     }
-    const isPdf = blobs.length === 1 && (/\.pdf$/i.test(msg.name) || blobs[0].type === 'application/pdf');
-    if (!isPdf) { setHomeTab('mine'); openReview(blobs.map((b) => (b.type ? b : new Blob([b], { type: 'image/jpeg' }))), msg.name || 'Scan.jpg'); return; }
-    toast('Adding ' + (msg.meta && msg.meta.title ? msg.meta.title : msg.name) + '…', 8000);
-    const sc = await addPdf(await blobs[0].arrayBuffer(), msg.name, msg.meta && msg.meta.title ? msg.meta : null);
-    await refreshLibrary();
-    setHomeTab('mine');
-    toast('Added: ' + label(sc), 3000);
-    openScore(sc.id);
+    // several files at once: the PDFs are added one by one, the pictures go to the scan review
+    const names = paths.map((p, i) => (msg.names && msg.names[i]) || (paths.length === 1 ? msg.name : '') || String(p).split('/').pop() || 'Score.pdf');
+    const isPdfAt = (i) => /\.pdf$/i.test(names[i]) || blobs[i].type === 'application/pdf';
+    const pdfIdx = blobs.map((_, i) => i).filter(isPdfAt), imgIdx = blobs.map((_, i) => i).filter((i) => !isPdfAt(i));
+    let res = null;
+    if (pdfIdx.length) res = await importPdfs(pdfIdx.map((i) => ({ name: names[i], data: () => blobs[i].arrayBuffer(), meta: msg.meta && msg.meta.title && pdfIdx.length === 1 ? msg.meta : null })));
+    if (imgIdx.length) { setHomeTab('mine'); openReview(imgIdx.map((i) => (blobs[i].type ? blobs[i] : new Blob([blobs[i]], { type: 'image/jpeg' }))), names[imgIdx[0]] || 'Scan.jpg'); return; }
+    // one PDF opens straight away (a preview with Keep and Remove)
+    if (res && res.added === 1 && pdfIdx.length === 1 && res.last) {
+      if (PREVIEW.at && Date.now() - PREVIEW.at < 10 * 60000) { PREVIEW.at = 0; res.last.preview = true; await db.put('scores', res.last); await refreshLibrary(); toast('A look at ' + label(res.last) + '. Keep it to add it to your stand.', 3500); }
+      openScore(res.last.id);
+    }
   } catch (e) { console.error(e); toast('That file could not be added.'); }
 };
 
@@ -736,6 +854,24 @@ function fileMeta(f) {
   return bits.join(' · ');
 }
 const inApp = () => !!(NATIVE && NATIVE.standOpen);
+// Preview: the score comes in and opens, with Keep and Remove at the top; left without Keep, it goes.
+const PREVIEW = { at: 0, index: null };
+function previewLink(f, big) {
+  const a = el('a', big ? 'btn' : 'icon-btn');
+  a.href = fileUrl(f.index); a.target = '_blank'; a.rel = 'noopener';
+  a.append(icon('i-eye'));
+  if (big) a.append(el('span', '', 'Preview')); else a.setAttribute('aria-label', 'Preview ' + f.label);
+  a.addEventListener('click', (e) => {
+    if (!inApp()) return;   // in a browser the score page simply opens
+    e.preventDefault();
+    const meta = metaFor(f);
+    rememberPick(f, meta);
+    PREVIEW.at = Date.now(); PREVIEW.index = f.index;
+    NATIVE.standOpen.postMessage({ url: fileUrl(f.index), title: meta.title, composer: meta.composer, index: f.index });
+    toast('The score opens for a look. Keep it, or it is removed when you close it.', 5000);
+  });
+  return a;
+}
 function downloadLink(f, big) {
   const a = el('a', big ? 'btn primary' : 'icon-btn');
   a.href = fileUrl(f.index); a.target = '_blank'; a.rel = 'noopener';
@@ -746,7 +882,7 @@ function downloadLink(f, big) {
     const meta = metaFor(f);
     rememberPick(f, meta);
     if (inApp()) {
-      e.preventDefault();
+      e.preventDefault(); PREVIEW.at = 0;
       NATIVE.standOpen.postMessage({ url: fileUrl(f.index), title: meta.title, composer: meta.composer, index: f.index });
       toast('The score page opens here. Accept the terms if asked; the score then lands on your stand by itself.', 6000);
     } else toast('Accept the terms on the score page to download. Then come back and tap Import score.', 6000);
@@ -798,7 +934,7 @@ function renderWork(data) {
     const c = el('div', 'pick' + (i === 0 ? ' best' : ''));
     const why = el('div', 'why'); why.append(icon('i-star'), document.createTextNode(whyText[p.why])); c.append(why);
     c.append(el('div', 'pl', p.f.label), el('div', 'pm', fileMeta(p.f)));
-    c.append(downloadLink(p.f, true));
+    const row = el('div', 'pick-btns'); row.append(previewLink(p.f, true), downloadLink(p.f, true)); c.append(row);
     pk.append(c);
   });
   const gbox = $('#workGroups'); gbox.textContent = '';
@@ -819,7 +955,7 @@ function renderWork(data) {
         if (f.index === mostDownloaded) lab.append(el('span', 'tag top', 'Most downloaded'));
         if (/non-pd|copyright/i.test(f.copyright) && !/public domain/i.test(f.copyright)) lab.append(el('span', 'tag', 'Check copyright'));
         main.append(lab, el('div', 'f-meta', fileMeta(f)));
-        li.append(main, downloadLink(f, false));
+        li.append(main, previewLink(f, false), downloadLink(f, false));
         ul.append(li);
       });
     };
@@ -850,16 +986,24 @@ async function openScore(id, opts = {}) {
   const peek = scores.find((x) => x.id === id) || await db.get('scores', id);
   if (peek && peek.kind === 'comp') { openComposition(id); return; }
   const token = V.openToken = (V.openToken || 0) + 1;
-  const score = await db.get('scores', id);
-  const file = score && await db.get('files', score.fileId);
+  // the next score of a set or a practice session, already opened while the one before was played
+  const pre = RUNPRE && RUNPRE.sid === id ? await RUNPRE.open.catch(() => null) : null;
+  if (RUNPRE && RUNPRE.sid === id) RUNPRE = null;
+  const score = pre ? pre.score : await db.get('scores', id);
+  const file = pre ? pre.file : score && await db.get('files', score.fileId);
   if (!file) { toast('This score’s file is missing.'); return; }
-  let base;
-  try { base = await openDocument(file); } catch (e) { console.error(e); toast('The score could not be opened.'); return; }
+  if (!pre) scoreFile(score, file);   // (pages added from other files, pages turned)
+  let base = pre ? pre.base : null;
+  if (!base) try { base = await openDocument(file, score.sizes); } catch (e) { console.error(e); toast('The score could not be opened.'); return; }
   if (token !== V.openToken) { base.destroy(); return; }   // the user went back, or opened another score
+  // keep the page sizes, so the next opening is quicker
+  if (base.sizes && !base.paper) { const k = sizesKey(file); if (!score.sizes || score.sizes.k !== k) score.sizes = { k, v: (base.rawSizes || base.sizes).map((x) => [Math.round(x[0] * 100) / 100, Math.round(x[1] * 100) / 100]) }; }
   if (V.base) try { V.base.destroy(); } catch {}
   V.score = score; V.file = file; V.base = base; V.doc = mapDoc(base, score.pageMap, score.cuts, score.glue);
+  LY.active = ''; setActiveLayer(''); syncLayerUi(); closeAllNotes();
+  $('#previewBar').hidden = !score.preview;
   follow.reset();
-  clearCache(); V.splits.clear(); V.undo = []; V.redo = []; V.half = false; V.usedJumps = new Set();
+  clearCache(); READY.clear(); V.splits.clear(); V.undo = []; V.redo = []; V.half = false; V.usedJumps = new Set();
   V.crop = score.trim && score.trimBox ? score.trimBox : null;
   Z.s = 1; Z.x = 0; Z.y = 0;
   V.page = clamp(opts.page ? opts.page() : score.lastPage || 0, 0, V.doc.pages - 1);
@@ -873,7 +1017,8 @@ async function openScore(id, opts = {}) {
   updateScrub();
   if (score.metro) applyMetroSettings(score.metro);
   showChrome(true);
-  await layout();
+  try { await layout(); } catch (e) { if (token === V.openToken) console.warn(e); }
+  if (token !== V.openToken) return;   // (gone back to the library meanwhile)
   keepAwake();
   follow.sync();
   practice.scoreOpened(score.id);
@@ -899,19 +1044,35 @@ async function closeScore() {
   step(() => { hidePanel(); clearSelection(); });
   step(() => { if (V.perform) setPerform(false); follow.sync(); });
   step(() => { showChrome(true); Z.s = 1; Z.x = 0; Z.y = 0; });
-  if (sc) { sc.lastPage = V.page; await db.put('scores', sc).catch(() => {}); }
+  step(() => flushInk());
+  if (sc) dropEdited(sc.id);   // (the score is written just now, with its time)
+  if (sc && sc.preview) {
+    // (a preview written on is not thrown away without asking)
+    // (written on: asked; anything but a clear "Don't Keep", a tap beside the question too, keeps it)
+    const marked = (await db.keys('ink').catch(() => [])).some((k) => String(k).startsWith(sc.id + ':'));
+    if (marked && !(await ask('Keep this score?', { ok: 'Don’t Keep', cancel: 'Keep', danger: true, sub: 'You have written on it. If you don’t keep it, it goes with its markings.' }))) { delete sc.preview; sc.lastPage = V.page; await db.put('scores', sc).catch(() => {}); toast('Added: ' + label(sc), 2500); }
+    else { await deleteScoreData(sc).catch(() => {}); toast('Preview closed. The score was not kept.', 2500); }
+  }
+  else if (sc) { sc.lastPage = V.page; await db.put('scores', sc).catch(() => {}); }
+  $('#previewBar').hidden = true;
   step(() => freePages());
   step(() => { for (const p of V.cache.values()) p.then(freeCanvas, () => {}); });
   step(() => { if (V.base) V.base.destroy(); });
-  V.base = null; V.doc = null; V.score = null; V.cache.clear(); stage.textContent = '';
+  V.base = null; V.doc = null; V.score = null; V.cache.clear(); READY.clear(); INCACHE.clear(); stage.textContent = '';
   step(() => { wakeLock && wakeLock.release(); });
   wakeLock = null;
   refreshLibrary();
 }
 $('#backBtn').addEventListener('click', closeScore);
+$('#previewKeep').addEventListener('click', async () => {
+  const sc = V.score; if (!sc) return;
+  delete sc.preview; await db.put('scores', sc); $('#previewBar').hidden = true;
+  toast('Added: ' + label(sc), 2500); refreshLibrary();
+});
+$('#previewRemove').addEventListener('click', closeScore);
 
 // iOS keeps canvas memory until a canvas is shrunk; release what is no longer shown.
-function clearCache() { for (const p of V.cache.values()) p.then((c) => setTimeout(() => freeCanvas(c), 2000), () => {}); V.cache.clear(); }
+function clearCache() { for (const p of V.cache.values()) p.then((c) => { INCACHE.delete(c); setTimeout(() => freeCanvas(c), 2000); }, () => {}); V.cache.clear(); }
 function freeCanvas(c) { if (c && !c.isConnected) { c.width = 0; c.height = 0; } }
 function freePages() { for (const p of V.pages) if (p.ink) { p.ink.width = 0; p.ink.height = 0; } V.pages = []; }
 
@@ -934,10 +1095,11 @@ function spreadSize() {
   return !TURN() && !S.onePage && S.twoUp && r.width > r.height * 1.05 && V.doc && V.doc.pages > 1 ? 2 : 1;
 }
 // The part of a page on show: its own crop, else the trimmed margins, cut to its piece.
-function cropOf(i) {
+function cropOf(i, forFile) {
   const full = { x: 0, y: 0, w: 1, h: 1 };
   // side by side in landscape, wide white margins are left out so the music fills the screen
-  const auto = V.spread === 2 && S.fillScreen !== false && V.score && V.score.autoBox ? V.score.autoBox : null;
+  // (only on screen: a file made from the score keeps its pages whole, however the iPad is held)
+  const auto = !forFile && V.spread === 2 && S.fillScreen !== false && V.score && V.score.autoBox ? V.score.autoBox : null;
   if (!V.doc || i === undefined) return V.crop || auto || full;
   const o = V.doc.orig(i);
   let c = (V.score && V.score.crops && V.score.crops[o]) || V.crop || auto || full;
@@ -950,6 +1112,8 @@ function cropOf(i) {
   return c;
 }
 // Size on screen of each page box (cropped when trimming margins).
+// the whole page's size on screen for a page shown in a box (bigger when its margins are trimmed)
+const innerW = (i, bw) => Math.round(bw / cropOf(i).w), innerH = (i, bh) => Math.round(bh / cropOf(i).h);
 function pageBox(indices) {
   const r0 = stage.getBoundingClientRect();
   const r = TURN() ? { width: r0.height, height: r0.width } : r0;   // turned: fit the page to the swapped screen
@@ -959,18 +1123,80 @@ function pageBox(indices) {
   const h = Math.min(r.height - pad * 2, (r.width - pad * 2 - gap) / sum);
   return ratios.map((q) => [Math.floor(h * q), Math.floor(h)]);
 }
-const MAX_PX = 12e6;
-function renderPage(i, w, h, zoom = 1) {
+// the largest page picture drawn: an iPhone has far less memory than an iPad (a zoomed page at
+// 12 million pixels takes 48 MB, and several are kept)
+const MAX_PX_IPAD = 8e6, MAX_PX_PHONE = 4e6;
+const maxPx = () => (document.body.classList.contains('phone') ? MAX_PX_PHONE : MAX_PX_IPAD);
+// Drawing pages: the pages on screen always come first. Pages drawn ahead of time (the next turn),
+// and margin measuring, wait until nothing urgent is being drawn, and go one at a time, so they
+// never hold up the page you are looking at. One asked for urgently jumps the queue.
+const RQ = { busy: 0, q: [], seq: 0, t: 0, running: new Set() };
+function rqPump() {
+  RQ.q.sort((a, b) => a.prio - b.prio || a.t - b.t);
+  // urgent work stops drawing that is no longer needed or not urgent (it is asked for again later)
+  if (RQ.q.some((j) => j.prio === 0)) for (const r of RQ.running) if (r.prio > 0) r.ctl.abort();
+  for (const r of RQ.running) if (r.skip && r.skip()) r.ctl.abort();
+  while (RQ.q.length) {
+    const j = RQ.q[0];
+    if (j.prio > 0 && RQ.busy > 0) return;
+    RQ.q.shift();
+    if (j.skip && j.skip()) { j.res(null); continue; }
+    RQ.busy++; RQ.running.add(j);
+    Promise.resolve().then(() => j.fn(j.ctl)).then(j.res, j.rej).finally(() => { RQ.busy--; RQ.running.delete(j); rqPump(); });
+    if (j.prio > 0) return;
+  }
+}
+const newCtl = () => { const c = { aborted: false, fns: [], abort() { if (c.aborted) return; c.aborted = true; for (const f of c.fns) try { f(); } catch {} } }; return c; };
+function rqAdd(prio, fn, skip) {
+  let job;
+  const p = new Promise((res, rej) => { job = { prio, fn, res, rej, skip, t: ++RQ.seq, ctl: newCtl() }; });
+  p.job = job; RQ.q.push(job);
+  // urgent work starts at once; the rest a moment later, so urgent work asked for in the same
+  // moment (the page on screen) is never stuck behind it
+  if (prio === 0) rqPump(); else { clearTimeout(RQ.t); RQ.t = setTimeout(rqPump, 40); }
+  return p;
+}
+function pageKey(i, w, h, zoom = 1) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   let pw = w * dpr * zoom, ph = h * dpr * zoom;
-  if (pw * ph > MAX_PX) { const k = Math.sqrt(MAX_PX / (pw * ph)); pw *= k; ph *= k; }
-  const key = i + '|' + Math.round(pw) + 'x' + Math.round(ph);
-  if (V.cache.has(key)) { const v = V.cache.get(key); V.cache.delete(key); V.cache.set(key, v); return v; }
+  if (pw * ph > maxPx()) { const k = Math.sqrt(maxPx() / (pw * ph)); pw *= k; ph *= k; }
+  return { key: i + '|' + Math.round(pw) + 'x' + Math.round(ph), pw, ph };
+}
+// The last drawing of each page, by page: shown at once while a sharper one (a new size) is drawn.
+const READY = new Map();
+const INCACHE = new Set();   // canvases the cache still holds (never emptied while kept)
+function renderPage(i, w, h, zoom = 1, prio = 0) {
+  const { key, pw, ph } = pageKey(i, w, h, zoom);
+  if (V.cache.has(key)) {
+    const v = V.cache.get(key); V.cache.delete(key); V.cache.set(key, v);
+    if (prio === 0 && v.job && v.job.prio > 0) { v.job.prio = 0; v.job.skip = null; if (RQ.q.includes(v.job)) rqPump(); }
+    return v;
+  }
   const canvas = el('canvas', 'art');
-  const p = V.doc.render(i, canvas, pw, ph).then(() => canvas);
+  const doc = V.doc;
+  // a page drawn ahead is skipped if the reader has gone elsewhere meanwhile
+  // a page drawn ahead (or one turned past quickly) is skipped, or stopped, if the reader has gone elsewhere
+  const skip = prio > 0 ? () => V.doc !== doc || (prio === 1 && Math.abs(i - V.page) > 4) : () => V.doc !== doc || i < V.page - 2 || i > V.page + 3;
+  const p = rqAdd(prio, (ctl) => doc.render(i, canvas, pw, ph, { ctl }).then(() => (ctl.aborted ? null : canvas), (e) => { if (ctl.aborted) return null; throw e; }), skip);
+  p.then((c) => {
+    if (!c) { if (V.cache.get(key) === p) V.cache.delete(key); return; }
+    if (V.cache.get(key) === p) INCACHE.add(c);
+    if (V.doc === doc && zoom === 1) READY.set(i, { c, key, doc });
+  }, () => { if (V.cache.get(key) === p) V.cache.delete(key); });
   V.cache.set(key, p);
-  while (V.cache.size > 6) { const k = V.cache.keys().next().value; const old = V.cache.get(k); V.cache.delete(k); old.then(freeCanvas); }
+  // kept: a few pages, and never more pixels in all than the device can spare (zoomed pages are big:
+  // a few of them used to fill the memory and iOS closed Stand)
+  const phone = document.body.classList.contains('phone');
+  const pxOf = (k) => { const m = /\|(\d+)x(\d+)/.exec(k); return m ? m[1] * m[2] : 0; };
+  let total = 0; for (const k of V.cache.keys()) total += pxOf(k);
+  while (V.cache.size > 2 && (V.cache.size > (phone ? 4 : 6) || total > (phone ? 8e6 : 20e6))) { const k = V.cache.keys().next().value; total -= pxOf(k); const old = V.cache.get(k); V.cache.delete(k); old.then((c) => { INCACHE.delete(c); freeCanvas(c); }, () => {}); }
   return p;
+}
+// A drawing of page i that can be shown straight away (another size), or null.
+function staleFor(i, key) {
+  const r = READY.get(i);
+  if (!r || r.doc !== V.doc || r.key === key || !r.c || !r.c.width) return null;
+  return r.c;
 }
 let layoutToken = 0;
 async function layout(fade) {
@@ -987,9 +1213,11 @@ async function layout(fade) {
   const makeBox = (bw, bh, c = cropOf(V.page)) => {
     const pg = el('div', 'pg'); pg.style.width = bw + 'px'; pg.style.height = bh + 'px';
     const inner = el('div', 'pgi');
-    const iw = bw / c.w, ih = bh / c.h;
+    // whole pixels: the page picture and its markings then sit exactly on the screen's pixels (a
+    // trimmed page at a fraction of a pixel is redrawn blurred by the iPad)
+    const iw = Math.round(bw / c.w), ih = Math.round(bh / c.h);
     inner.style.width = iw + 'px'; inner.style.height = ih + 'px';
-    inner.style.left = -c.x * iw + 'px'; inner.style.top = -c.y * ih + 'px';
+    inner.style.left = -Math.round(c.x * iw) + 'px'; inner.style.top = -Math.round(c.y * ih) + 'px';
     pg.append(inner);
     return { pg, inner, iw, ih };
   };
@@ -1006,8 +1234,11 @@ async function layout(fade) {
     // windows, so the pages can never show through each other
     cur.className = 'art'; next.className = 'art';
     const topClip = el('div', 'half-clip'), botClip = el('div', 'half-clip');
-    for (const [cv, clip] of [[next, topClip], [cur, botClip]]) { cv.style.width = b.iw + 'px'; cv.style.height = b.ih + 'px'; cv.style.inset = 'auto'; cv.style.left = '0'; clip.append(cv); }
-    const place = (f) => { topClip.style.top = '0'; topClip.style.height = (f * 100) + '%'; next.style.top = '0'; botClip.style.top = (f * 100) + '%'; botClip.style.bottom = '0'; cur.style.top = (-f * b.ih) + 'px'; };
+    // (and each page's markings over it, to be seen: writing turns the half page off)
+    const inkOf = (i, cv) => { const ink = el('canvas', 'ink'); ink.width = cv.width; ink.height = cv.height; const L = new InkLayer(ink, V.score.id, V.doc.composite && V.doc.composite(i) ? `${V.doc.orig(i)}+${V.doc.gluedFrom(i)}` : V.doc.orig(i)); void L; return ink; };
+    const nextInk = inkOf(V.page + 1, next), curInk = inkOf(V.page, cur);
+    for (const [cv, clip, ink] of [[next, topClip, nextInk], [cur, botClip, curInk]]) for (const c of [cv, ink]) { c.style.width = b.iw + 'px'; c.style.height = b.ih + 'px'; c.style.inset = 'auto'; c.style.left = '0'; clip.append(c); }
+    const place = (f) => { topClip.style.top = '0'; topClip.style.height = (f * 100) + '%'; next.style.top = '0'; nextInk.style.top = '0'; botClip.style.top = (f * 100) + '%'; botClip.style.bottom = '0'; cur.style.top = (-f * b.ih) + 'px'; curInk.style.top = (-f * b.ih) + 'px'; };
     place(split); V.halfAt = split;
     const line = el('div', 'half-line'); line.style.top = (split * 100) + '%';
     const tag = el('div', 'half-tag', `↑ page ${V.page + 2}   ·   page ${V.page + 1} ↓`); tag.style.top = (split * 100) + '%';
@@ -1042,15 +1273,32 @@ async function layout(fade) {
     if (idx.length === 2 && V.doc.orig(idx[0]) === V.doc.orig(idx[1])) idx.pop();
     const boxes = pageBox(idx);
     const made = boxes.map(([bw, bh], k) => makeBox(bw, bh, cropOf(idx[k])));
-    const canvases = await Promise.all(idx.map((i, k) => renderPage(i, made[k].iw, made[k].ih)));
+    // A page already drawn at another size (margins measured, the screen turned) is shown at
+    // once, and swapped for the sharp one when it is ready.
+    const proms = idx.map((i, k) => renderPage(i, made[k].iw, made[k].ih));
+    prefetch(token);   // queued now, so it comes straight after these and before anything else
+    const stale = idx.map((i, k) => staleFor(i, pageKey(i, made[k].iw, made[k].ih).key));
+    const quick = await Promise.all(proms.map((p, k) => (stale[k] ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), 30))]) : p)));
     if (token !== layoutToken) return;
+    const canvases = quick.map((c, k) => c || stale[k]);
+    // a drawing stopped on the way (very quick turning): asked for again
+    if (canvases.some((c) => !c)) { if (!layout.retry) { layout.retry = true; setTimeout(() => { layout.retry = false; if (token === layoutToken) layout(); }, 0); } return; }
     idx.forEach((i, k) => {
       const b = made[k];
       const art = canvases[k]; art.className = 'art';
+      if (!quick[k]) proms[k].then((sharp) => {
+        const e = V.pages.find((x) => x.art === art);
+        if (!sharp || !e || token !== layoutToken) return;
+        sharp.className = 'art'; e.inner.replaceChild(sharp, art); e.art = sharp;
+        e.layer.resize(sharp.width, sharp.height);
+        if (!INCACHE.has(art)) freeCanvas(art);
+      }, () => {});
       const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
       b.inner.append(art, ink); spread.append(b.pg);
       const layer = new InkLayer(ink, V.score.id, V.doc.composite && V.doc.composite(i) ? `${V.doc.orig(i)}+${V.doc.gluedFrom(i)}` : V.doc.orig(i));
-      entries.push({ index: i, orig: V.doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih });
+      const entry = { index: i, orig: V.doc.orig(i), pg: b.pg, inner: b.inner, art, ink, layer, iw: b.iw, ih: b.ih };
+      layer.onItems = () => renderNotes(entry);   // (the notes on the page follow its markings)
+      entries.push(entry);
     });
     label = idx.length > 1 ? `${idx[0] + 1}–${idx[1] + 1}` : `${idx[0] + 1}`;
   }
@@ -1063,17 +1311,55 @@ async function layout(fade) {
   $('#pageLabel').textContent = label + ' / ' + V.doc.pages;
   syncPaperPlus();
   $('#pageRange').value = V.page + 1;
-  setTimeout(() => {
-    if (token !== layoutToken || !V.doc) return;
-    for (const start of [V.page + V.spread, V.page - V.spread]) {
-      if (start < 0 || start >= V.doc.pages) continue;
-      const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
-      pageBox(ids).forEach((b, k) => renderPage(ids[k], b[0] / cropOf(ids[k]).w, b[1] / cropOf(ids[k]).h));
+  prefetch(token);
+}
+// The next pages (and the ones before) are drawn ahead, after the pages on screen.
+function prefetch(token) {
+  if (token !== layoutToken || !V.doc) return;
+  for (const start of [V.page + V.spread, V.page - V.spread]) {
+    if (start < 0 || start >= V.doc.pages) continue;
+    const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
+    pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, 1));
+  }
+  clearTimeout(WARM.t); WARM.t = setTimeout(() => warmAhead(token), 2500);
+}
+// A little further ahead, slow pages (scans) are drawn once, quietly, and kept as pictures, so
+// turning several pages quickly never waits. Only when nothing else is being drawn.
+const WARM = { t: 0, tried: new Set() };
+async function warmAhead(token) {
+  const doc = V.doc;
+  if (token !== layoutToken || !doc || !doc.pixHas || document.hidden) return;
+  // the pages ahead first, then the rest of the score (once each, kept as pictures: after that every
+  // page of this score opens at once). Any page you ask for stops this and comes first.
+  // Only a few pages each way, and never while a panel is open (the Pages panel draws every page
+  // itself): drawing a whole long score in the background used up the iPhone's memory.
+  if (document.querySelector('.panel:not([hidden])')) { clearTimeout(WARM.t); WARM.t = setTimeout(() => warmAhead(token), 4000); return; }
+  const ahead = document.body.classList.contains('phone') ? 6 : 12, behind = document.body.classList.contains('phone') ? 2 : 4;
+  const starts = [];
+  for (let st0 = V.page + 2 * V.spread; st0 < Math.min(doc.pages, V.page + 2 * V.spread + ahead); st0 += V.spread) starts.push(st0);
+  for (let st0 = V.page - V.spread * 2; st0 >= Math.max(0, V.page - V.spread * 2 - behind); st0 -= V.spread) starts.push(st0);
+  for (const start of starts) {
+    const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
+    const boxes = pageBox(ids);
+    for (let k = 0; k < ids.length; k++) {
+      const i = ids[k];
+      const { key, pw, ph } = pageKey(i, innerW(i, boxes[k][0]), innerH(i, boxes[k][1]));
+      const tag = doc.orig(i) + '|' + key;
+      if (WARM.tried.has(tag) || V.cache.has(key)) continue;
+      if (await doc.pixHas(i, pw, ph)) { WARM.tried.add(tag); continue; }
+      if (token !== layoutToken) return;
+      WARM.tried.add(tag);
+      rqAdd(2, async (ctl) => {
+        const c = document.createElement('canvas');
+        try { await doc.render(i, c, pw, ph, { ctl }); if (ctl.aborted) WARM.tried.delete(tag); } catch { WARM.tried.delete(tag); } finally { c.width = c.height = 0; }
+      }, () => V.doc !== doc || !!document.querySelector('.panel:not([hidden])')).catch(() => {});
     }
-  }, 80);
+  }
 }
 function goTo(page, fade = true) {
   if (!V.doc) return;
+  // (the eyes' model, when it shares this thread, waits while the page is drawn)
+  globalThis.__busyUntil = performance.now() + 700;
   V.page = clamp(page, 0, V.doc.pages - 1); V.half = false; V.score.lastPage = V.page;
   if (V.page === 0) V.usedJumps.clear();
   layout(fade);
@@ -1114,11 +1400,20 @@ function turn(dir) {
   goTo(next);
 }
 window.standTurn = turn;
-let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (V.doc) { clearCache(); layout(); } sizeLive(); }, 150); });
+// (the keyboard coming up for typed words changes only the height: the pages are left as they are,
+// so the words being typed are not lost)
+let resizeT, lastW = window.innerWidth;
+window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => {
+  const ae = document.activeElement;
+  const typing = (typeof textEdit !== 'undefined' && textEdit) || (typeof tbEdit !== 'undefined' && tbEdit) || !!(ae && ae.closest && ae.closest('.snote') && /^(TEXTAREA|INPUT)$/.test(ae.tagName));
+  const sameW = window.innerWidth === lastW; lastW = window.innerWidth;
+  if (V.doc && !(typing && sameW)) { clearCache(); layout(); }
+  sizeLive();
+}, 150); });
 $('#pageRange').addEventListener('input', (e) => goTo(+e.target.value - 1, false));
 
 let chromeTimer;
-function showChrome(on) { clearTimeout(chromeTimer); if (V.perform) on = false; if ($('#score').classList.contains('nbmode')) on = true; $('#score').classList.toggle('chrome-off', !on); }
+function showChrome(on) { clearTimeout(chromeTimer); if (V.perform) on = false; if (document.body.classList.contains('touring')) on = true; if ($('#score').classList.contains('nbmode')) on = true; $('#score').classList.toggle('chrome-off', !on); }
 // ---------- turning pages by listening ----------
 const follow = {
   inst: null,
@@ -1132,6 +1427,15 @@ const follow = {
       onState: (txt, hear) => { $('#followText').textContent = txt; $('#followBadge').classList.toggle('hear', !!hear); },
       half: () => (V.half ? V.halfAt ?? 0.5 : null),
       halfWanted: () => !!(S.halfTurn && V.spread === 1 && !V.inking),
+      gaze: () => eyes.onPage(),
+      when: () => followAt(),
+      // the eyes put right while playing: a little of how far above or below the playing they are
+      gazeOff: (dn) => {
+        const g = eyes.gaze; if (!g || !g.cal) return;
+        const r = $$('#stage .spread .pgi')[0]; if (!r) return;
+        const h = r.getBoundingClientRect().height, lim = innerHeight * 0.3;
+        g.cal = { ...g.cal, dy: clamp((g.cal.dy || 0) - dn * h * 0.05, -lim, lim) };
+      },
     });
     return this.inst;
   },
@@ -1139,10 +1443,254 @@ const follow = {
     $('#followBadge').hidden = !this.wanted;
     if (this.wanted) { const f = this.make(); f.start(); this.pages(); }
     else if (this.inst) this.inst.stop();
+    eyes.sync();
   },
   pages() { if (this.inst && this.inst.on && V.doc) this.inst.setPages(V.page, Math.min(V.doc.pages - 1, V.page + (V.spread === 2 ? 1 : 0))); },
   reset() { if (this.inst) this.inst.reset(); },
 };
+// ---------- following the eyes (a hint for turning pages by listening) ----------
+// The front camera, a face model and a short calibration give roughly where on the screen the eyes
+// are; mapped onto the pages on show, the follower takes it as a hint. While it runs it also sees
+// winks (with both eyes in view), in place of the iPad's own face tracking, which needs the same
+// camera.
+const eyes = {
+  gaze: null, wink: null, running: false,
+  orient() { return innerWidth > innerHeight ? 'land' : 'port'; },
+  cal() { const c = S.eyesCal && S.eyesCal[this.orient()]; return c && Math.abs(c.w - innerWidth) < 40 && Math.abs(c.h - innerHeight) < 40 ? c : null; },
+  get wanted() { return !!(follow.wanted && S.followEyes && this.cal() && Gaze.supported()); },
+  async sync() {
+    if (this.wanted && !this.running) {
+      this.running = true;
+      if (!this.gaze) this.gaze = new Gaze();
+      this.gaze.cal = this.cal();
+      sendFace();
+      const ok = await this.gaze.start();
+      // (not an error when it was turned off meanwhile)
+      if (!ok) { this.running = false; sendFace(); if (this.gaze.err && this.wanted) toast('Could not follow the eyes: ' + this.gaze.err); return; }
+      if (!this.unsub) this.unsub = this.gaze.onSample((smp) => this.sample(smp));
+    } else if (!this.wanted && this.running) {
+      this.running = false; if (this.gaze && !EC.on) this.gaze.stop(); sendFace();   // (the set-up still uses the camera)
+      // (turned off altogether: the face model's memory goes too)
+      if (this.gaze && !(S.followTurn && S.followEyes) && !EC.on) this.gaze.dispose();
+    }
+    if (this.running && this.gaze) this.gaze.cal = this.cal();
+  },
+  sample(smp) {
+    // winks, while the camera is ours
+    if (S.wink && !$('#score').hidden) {
+      if (!this.wink) this.wink = new WinkDetector((eye) => winkFound(eye));
+      this.wink.sens = S.winkSens || 0.7;
+      this.wink.feed(smp);
+    }
+  },
+  // where the eyes are on the pages on show: { page, xn, yn (0..1 on the page), q, sig }
+  onPage() {
+    const g = this.running && this.gaze && this.gaze.last;
+    if (!g || !(g.quality > 0) || performance.now() - g.t > 400 || g.x === undefined) return null;
+    const inners = $$('#stage .spread .pgi');
+    for (let k = 0; k < inners.length; k++) {
+      const r = inners[k].getBoundingClientRect();
+      if (g.x < r.left - r.width * 0.04 || g.x > r.right + r.width * 0.04 || g.y < r.top - r.height * 0.04 || g.y > r.bottom + r.height * 0.04) continue;
+      const xn = clamp((g.x - r.left) / r.width, 0, 1), yn = clamp((g.y - r.top) / r.height, 0, 1);
+      let page = V.page + k;
+      // half a page: the top of the next page above the line
+      if (V.half && yn < (V.halfAt ?? 0.5)) page = V.page + 1;
+      const c = this.gaze.cal || {}, err = c.errY || (c.err ? c.err * 0.75 : 120);
+      return { page, xn, yn, q: g.quality, sig: clamp((err / r.height) * 0.9, 0.05, 0.25) };
+    }
+    return null;
+  },
+};
+window.__eyes = eyes;
+$('#followEyes').addEventListener('change', (e) => {
+  S.followEyes = e.target.checked; saveSettings(); syncEyesUI();
+  if (S.followEyes && !eyes.cal()) openEyeCal(); else follow.sync();
+});
+function syncEyesUI() {
+  $('#followBody').hidden = !S.followTurn;
+  const w = followAt();
+  $('#followAt').value = Math.round(w * 100);
+  $('#followAtMark').style.left = `calc(${w * 100}% + ${(3 - w * 6).toFixed(1)}px)`;   // (kept inside the frame at both ends)
+  $('#followWhenHint').textContent = w < 0.05 ? 'The next page comes as you start the bar before the last: time to look ahead.' : w < 0.45 ? 'The next page comes during the bar before the last.' : w <= 0.55 ? 'The next page comes as you start the last bar.' : w < 0.95 ? 'The next page comes during the last bar.' : 'The next page comes with the last notes of the page.';
+  $('#followEyes').checked = !!S.followEyes;
+  const c = eyes.cal();
+  $('#eyesState').textContent = !Gaze.supported() ? 'Not available on this device.' : !c ? 'Not set up yet.' : (c.errY || c.err) / innerHeight < 0.1 ? 'Set up: very good.' : (c.errY || c.err) / innerHeight < 0.2 ? 'Set up: good. It gets better as you play.' : 'Set up: rough. It puts itself right as you play; better light helps.';
+  $('#eyesCal').textContent = c ? 'Set up again' : 'Set up my eyes';
+}
+$('#eyesCal').addEventListener('click', () => openEyeCal());
+// where in the last two bars the page turns: 0 the bar before the last begins, 0.5 the last bar
+// begins, 1 the last notes (a choice made before as a word is kept)
+function followAt() { if (typeof S.followAt === 'number') return S.followAt; return S.followWhen === 'line' ? 0 : S.followWhen === 'end' ? 1 : 0.5; }
+$('#followAt').addEventListener('input', (e) => { S.followAt = +e.target.value / 100; saveSettings(); syncEyesUI(); });
+// the calibration: thirteen dots, the frames while looking at each one; then a check with five
+// rings, and the result shown where it was measured. Works with the iPad straight ahead or to one
+// side: the camera picture shows how it sees you before starting.
+const EC = { on: false, gaze: null, last: null, offState: null, offSeen: null, phase: '' };
+const ecWait = (ms) => new Promise((r) => setTimeout(r, ms));
+function ecSet(title, html, go, extra = {}) {
+  $('#eyeCalTitle').textContent = title; $('#eyeCalTitle').hidden = !title;
+  $('#eyeCalText').innerHTML = html;
+  $('#eyeCalGo').hidden = !go; if (go) $('#eyeCalGo').textContent = go;
+  $('#eyeCalRedo').hidden = !extra.redo; $('#eyeCalCheck').hidden = !extra.check;
+  $('#eyeCalCancel').textContent = extra.cancel || 'Cancel';
+}
+// how the camera sees you now: words and a colour for the ring around the picture
+function ecJudge(smp) {
+  if (!smp || !smp.face) return ['', 'Looking for your face… Some light on your face helps.'];
+  if (!smp.see) return ['warn', 'One eye is hidden. Turn the iPad a little more towards you.'];
+  if (smp.blinkL > 0.45 && smp.blinkR > 0.45) return ['ok', 'Your face is seen.'];
+  if (Math.abs(smp.yaw) > 30) return ['ok', 'Seen from the side: that works.'];
+  return ['ok', 'Both eyes are seen. Ready.'];
+}
+async function ecCamera() {
+  // (one camera and one face model for both: the set-up and the following)
+  if (!eyes.gaze) eyes.gaze = new Gaze();
+  EC.gaze = eyes.gaze;
+  EC.on = true; sendFace();
+  const ok = EC.gaze.on || (await EC.gaze.start());
+  if (!ok) return false;
+  const v = $('#eyeCalVid'); if (EC.gaze.stream && v.srcObject !== EC.gaze.stream) { v.srcObject = EC.gaze.stream; v.play().catch(() => {}); }
+  if (!EC.offState) EC.offState = EC.gaze.onSample((smp) => {
+    EC.last = smp;
+    const [cls, txt] = ecJudge(smp);
+    const st = $('#eyeCalState'); st.textContent = txt; st.className = 'eyecal-state ' + cls; $('#eyeCalCam').className = 'eyecal-cam ' + cls;
+    // while the dots run: say so at once when the eyes are lost
+    if ($('#eyeCal').classList.contains('running')) { const lost = !smp.see; $('#eyeCalLive').hidden = !lost; if (lost) $('#eyeCalLive').textContent = smp.face ? 'One eye is hidden: turn a little towards the iPad' : 'I can’t see your face'; }
+  });
+  return true;
+}
+function ecRelease() {
+  if (EC.offState) { EC.offState(); EC.offState = null; }
+  if (EC.offSeen) { EC.offSeen(); EC.offSeen = null; }
+  $('#eyeCalVid').srcObject = null;
+}
+async function openEyeCal() {
+  if (!Gaze.supported()) { toast('Not available on this device.'); return; }
+  hidePanel();
+  const o = $('#eyeCal'); o.hidden = false; o.classList.remove('running', 'result'); $('#eyeCalSeen').hidden = true; $('#eyeCalLive').hidden = true; $('#eyeCalMarks').innerHTML = '';
+  EC.phase = 'intro';
+  ecSet('Set up your eyes', '<ol><li>Put the iPad exactly where it stands when you play: straight ahead or to the side, both work.</li><li>Sit or stand as you play, with your instrument if you can.</li><li>Follow each dot with your eyes until it is gone. Move your head only as you do when you read.</li></ol><small>Then a short check shows where Stand sees you looking. It takes about half a minute.</small>', 'Start');
+  $('#eyeCalState').textContent = 'Starting the camera…'; $('#eyeCalState').className = 'eyecal-state'; $('#eyeCalCam').className = 'eyecal-cam';
+  EC.ready = ecCamera();
+  const ok = await EC.ready;
+  if (!ok && EC.phase === 'intro') { $('#eyeCalState').textContent = 'The camera could not start' + (EC.gaze && EC.gaze.err ? ': ' + EC.gaze.err : '.'); $('#eyeCalState').className = 'eyecal-state warn'; }
+}
+$('#eyeCalCancel').addEventListener('click', () => closeEyeCal());
+function closeEyeCal() {
+  EC.on = false; EC.phase = ''; $('#eyeCal').hidden = true; $('#eyeCal').classList.remove('running', 'result');
+  ecRelease();
+  if (EC.gaze && !eyes.running) EC.gaze.stop();
+  syncEyesUI(); follow.sync();
+}
+// the dots: each held until the eyes have been seen on it for long enough (a little longer when
+// they were lost meanwhile)
+async function ecDots() {
+  const W = innerWidth, H = innerHeight, mx = 0.07;
+  const pts = [[0.5, 0.5], [mx, mx], [0.5, mx], [1 - mx, mx], [1 - mx, 0.5], [1 - mx, 1 - mx], [0.5, 1 - mx], [mx, 1 - mx], [mx, 0.5], [0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]];
+  const samples = []; let cur = null;
+  const off = EC.gaze.onSample((smp) => { if (cur && performance.now() > cur.from) { samples.push({ px: cur.px, py: cur.py, s: smp }); if (smp.see) cur.good++; } });
+  const dot = $('#eyeCalDot'); dot.classList.remove('ring'); $('#eyeCal').classList.add('running');
+  for (const [fx, fy] of pts) {
+    if (!EC.on) break;
+    dot.classList.remove('shrink'); dot.style.left = fx * W + 'px'; dot.style.top = fy * H + 'px';
+    await ecWait(600);
+    void dot.offsetWidth; dot.classList.add('shrink');
+    const t0 = performance.now(); cur = { px: fx * W, py: fy * H, from: t0 + 450, good: 0 };
+    await ecWait(1350);
+    // (not seen well: wait for the eyes, up to three seconds more)
+    for (let k = 0; k < 30 && cur.good < 5 && EC.on; k++) await ecWait(100);
+    cur = null;
+  }
+  off(); $('#eyeCal').classList.remove('running'); $('#eyeCalLive').hidden = true;
+  return samples;
+}
+// the check: five rings; where the eyes were seen on each, and a small shift of the whole when
+// it was off the same way on all of them
+async function ecCheck() {
+  const W = innerWidth, H = innerHeight;
+  const tg = [[0.5, 0.42], [0.18, 0.18], [0.82, 0.18], [0.82, 0.68], [0.18, 0.68]];
+  const marks = $('#eyeCalMarks'); marks.innerHTML = '';
+  const res = []; let cur = null;
+  const off = EC.gaze.onSample((smp) => { if (cur && performance.now() > cur.from && smp.see && smp.x !== undefined && !(smp.blinkL > 0.45 && smp.blinkR > 0.45)) cur.pts.push([smp.x, smp.y]); });
+  const dot = $('#eyeCalDot'); dot.classList.add('ring'); dot.classList.remove('shrink');
+  $('#eyeCal').classList.remove('result'); $('#eyeCal').classList.add('running');
+  for (const [fx, fy] of tg) {
+    if (!EC.on) break;
+    dot.style.left = fx * W + 'px'; dot.style.top = fy * H + 'px';
+    const t0 = performance.now(); cur = { pts: [], from: t0 + 700 };
+    await ecWait(1700);
+    for (let k = 0; k < 20 && cur.pts.length < 4 && EC.on; k++) await ecWait(100);
+    const P = cur.pts.slice(Math.floor(cur.pts.length * 0.2));
+    res.push({ tx: fx * W, ty: fy * H, x: P.length ? P.reduce((a, p) => a + p[0], 0) / P.length : null, y: P.length ? P.reduce((a, p) => a + p[1], 0) / P.length : null });
+    cur = null;
+  }
+  off(); dot.classList.remove('ring'); $('#eyeCal').classList.remove('running'); $('#eyeCalLive').hidden = true;
+  return res;
+}
+function ecShowCheck(res, cal) {
+  const W = innerWidth, H = innerHeight, marks = $('#eyeCalMarks'); marks.innerHTML = '';
+  const seen = res.filter((r) => r.x !== null);
+  let bx = 0, by = 0;
+  if (seen.length >= 3) { bx = seen.reduce((a, r) => a + r.x - r.tx, 0) / seen.length; by = seen.reduce((a, r) => a + r.y - r.ty, 0) / seen.length; }
+  const errOf = (sx, sy) => Math.sqrt(seen.reduce((a, r) => a + (r.x - sx - r.tx) ** 2 + (r.y - sy - r.ty) ** 2, 0) / Math.max(1, seen.length));
+  // (the shift, only when it really helps)
+  const shift = seen.length >= 3 && errOf(bx, by) < errOf(0, 0) * 0.8;
+  if (!shift) { bx = 0; by = 0; }
+  const err = seen.length ? errOf(bx, by) : 999;
+  const errY = seen.length ? Math.sqrt(seen.reduce((a, r) => a + (r.y - by - r.ty) ** 2, 0) / seen.length) : 999;
+  const unit = Math.min(W, H);
+  res.forEach((r, i) => {
+    const m = el('div', 'eyecal-mark'); m.style.left = r.tx + 'px'; m.style.top = r.ty + 'px'; marks.append(m);
+    if (r.x === null) return;
+    const x = clamp(r.x - bx, 8, W - 8), y = clamp(r.y - by, 8, H - 8), d = Math.hypot(x - r.tx, y - r.ty);
+    const h = el('div', 'eyecal-hit ' + (d < unit * 0.09 ? 'good' : d < unit * 0.18 ? 'near' : 'far')); h.style.left = x + 'px'; h.style.top = y + 'px'; marks.append(h);
+  });
+  return { err, errY, bx, by, missed: res.length - seen.length };
+}
+async function ecRun(dotsToo) {
+  EC.on = true; $('#eyeCalSeen').hidden = true; $('#eyeCalMarks').innerHTML = '';
+  if (EC.ready) { $('#eyeCalGo').disabled = true; await EC.ready; $('#eyeCalGo').disabled = false; }
+  if (!EC.gaze || !EC.gaze.on) { $('#eyeCalState').textContent = 'Starting the camera…'; if (!(await ecCamera())) { ecSet('The camera could not start', EC.gaze && EC.gaze.err ? EC.gaze.err : 'Allow Stand to use the camera in Settings, then try again.', 'Start'); return; } }
+  const o = eyes.orient();
+  if (dotsToo) {
+    EC.phase = 'dots';
+    const samples = await ecDots(); if (!EC.on) return;
+    window.__eyesDbg = { n: samples.length, face: samples.filter((q) => q.s.face).length, see: samples.filter((q) => q.s.see).length, yaw: samples.slice(0, 3).map((q) => q.s.yaw), ratio: samples.slice(0, 3).map((q) => q.s.ratio) };
+    const cal = fitCalibration(samples);
+    if (!cal) { ecSet('Your eyes were not seen well enough', `Only ${window.__eyesDbg.see} of ${window.__eyesDbg.n} moments showed your eyes. Look at the camera picture: your face should be in it, lit from the front. Turn the iPad a little towards you, or sit a little closer, then try again.`, 'Try again'); EC.phase = 'intro'; return; }
+    S.eyesCal = { ...(S.eyesCal || {}), [o]: { ...cal, w: innerWidth, h: innerHeight, at: Date.now() } };
+    S.followEyes = true; saveSettings();
+  }
+  const cal = eyes.cal(); if (!cal) { EC.phase = 'intro'; ecSet('Set up your eyes', 'Start again to set up for this way round of the iPad.', 'Start'); return; }
+  EC.gaze.cal = cal;
+  // the check
+  EC.phase = 'check';
+  const res = await ecCheck(); if (!EC.on) return;
+  const r = ecShowCheck(res, cal); window.__ecCheck = { res, r };
+  // keep the shift and how good it was (the worse of the two measures, so the follower is not too sure)
+  const errNow = Math.max(cal.err * 0.7, r.err);
+  S.eyesCal = { ...(S.eyesCal || {}), [o]: { ...cal, dx: (cal.dx || 0) - r.bx, dy: (cal.dy || 0) - r.by, err: Math.round(Math.max(errNow, 30)), errY: Math.round(Math.max((cal.errY || cal.err) * 0.7, r.errY, 25)), checkErr: Math.round(r.err) } };
+  saveSettings(); EC.gaze.cal = eyes.cal();
+  // the ring follows the eyes from now on, to look around and see
+  const seen = $('#eyeCalSeen'); seen.hidden = false;
+  if (!EC.offSeen) EC.offSeen = EC.gaze.onSample((smp) => { if (smp.x !== undefined && smp.see) { seen.classList.remove('lost'); seen.style.left = clamp(smp.x, 0, innerWidth) + 'px'; seen.style.top = clamp(smp.y, 0, innerHeight) + 'px'; } else seen.classList.add('lost'); });
+  $('#eyeCal').classList.add('result'); EC.phase = 'result';
+  // what matters for turning is up and down: which line, and above all the end of the page
+  const ey = (r.errY ?? r.err) / innerHeight;
+  const verdict = r.missed >= 3 ? ['Your eyes were lost during the check', 'Keep the iPad where it is, with more light on your face, and set up again.']
+    : ey < 0.1 ? ['Very good', 'Stand can tell the lines of the music apart, and when you reach the end of the page.']
+    : ey < 0.2 ? ['Good', 'Stand can tell about where on the page you are looking: it helps the turns, and gets better as you play.']
+    : ['Rough', 'It helps a little, and puts itself right as you play. Set up again with more light on your face, or the iPad a little closer, for better.'];
+  ecSet(verdict[0], verdict[1] + '<small>Green dots: where Stand saw you looking at each ring. The green ring now follows your eyes; look around to try it.</small>', 'Done', { redo: true, check: true, cancel: 'Close' });
+}
+$('#eyeCalGo').addEventListener('click', () => {
+  if (EC.phase === 'result') { closeEyeCal(); return; }
+  if (EC.phase === 'intro') ecRun(true);
+});
+$('#eyeCalRedo').addEventListener('click', () => { if (EC.offSeen) { EC.offSeen(); EC.offSeen = null; } $('#eyeCal').classList.remove('result'); ecRun(true); });
+$('#eyeCalCheck').addEventListener('click', () => { if (EC.offSeen) { EC.offSeen(); EC.offSeen = null; } $('#eyeCal').classList.remove('result'); ecRun(false); });
+window.__ec = EC;
+window.addEventListener('resize', () => { if (eyes.running && eyes.gaze) { eyes.gaze.cal = eyes.cal(); if (!eyes.gaze.cal) eyes.sync(); } });
 // ---------- performance mode: nothing but the music ----------
 function setPerform(on) {
   V.perform = !!on;
@@ -1189,7 +1737,13 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- zoom ----------
 const Z = { s: 1, x: 0, y: 0, el: null, sharpT: 0, sharp: 1 };
-const ZOOM_MIN = 0.7;   // the page can be made a little smaller than the width of the screen
+// A notebook page can be made a little smaller than the screen; a score never: pinched smaller it
+// settles back to fit the screen exactly.
+const ZOOM_MIN_NB = 0.7;
+const zoomMin = () => (NBK() ? ZOOM_MIN_NB : 1);
+// Zoomed in on a score, the page can be pulled a little past its top and bottom edges, so the top
+// line can be brought down below the markings bar to write above it.
+const zoomSlack = () => (NBK() || Z.s <= 1.02 ? { top: 0, bot: 0 } : (() => { const h = stage.clientHeight || 800; return { top: Math.min(260, h * 0.24), bot: Math.min(140, h * 0.12) }; })());
 function spreadNatural() {
   // position of the spread inside the stage before our transform
   const sr = stage.getBoundingClientRect();
@@ -1212,7 +1766,8 @@ function clampZoom() {
   const n = spreadNatural();
   const cw = n.w * Z.s, ch = n.h * Z.s;
   if (cw <= n.sw) Z.x = (n.sw - cw) / 2 - n.ox; else Z.x = clamp(Z.x, n.sw - cw - n.ox, -n.ox);
-  if (ch <= n.sh) Z.y = (n.sh - ch) / 2 - n.oy; else Z.y = clamp(Z.y, n.sh - ch - n.oy, -n.oy);
+  const sl = zoomSlack();
+  if (ch <= n.sh && !sl.top) Z.y = (n.sh - ch) / 2 - n.oy; else Z.y = clamp(Z.y, Math.min(n.sh - ch - n.oy - sl.bot, (n.sh - ch) / 2 - n.oy), Math.max(-n.oy + sl.top, (n.sh - ch) / 2 - n.oy));
 }
 function applyZoom() {
   if (!Z.el) return;
@@ -1238,7 +1793,11 @@ async function sharpen() {
   if (Math.abs(want - Z.sharp) < 0.2 && !(want === 1 && Z.sharp !== 1)) return;
   Z.sharp = want;
   const token = layoutToken;
+  const sr = stage.getBoundingClientRect();
   for (const p of V.pages) {
+    // (only the pages on screen are drawn at the bigger size: two big pages at once filled the memory)
+    const pr = p.pg.getBoundingClientRect(), shown = pr.right > sr.left && pr.left < sr.right && pr.bottom > sr.top && pr.top < sr.bottom;
+    if (!shown && want > 1) continue;
     const art = await renderPage(p.index, p.iw, p.ih, want);
     if (token !== layoutToken) return;
     if (art !== p.art) {
@@ -1251,6 +1810,18 @@ async function sharpen() {
 }
 // Zoomed in, the markings are drawn again for just the part of the page on screen, at the full
 // sharpness of the screen, so writing stays crisp at any zoom (the page itself can't be that big).
+// Zoomed in, every second: is each page's markings layer as sharp as the screen where it shows?
+// If not (a page drawn again underneath, a turn, anything that set the layer back to the whole
+// page), it is made sharp again. (Writing looked blurred after the Pencil lifted on the iPad.)
+setInterval(() => {
+  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && GS.kind) || $('#score').hidden) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  for (const p of V.pages) {
+    if (!p.ink || !p.layer) continue;
+    const r = p.ink.getBoundingClientRect(), sr = stage.getBoundingClientRect(); if (r.width < 4 || r.right < sr.left || r.left > sr.right || r.bottom < sr.top || r.top > sr.bottom) continue;
+    if (p.ink.width / (r.width * dpr) < 0.92) { sharpenInk(); return; }
+  }
+}, 1000);
 function sharpenInk() {
   clearTimeout(Z.inkT);
   if (!V.pages.length) return;
@@ -1261,14 +1832,22 @@ function sharpenInk() {
     const full = () => { if (p.layer.view) { p.ink.style.cssText = ''; p.layer.resize(p.art.width, p.art.height); } };
     if (Z.s <= 1.05 || TURN()) { full(); continue; }
     const r = p.inner.getBoundingClientRect(); if (!r.width || !r.height) continue;
-    const mx = sr.width * 0.3, my = sr.height * 0.3;
-    const x0 = clamp((sr.left - mx - r.left) / r.width, 0, 1), x1 = clamp((sr.right + mx - r.left) / r.width, 0, 1);
-    const y0 = clamp((sr.top - my - r.top) / r.height, 0, 1), y1 = clamp((sr.bottom + my - r.top) / r.height, 0, 1);
-    if (x1 - x0 < 0.01 || y1 - y0 < 0.01) continue;
-    let pw = (x1 - x0) * r.width * dpr, ph = (y1 - y0) * r.height * dpr;
-    if (pw * ph > MAX_PX) { const k = Math.sqrt(MAX_PX / (pw * ph)); pw *= k; ph *= k; }
-    // the whole page is already sharp enough: nothing to gain
-    if (pw / (x1 - x0) <= p.art.width * 1.08) { full(); continue; }
+    // The part on screen (and a margin round it, smaller if memory is short), cut on the screen's own
+    // pixels: one pixel of the markings is exactly one pixel of the screen, so a line looks the same
+    // after the Pencil lifts as while it is being drawn (a canvas a little smaller, or half a pixel
+    // off, is blurred by the iPad when it is shown)
+    let x0, x1, y0, y1, pw, ph;
+    for (const m of [0.25, 0.15, 0.08, 0]) {
+      const L = Math.max(Math.floor((sr.left - sr.width * m) * dpr), Math.floor(r.left * dpr)), R = Math.min(Math.ceil((sr.right + sr.width * m) * dpr), Math.ceil(r.right * dpr));
+      const T = Math.max(Math.floor((sr.top - sr.height * m) * dpr), Math.floor(r.top * dpr)), B = Math.min(Math.ceil((sr.bottom + sr.height * m) * dpr), Math.ceil(r.bottom * dpr));
+      pw = R - L; ph = B - T;
+      x0 = (L / dpr - r.left) / r.width; x1 = (R / dpr - r.left) / r.width; y0 = (T / dpr - r.top) / r.height; y1 = (B / dpr - r.top) / r.height;
+      if (pw * ph <= maxPx()) break;
+    }
+    if (pw < 4 || ph < 4) continue;
+    if (pw * ph > maxPx()) { const k = Math.sqrt(maxPx() / (pw * ph)); pw *= k; ph *= k; }
+    // the whole page is already as sharp as the screen: nothing to gain
+    if (Math.abs(pw / (x1 - x0) - p.art.width) < 2 && Math.abs(r.width * dpr - p.art.width) < 2) { full(); continue; }
     Object.assign(p.ink.style, { inset: 'auto', left: x0 * 100 + '%', top: y0 * 100 + '%', width: (x1 - x0) * 100 + '%', height: (y1 - y0) * 100 + '%' });
     p.layer.setView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pw, ph);
   }
@@ -1280,7 +1859,7 @@ function setZoomAt(s, cx, cy, base) {
     const ux = (cx - b.cx - base.x) / base.s, uy = (cy - b.cy - base.y) / base.s;
     // undo the quarter turn: on screen a local offset (px, py) shows as (py, -px)
     const px = -uy, py = ux;
-    Z.s = clamp(s, ZOOM_MIN, 5);
+    Z.s = clamp(s, zoomMin(), 5);
     Z.x = (cx - b.cx) - Z.s * py;
     Z.y = (cy - b.cy) + Z.s * px;
     applyZoom();
@@ -1288,7 +1867,7 @@ function setZoomAt(s, cx, cy, base) {
   }
   const n = spreadNatural();
   const wx = (cx - n.left - n.ox - base.x) / base.s, wy = (cy - n.top - n.oy - base.y) / base.s;
-  Z.s = clamp(s, ZOOM_MIN, 5);
+  Z.s = clamp(s, zoomMin(), 5);
   Z.x = cx - n.left - n.ox - wx * Z.s; Z.y = cy - n.top - n.oy - wy * Z.s;
   applyZoom();
 }
@@ -1302,11 +1881,11 @@ function zoomTo(s) {
 }
 function syncZoomPop() {
   $('#zoomVal').textContent = Math.round(Z.s * 100) + '%';
-  for (const b of $$('#zoomPresets button')) b.classList.toggle('on', Math.abs(+b.dataset.z - Z.s) < 0.03);
+  for (const b of $$('#zoomPresets button')) { b.classList.toggle('on', Math.abs(+b.dataset.z - Z.s) < 0.03); b.hidden = +b.dataset.z < zoomMin(); }
 }
 $('#zoomBtn').addEventListener('click', () => { const p = $('#zoomPop'); p.hidden = !p.hidden; if (!p.hidden) syncZoomPop(); });
 $('#zoomIn').addEventListener('click', () => zoomTo(Math.min(5, Z.s * 1.25)));
-$('#zoomOut').addEventListener('click', () => zoomTo(Math.max(ZOOM_MIN, Z.s / 1.25)));
+$('#zoomOut').addEventListener('click', () => zoomTo(Math.max(zoomMin(), Z.s / 1.25)));
 for (const b of $$('#zoomPresets button')) b.addEventListener('click', () => zoomTo(+b.dataset.z));
 
 // ---------- live drawing layer ----------
@@ -1386,7 +1965,7 @@ const POP_OPENERS = {
   '#eraserPop': '.ink-tool[data-tool="eraser"]', '#tapePop': '.ink-tool[data-tool="tape"]',
   '#stampPop': '.ink-tool[data-tool="stamp"]', '#erasePop': '.ink-tool[data-tool="print"]',
   '#insertPop': '#inkInsert, #nbPhotoBtn', '#picPop': '.sel-bar', '#shapePop': '.sel-bar',
-  '#addPagePop': '#nbAddBtn', '#textPop': '#tbBar', '#zoomPop': '#zoomBtn',
+  '#addPagePop': '#nbAddBtn', '#textPop': '#tbBar', '#zoomPop': '#zoomBtn', '#layerPop': '#layerBtn',
 };
 document.addEventListener('pointerdown', (e) => {
   const t = e.target;
@@ -1398,7 +1977,7 @@ document.addEventListener('pointerdown', (e) => {
     p.hidden = true;
   }
 }, true);
-function closeInkPops() { $('#addPagePop').hidden = true; $('#shapePop').hidden = true; $('#eraserPop').hidden = true; $('#tapePop').hidden = true; $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; $('#insertPop').hidden = true; $('#picPop').hidden = true; }
+function closeInkPops() { $('#layerPop').hidden = true; $('#addPagePop').hidden = true; $('#shapePop').hidden = true; $('#eraserPop').hidden = true; $('#tapePop').hidden = true; $('#inkPop').hidden = true; $('#stampPop').hidden = true; $('#erasePop').hidden = true; $('#insertPop').hidden = true; $('#picPop').hidden = true; }
 function syncInkBar() {
   const nb = NBK();
   $('#inkbar').classList.toggle('nb', nb);
@@ -1552,6 +2131,7 @@ $$('.ink-tool[data-tool]').forEach((b) => b.addEventListener('click', () => {
   if ((t === 'pen' || t === 'hl') && wasSame && !popWasOpen) { INK.tool = t; syncInkBar(); $('#inkPop').hidden = false; fillInkPop(); return; }
   if (t === 'stamp') { $('#stampPop').hidden = wasSame && !$('#stampPop').hidden; $$('#stampGrid button').forEach((x) => x.classList.toggle('on', x.dataset.k === INK.stamp)); loadMusicFont(); }
   if (t === 'print') { $('#erasePop').hidden = wasSame; syncErasePop(); }   // stays open until you pick another tool, so the size bar can be used
+  if (t === 'note') { if (INK.tool !== 'note') INK.beforeNote = INK.tool; INK.tool = t; syncInkBar(); inkHint('Tap the page where the note goes. Closed, it is a small tab that hides nothing; tap it to open it.', 3400); return; }
   if (t === 'select') inkHint(NBK() ? 'Tap a photo, text or line to select it, or draw a loop around several.' : 'Draw a loop around markings to select them.');
   if (t === 'text') inkHint('Tap where the words go, then type or write in the box with the Pencil. Tap a word to change it.', 3800);
   if (t === 'tbox') inkHint('Tap to place a text box, then type or write in it with the Pencil. Tap a box to change it.', 3800);
@@ -1574,15 +2154,124 @@ $('#hideInkBtn').addEventListener('click', () => {
   if (on && V.inking) setInking(false);
 });
 $('#inkDone').addEventListener('click', () => setInking(false));
+initNotes({
+  hidden: isHiddenItem,
+  hint: (t) => inkHint(t, 2200),
+  change(entry, fn, undo) { const L = entry.layer, before = L.items.slice(), after = fn(before.slice()); L.setItems(after, true); if (undo) pushUndo(L.key, before, after.slice()); },
+  undoStep(entry, before) { const L = entry.layer; if (JSON.stringify(before) !== JSON.stringify(L.items)) pushUndo(L.key, before, L.items.slice()); },
+});
+
+// ---------- layers: notes kept apart from your own markings ----------
+// A score can have named layers (notes from a lesson, from listening to someone play). New
+// markings go in the layer chosen here; a hidden layer is not drawn and cannot be touched.
+const LY = { active: '' };
+const scoreLayers = () => (V.score && V.score.layers) || [];
+const lyHidden = (id) => (S.hidLy || []).includes(id);
+function setLyHidden(id, hide) {
+  const list = new Set(S.hidLy || []); if (hide) list.add(id); else list.delete(id);
+  S.hidLy = [...list]; saveSettings(); setHiddenLayers(S.hidLy);
+  markEdited(); phoneAnswers.clear();   // (the iPhone's copy shows what is shown here)
+  clearSelection();
+  for (const p of V.pages) if (p.layer && p.layer.ready) p.layer.redraw();
+  PG.thumbs.forEach((t) => { t.stale = true; });
+}
+function useLayer(id) {
+  if (id && lyHidden(id)) setLyHidden(id, false);    // writing in a layer shows it
+  LY.active = id || ''; setActiveLayer(LY.active); syncLayerUi();
+}
+function syncLayerUi() {
+  const L = scoreLayers().find((x) => x.id === LY.active);
+  const chip = $('#lyChip'); chip.hidden = !L; chip.textContent = L ? L.name : '';
+  $('#layerBtn').classList.toggle('on', !!L);
+  if ($('#layerPop').hidden) return;
+  const list = $('#lyList'); list.textContent = '';
+  const row = (id, name) => {
+    const r = el('div', 'ly-row' + (LY.active === id ? ' on' : '') + (id && lyHidden(id) ? ' off' : ''));
+    const eye = el('button', 'ly-eye'); eye.setAttribute('aria-label', (id && lyHidden(id) ? 'Show ' : 'Hide ') + name);
+    eye.innerHTML = '<svg><use href="#i-eye"/></svg>';
+    if (!id) eye.disabled = true;
+    eye.addEventListener('click', () => { const h = !lyHidden(id); setLyHidden(id, h); if (h && LY.active === id) LY.active = ''; setActiveLayer(LY.active); syncLayerUi(); inkHint(h ? `${name} is hidden.` : `${name} is shown.`, 1400); });
+    const nm = el('button', 'ly-name'); nm.append(el('span', '', name)); if (LY.active === id) nm.append(el('em', '', 'writing here'));
+    nm.addEventListener('click', () => { useLayer(id); inkHint(id ? `Writing in ${name}.` : 'Writing your own markings.', 1400); });
+    r.append(eye, nm);
+    if (id) {
+      const del = el('button', 'ly-del'); del.setAttribute('aria-label', 'Delete ' + name); del.innerHTML = '<svg><use href="#i-trash"/></svg>';
+      del.addEventListener('click', () => deleteLayer(id, name));
+      r.append(del);
+    }
+    list.append(r);
+  };
+  row('', 'My markings');
+  for (const x of scoreLayers()) row(x.id, x.name);
+  $('#lyWhere').textContent = V.score ? V.score.title : '';
+}
+async function deleteLayer(id, name) {
+  if (!(await ask(`Delete the layer “${name}”?`, { ok: 'Delete', danger: true, sub: 'Everything written in it, on every page, goes too.' }))) return;
+  const sc = V.score; if (!sc) return;
+  sc.layers = scoreLayers().filter((x) => x.id !== id); await db.put('scores', sc);
+  const keys = (await db.keys('ink')).filter((k) => String(k).startsWith(sc.id + ':'));
+  for (const k of keys) {
+    const L = layerFor(k);
+    if (L) { if (L.items.some((x) => x.ly === id)) L.setItems(L.items.filter((x) => x.ly !== id), true); continue; }
+    const items = await loadItems(k).catch(() => []);
+    if (items.some((x) => x.ly === id)) await saveItems(k, items.filter((x) => x.ly !== id));
+  }
+  V.undo = []; V.redo = []; syncInkBar(); markEdited(); phoneAnswers.clear();
+  if (LY.active === id) LY.active = '';
+  setActiveLayer(LY.active); setLyHidden(id, false); syncLayerUi();
+}
+$('#layerBtn').addEventListener('click', () => {
+  const p = $('#layerPop'), open = p.hidden; closeInkPops(); p.hidden = !open;
+  if (open) { syncLayerUi(); $('#lyName').value = ''; }
+});
+$('#lyNew').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#lyName').value.trim().slice(0, 40); if (!name || !V.score) { $('#lyName').focus(); return; }
+  const sc = V.score;
+  const id = 'ly' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  sc.layers = [...scoreLayers(), { id, name }]; await db.put('scores', sc);
+  $('#lyName').value = ''; $('#lyName').blur();
+  useLayer(id); inkHint(`Writing in ${name}. Hide it with the eye in Layers when you are done.`, 2600);
+});
+
 
 // ---------- undo (by page key, so it survives zooming, colour changes and page turns) ----------
 function layerFor(key) { const p = V.pages.find((x) => x.layer && x.layer.key === key); return p && p.layer; }
-function applyItems(key, items) { const L = layerFor(key); if (L) L.setItems(items.slice()); else saveItems(key, items); }
-function pushUndo(key, before, after) { const pgNo = +String(key).split(':').pop(); if (!isNaN(pgNo)) PG.edited.add(pgNo); V.undo.push({ key, before, after }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
+// (passages are not part of undo: a passage marked or deleted since stays as it is now)
+function applyItems(key, items) {
+  const keep = (cur) => [...items.filter((x) => x.t !== 'passage'), ...cur.filter((x) => x.t === 'passage')];
+  const L = layerFor(key);
+  if (L) L.setItems(keep(L.items), true); else loadItems(key).then((cur) => saveItems(key, keep(cur)));
+}
+// undo or redo of a page not on show: that page is shown first, so the change is seen
+function showUndoPage(u) {
+  const keys = (u.group || [u]).map((x) => x.key);
+  if (keys.some((k) => layerFor(k))) return false;
+  const o = parseInt(String(keys[0]).split(':').pop(), 10); const i = isNaN(o) ? -1 : mappedOf(o);
+  // (the page is on show already, its markings under another name, joined or cut since: undone here)
+  if (i < 0 || i === V.page || (V.spread === 2 && i === V.page + 1)) return false;
+  goTo(i); return true;
+}
+// (when the markings last changed: the iPhone's copy of the score knows it is out of date)
+let editedT = 0, editedSc = null;
+function markEdited() { if (!V.score) return; V.score.edited = Date.now(); editedSc = V.score; clearTimeout(editedT); editedT = setTimeout(flushEdited, 2500); try { phoneAnswers.clear(); } catch {} }
+// (the new time written onto the score as it is now kept: never bringing back a score deleted, or a
+// folder it has been moved out of, meanwhile)
+async function flushEdited() {
+  clearTimeout(editedT); editedT = 0;
+  const sc = editedSc; editedSc = null; if (!sc) return;
+  // (the score open: it is written as it is, being the newest of all)
+  if (sc === V.score) { if (await db.get('scores', sc.id).catch(() => null)) await db.put('scores', V.score === sc ? sc : V.score || sc).catch(() => {}); return; }
+  const cur = await db.get('scores', sc.id).catch(() => null); if (!cur) return;
+  if ((cur.edited || 0) >= sc.edited) return;
+  cur.edited = sc.edited; await db.put('scores', cur).catch(() => {});
+}
+function dropEdited(id) { if (editedSc && editedSc.id === id) { clearTimeout(editedT); editedT = 0; editedSc = null; } }
+function pushUndo(key, before, after) { markEdited(); const pgNo = parseInt(String(key).split(':').pop(), 10); if (!isNaN(pgNo)) PG.edited.add(pgNo); V.undo.push({ key, before, after }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
 // a change to two pages at once (something moved from one page to the other) undoes in one step
-function pushUndoGroup(list) { for (const x of list) { const pgNo = +String(x.key).split(':').pop(); if (!isNaN(pgNo)) PG.edited.add(pgNo); } V.undo.push({ group: list }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
-function undo() { clearSelection(); const u = V.undo.pop(); if (!u) return; for (const x of u.group || [u]) applyItems(x.key, x.before); V.redo.push(u); syncInkBar(); }
-function redo() { clearSelection(); const u = V.redo.pop(); if (!u) return; for (const x of u.group || [u]) applyItems(x.key, x.after); V.undo.push(u); syncInkBar(); }
+function pushUndoGroup(list) { markEdited(); for (const x of list) { const pgNo = parseInt(String(x.key).split(':').pop(), 10); if (!isNaN(pgNo)) PG.edited.add(pgNo); } V.undo.push({ group: list }); if (V.undo.length > 200) V.undo.shift(); V.redo = []; syncInkBar(); }
+function undo() { clearSelection(); const u = V.undo[V.undo.length - 1]; if (!u) return; if (showUndoPage(u)) { inkHint('This is the page that changes. Undo again to undo it.', 2200); return; } V.undo.pop(); for (const x of u.group || [u]) applyItems(x.key, x.before); V.redo.push(u); syncInkBar(); }
+function redo() { clearSelection(); const u = V.redo[V.redo.length - 1]; if (!u) return; if (showUndoPage(u)) { inkHint('This is the page that changes. Redo again to redo it.', 2200); return; } V.redo.pop(); for (const x of u.group || [u]) applyItems(x.key, x.after); V.undo.push(u); syncInkBar(); }
 $('#inkUndo').addEventListener('click', undo);
 $('#inkRedo').addEventListener('click', redo);
 
@@ -1593,17 +2282,35 @@ function clearSelection() {
   if (Sel.el) Sel.el.remove();
   if (Sel.bar) Sel.bar.remove();
   if (Sel.entry) Sel.entry.layer.redraw();
-  Sel.entry = null; Sel.idx = []; Sel.box = null; Sel.el = null; Sel.bar = null;
+  Sel.entry = null; Sel.idx = []; Sel.box = null; Sel.el = null; Sel.bar = null; Sel.fr = null; Sel.dragging = false;
 }
 function selectionBox(entry, idx) {
   let b = null;
   for (const i of idx) { const r = itemBounds(entry.layer.items[i]); b = b ? { x0: Math.min(b.x0, r.x0), y0: Math.min(b.y0, r.y0), x1: Math.max(b.x1, r.x1), y1: Math.max(b.y1, r.y1) } : r; }
   return b;
 }
+// The frame of one photo, shape or text box: its own (unturned) box, its centre and its turn, so
+// the selection turns with it and the handles stay on its corners. Page fractions.
+function frameOf(s) {
+  if (!s) return null;
+  const A = Sel.entry ? (Sel.entry.ih / Sel.entry.iw) || 1.414 : 1.414;
+  if (s.t === 'img') {
+    const m = Math.min(s.w, s.h * A), pad = s.fr === 'white' || s.fr === 'polaroid' ? m * 0.045 : 0, bot = s.fr === 'polaroid' ? m * 0.2 : pad;
+    const dy = (bot - pad) / 2, c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0);
+    return { cx: s.x - sn * dy, cy: s.y + (c * dy) / A, w: s.w + pad * 2, h: s.h + (pad + bot) / A, rot: s.rot || 0 };
+  }
+  if (s.t === 'shape') return { cx: s.x, cy: s.y, w: s.w, h: Math.max(s.h, 0.004), rot: s.rot || 0 };
+  if (s.t === 'tb') { const h = s.h || 0.04; return { cx: s.x + s.w / 2, cy: s.y + h / 2, w: s.w, h, rot: s.rot || 0 }; }
+  return null;
+}
 function placeSelection() {
   if (!Sel.el || !Sel.box) return;
-  const b = Sel.box;
-  Object.assign(Sel.el.style, { left: b.x0 * 100 + '%', top: b.y0 * 100 + '%', width: (b.x1 - b.x0) * 100 + '%', height: (b.y1 - b.y0) * 100 + '%' });
+  // the frame follows the thing as it is now (after a change of size or style), except mid-drag
+  if (Sel.fr && !Sel.dragging && Sel.entry && Sel.idx.length === 1) Sel.fr = frameOf(Sel.entry.layer.items[Sel.idx[0]]) || Sel.fr;
+  const b = Sel.box, f = Sel.fr;
+  if (f) {
+    Object.assign(Sel.el.style, { left: (f.cx - f.w / 2) * 100 + '%', top: (f.cy - f.h / 2) * 100 + '%', width: f.w * 100 + '%', height: f.h * 100 + '%', transform: f.rot ? `rotate(${f.rot}rad)` : '' });
+  } else Object.assign(Sel.el.style, { left: b.x0 * 100 + '%', top: b.y0 * 100 + '%', width: (b.x1 - b.x0) * 100 + '%', height: (b.y1 - b.y0) * 100 + '%', transform: '' });
   Sel.el.style.setProperty('--inv', 1 / Z.s);
   // the bar floats above the page (never cut off by the page's edge), clear of the tools at the
   // top and of the screen's edges: above the selection, else below it, else inside its top
@@ -1628,6 +2335,7 @@ function makeSelection(entry, idx) {
   if (!idx.length) return;
   Sel.entry = entry; Sel.idx = idx; Sel.box = selectionBox(entry, idx);
   const one = idx.length === 1 ? entry.layer.items[idx[0]] : null;
+  Sel.fr = one ? frameOf(one) : null;
   const pic = one && one.t === 'img' ? one : null, tb = one && one.t === 'tb' ? one : null, shp = one && one.t === 'shape' ? one : null;
   const locked = idx.some((i) => entry.layer.items[i] && entry.layer.items[i].lock);
   const box = el('div', 'sel-box');
@@ -1679,7 +2387,7 @@ function makeSelection(entry, idx) {
   if (!locked) {
     for (const c of ['nw', 'ne', 'sw', 'se']) { const h = el('div', 'sel-handle ' + c); h.dataset.c = c; box.append(h); }
     if (tb || (shp && shp.k !== 'line')) for (const c of ['e', 'w']) { const h = el('div', 'sel-side ' + c); h.dataset.c = c; box.append(h); }
-    if (pic || shp || tb) { const r = el('div', 'sel-rot'); r.dataset.c = 'rot'; box.append(r); }
+    if (pic || shp || tb) { const r = el('div', 'sel-rot'); r.dataset.c = 'rot'; box.append(r); const ang = el('div', 'sel-angle num'); ang.hidden = true; box.append(ang); }
   }
   bar.classList.add('float');
   entry.inner.append(box);
@@ -1689,17 +2397,27 @@ function makeSelection(entry, idx) {
   let drag = null;
   const pagePx = (e, r) => { const f = fracOf(e.clientX, e.clientY, r), PS = pageSize(r); return [f[0] * PS[0], f[1] * PS[1]]; };
   box.addEventListener('pointerdown', (e) => {
+    // writing with the Pencil over something chosen writes (it never moves what is chosen);
+    // the Pencil moves things only with the lasso tool, or by their handles
+    if (e.pointerType === 'pen' && INK.tool !== 'select' && !(e.target.dataset && e.target.dataset.c)) { clearSelection(); return; }
     e.preventDefault(); e.stopPropagation();
     if (locked) return;
     box.setPointerCapture(e.pointerId);
     const r = entry.inner.getBoundingClientRect(), PS = pageSize(r);
     const c = e.target.dataset && e.target.dataset.c;
-    const b0 = { ...Sel.box };
-    const corner = (k) => [(k.includes('w') ? b0.x0 : b0.x1) * PS[0], (k.includes('n') ? b0.y0 : b0.y1) * PS[1]];
+    const b0 = { ...Sel.box }, f0 = Sel.fr ? { ...Sel.fr } : null;
+    const corner = (k) => {
+      if (!f0) return [(k.includes('w') ? b0.x0 : b0.x1) * PS[0], (k.includes('n') ? b0.y0 : b0.y1) * PS[1]];
+      // a corner of the turned frame, in page pixels
+      const lx = (k.includes('w') ? -0.5 : 0.5) * f0.w * PS[0], ly = (k.includes('n') ? -0.5 : 0.5) * f0.h * PS[1], c = Math.cos(f0.rot), sn = Math.sin(f0.rot);
+      return [f0.cx * PS[0] + lx * c - ly * sn, f0.cy * PS[1] + lx * sn + ly * c];
+    };
     const opp = { nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' };
     drag = { mode: c ? (c === 'rot' ? 'rot' : c === 'e' || c === 'w' ? 'width' : Sel.crop ? 'crop' : 'scale') : 'move', c, r, PS, b0, p0: pagePx(e, r), items: Sel.idx.map((i) => entry.layer.items[i]) };
     if (c && c !== 'rot') { drag.C = corner(c); drag.A = corner(opp[c]); }
-    if (c === 'rot') { drag.cx = ((b0.x0 + b0.x1) / 2) * PS[0]; drag.cy = ((b0.y0 + b0.y1) / 2) * PS[1]; drag.a0 = Math.atan2(drag.p0[1] - drag.cy, drag.p0[0] - drag.cx); }
+    drag.f0 = f0;
+    // turning: about the middle of the thing, following the finger round
+    if (c === 'rot') { drag.rx = (f0 ? f0.cx : (b0.x0 + b0.x1) / 2) * PS[0]; drag.ry = (f0 ? f0.cy : (b0.y0 + b0.y1) / 2) * PS[1]; drag.a0 = Math.atan2(drag.p0[1] - drag.ry, drag.p0[0] - drag.rx); drag.rot0 = (drag.items[0].rot || 0); }
   });
   const shaped = (d, P) => {
     const PS = d.PS, dx = (P[0] - d.p0[0]) / PS[0], dy = (P[1] - d.p0[1]) / PS[1];
@@ -1720,22 +2438,32 @@ function makeSelection(entry, idx) {
       return d.items.map((s) => transformItem(s, 0, 0, k, d.A[0] / PS[0], d.A[1] / PS[1]));
     }
     if (d.mode === 'rot') {
-      let a = Math.atan2(P[1] - d.cy, P[0] - d.cx) - d.a0;
-      const s0 = d.items[0], tot = (s0.rot || 0) + a;
-      // a little pull towards straight
-      const q = Math.round(tot / (Math.PI / 2)) * (Math.PI / 2);
-      return [{ ...s0, rot: Math.abs(tot - q) < 0.06 ? q : tot }];
+      // the angle the finger has gone round the middle (unwrapped, so it never jumps a full turn)
+      let a = Math.atan2(P[1] - d.ry, P[0] - d.rx) - d.a0;
+      while (a - (d.lastA || 0) > Math.PI) a -= 2 * Math.PI;
+      while (a - (d.lastA || 0) < -Math.PI) a += 2 * Math.PI;
+      d.lastA = a;
+      const s0 = d.items[0], tot = d.rot0 + a;
+      // a pull towards straight (every 45°), like a design app
+      const q = Math.round(tot / (Math.PI / 4)) * (Math.PI / 4);
+      const rot = Math.abs(tot - q) < 0.05 ? q : tot;
+      d.deg = Math.round(((rot * 180 / Math.PI) % 360 + 360) % 360);
+      return [{ ...s0, rot: +rot.toFixed(4) }];
     }
     if (d.mode === 'crop') return [cropPicture(d.items[0], d.c, P[0] - d.p0[0], P[1] - d.p0[1], PS)];
+    // the side handles: along the thing's own width, even when it is turned
+    const rot0 = d.items[0] && d.items[0].rot ? d.items[0].rot : 0;
+    const along = ((P[0] - d.p0[0]) * Math.cos(rot0) + (P[1] - d.p0[1]) * Math.sin(rot0)) / PS[0];
     if (d.mode === 'width' && d.items[0].t === 'shape') {
-      const s0 = d.items[0], nw = clamp(s0.w + (d.c === 'e' ? dx : -dx) * 2, 0.02, 2);
+      const s0 = d.items[0], nw = clamp(s0.w + (d.c === 'e' ? along : -along) * 2, 0.02, 2);
       return [{ ...s0, w: nw }];
     }
     if (d.mode === 'width') {
-      // the sides change how wide the box is; the words flow to fit
+      // the sides change how wide the box is; the words flow to fit (the box keeps its middle when turned)
       const s0 = d.items[0];
-      if (d.c === 'e') return [measureTextBox({ ...s0, w: clamp(s0.w + dx, 0.06, 1.2) })];
-      const nw = clamp(s0.w - dx, 0.06, 1.2); return [measureTextBox({ ...s0, x: s0.x + (s0.w - nw), w: nw })];
+      if (rot0) { const nw = clamp(s0.w + (d.c === 'e' ? along : -along), 0.06, 1.2); const t = measureTextBox({ ...s0, w: nw }); return [{ ...t, x: s0.x + (s0.w - nw) / 2, y: s0.y + ((s0.h || 0.04) - t.h) / 2 }]; }
+      if (d.c === 'e') return [measureTextBox({ ...s0, w: clamp(s0.w + along, 0.06, 1.2) })];
+      const nw = clamp(s0.w - along, 0.06, 1.2); return [measureTextBox({ ...s0, x: s0.x + (s0.w - nw), w: nw })];
     }
     return d.items;
   };
@@ -1753,7 +2481,11 @@ function makeSelection(entry, idx) {
     for (const it of drag.out) { if (other) drawLiveItem(other, toOtherPage(entry, other, it), null, false); else drawLiveItem(entry, it, null, false); }
     if (Sel.el) Sel.el.style.visibility = other ? 'hidden' : '';
     let bb = null; for (const it of drag.out) { const q = itemBounds(it); bb = bb ? { x0: Math.min(bb.x0, q.x0), y0: Math.min(bb.y0, q.y0), x1: Math.max(bb.x1, q.x1), y1: Math.max(bb.y1, q.y1) } : q; }
-    Sel.box = bb; placeSelection();
+    Sel.box = bb; if (drag.f0 && drag.out.length === 1) Sel.fr = frameOf(drag.out[0]);
+    placeSelection();
+    // the angle while turning
+    const ang = Sel.el && Sel.el.querySelector('.sel-angle');
+    if (drag.mode === 'rot' && ang) { ang.hidden = false; ang.textContent = drag.deg + '°'; ang.style.transform = `translate(-50%, -50%) rotate(${-(Sel.fr ? Sel.fr.rot : 0)}rad) scale(var(--inv, 1))`; }
   };
   box.addEventListener('pointermove', (e) => {
     if (!drag) return;
@@ -1761,22 +2493,23 @@ function makeSelection(entry, idx) {
     const P = pagePx(e, drag.r);
     if (Math.hypot(P[0] - drag.p0[0], P[1] - drag.p0[1]) > 2) drag.moved = true;
     if (!drag.moved) return;
-    drag.P = P;
+    drag.P = P; Sel.dragging = true;
     if (!raf) raf = requestAnimationFrame(frame);
   });
   const end = () => {
     if (!drag) return;
     if (raf) { cancelAnimationFrame(raf); raf = 0; if (drag.P) { const d0 = drag; frame(); drag = d0; } }
-    const d = drag; drag = null; clearLive(); showGuides(entry, false, false);
+    const d = drag; drag = null; Sel.dragging = false; clearLive(); showGuides(entry, false, false);
+    const ang = Sel.el && Sel.el.querySelector('.sel-angle'); if (ang) ang.hidden = true;
     if (!d.moved || !d.out) {
-      Sel.box = d.b0; placeSelection(); entry.layer.redraw();
+      Sel.box = d.b0; if (d.f0) Sel.fr = d.f0; placeSelection(); entry.layer.redraw();
       // a tap on a chosen text box: write in it
       if (d.mode === 'move' && tb && NBK() && Sel.idx.length === 1) { const i = Sel.idx[0]; clearSelection(); startTextBox(entry, null, i); }
       return;
     }
     if (d.to && d.to.layer && d.to.layer.ready) {
       // onto the other page: taken off this one and put on that one, in the same place on screen
-      const to = d.to, moved = d.out.map((it) => toOtherPage(entry, to, it));
+      const to = d.to, moved = d.out.map((it) => ({ ...toOtherPage(entry, to, it), ly: it.ly || '' }));
       const b1 = entry.layer.items.slice(), a1 = b1.filter((_, i) => !Sel.idx.includes(i));
       const b2 = to.layer.items.slice(), a2 = [...b2, ...moved];
       entry.layer.setItems(a1); to.layer.setItems(a2);
@@ -1788,7 +2521,7 @@ function makeSelection(entry, idx) {
     const before = entry.layer.items.slice();
     const after = before.slice(); Sel.idx.forEach((i, k) => { after[i] = d.out[k]; });
     entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
-    Sel.box = selectionBox(entry, Sel.idx); placeSelection();
+    Sel.box = selectionBox(entry, Sel.idx); if (Sel.idx.length === 1) Sel.fr = frameOf(after[Sel.idx[0]]); placeSelection();
   };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
 }
@@ -2138,63 +2871,441 @@ function setBackground(ch) {
   entry.layer.setItems(after); pushUndo(entry.layer.key, before, after.slice());
   $$('#insPats button').forEach((b) => b.classList.toggle('on', bg && b.dataset.v === (bg.pat || '')));
 }
-// layouts: ready-made pages made of titles, boxes and photo places
+// layouts: ready-made pages made of titles, boxes and photo places, in families that go together.
+// Concerts and careers share one look (cream paper, deep ink, a little gold); practice pages a
+// lighter one. Names and details are placeholders to type over.
+const LC = { paper: '#fbf8f2', ink: '#1f2430', soft: '#6b6f7a', gold: '#8a6a3a', rule: '#ddd3c2', navy: '#1c2433', gold2: '#c9a96a', blue: '#2f4b7c', pale: '#eef2f8' };
+// a text box measured for the page it goes on (sideways pages are wider than tall)
+const tbP = (land) => (style, x, y, txt, extra = {}) => measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }, land ? 1414 : 1000, land ? 1000 : 1414);
+// one thing under another, each placed below the last: [style, text, extra, space after]
+function flowTb(T, x, y, w, parts) {
+  const items = [];
+  for (const p of parts) {
+    if (typeof p === 'number') { y += p; continue; }
+    const [st, txt, ex = {}, gap = 0.008] = p;
+    const it = T(st, ex.x ?? x, y, txt, { w, ...ex }); items.push(it); y += it.h + gap;
+  }
+  return { items, y };
+}
+const ornament = (x, y, w, col, land) => ({ t: 'shape', k: 'e:divline', x, y, w, h: w / (100 / 12) / (land ? 0.707 : 1.414), f: col, a: 1, rot: 0 });
+const rule = (x0, y, w, col, lw = 0.0015) => ({ t: 'shape', k: 'line', x: x0 + w / 2, y, w, h: 0.01, lc: col, lw, a: 1, rot: 0 });
+const vrule = (x, y0, len, col, land) => ({ t: 'shape', k: 'line', x, y: y0 + len / 2, w: len * (land ? 0.707 : 1.414), h: 0.01, lc: col, lw: 0.0012, a: 1, rot: Math.PI / 2 });
+const photo = (x, y, w, h, mask = '', extra = {}) => ({ t: 'img', id: null, x, y, w, h, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask, ...extra });
+const box = (x, y, w, h, f, extra = {}) => ({ t: 'shape', k: 'rect', x: x + w / 2, y: y + h / 2, w, h, f, a: 1, rot: 0, ...extra });
+const rbox = (x, y, w, h, f, extra = {}) => ({ t: 'shape', k: 'round', x: x + w / 2, y: y + h / 2, w, h, f, a: 1, rot: 0, ...extra });
+// the music of one concert, for the programme pages
+const PROG = [
+  { who: 'Johann Sebastian Bach', d: '1685–1750', what: 'Suite No. 3 in C major, BWV 1009', parts: 'Prélude · Allemande · Courante · Sarabande · Bourrées I & II · Gigue', min: '22′' },
+  { who: 'Robert Schumann', d: '1810–1856', what: 'Fantasiestücke, Op. 73', parts: 'Zart und mit Ausdruck · Lebhaft, leicht · Rasch und mit Feuer', min: '11′' },
+  'Interval',
+  { who: 'Gabriel Fauré', d: '1845–1924', what: 'Élégie, Op. 24', parts: 'Molto adagio', min: '7′' },
+  { who: 'Johannes Brahms', d: '1833–1897', what: 'Sonata No. 1 in E minor, Op. 38', parts: 'Allegro non troppo · Allegretto quasi Menuetto · Allegro', min: '26′' },
+];
+const NOTES = [
+  ['Bach · Suite No. 3', 'Written in Köthen around 1720, the six suites for solo cello are dances for a single voice that still manages to sound like many. The third is the brightest: an open, ringing C major, a Sarabande of great stillness and two Bourrées that everyone hums on the way home.'],
+  ['Schumann · Fantasiestücke', 'Three “fantasy pieces”, written in two days in 1849. Each grows out of the one before, from the dreamy first to the fiery last, and the two players share every idea as equals.'],
+  ['Fauré · Élégie', 'A lament that rises to a passionate climax and falls back into silence. Fauré planned it as the slow movement of a sonata; it became one of the best-loved pieces on its own.'],
+  ['Brahms · Sonata in E minor', 'Brahms keeps the cello low and dark for long stretches. The sonata ends with a fugue on a theme from Bach’s Art of Fugue: a nod to the composer who opened tonight’s concert.'],
+];
+const BIOS = [
+  ['Your Name', 'cello', 'Your Name studied at the conservatoire and plays as a soloist and chamber musician. Write here where you studied, with whom, the prizes and the places you have played.'],
+  ['Partner Name', 'piano', 'Partner Name is a pianist and chamber musician. A few lines about their studies, their concerts and what they love to play.'],
+];
+// the programme, set in a column: composer and dates, the work, its movements, the minutes
+function progCol(T, x, y, w, kf = 1, ky = 1) {
+  const out = [];
+  for (const p of PROG) {
+    if (typeof p === 'string') {
+      out.push(T('spaced', x, y + 0.006 * ky, p, { w, c: LC.gold, fs: 0.017 * kf, ls: 0.3 }));
+      y += 0.05 * ky; continue;
+    }
+    const a = T('heading', x, y, p.who, { w: w * 0.7, ff: 'baskerville', fs: 0.022 * kf, c: LC.ink });
+    const d = T('body', x + w * 0.7, y + 0.003 * ky, p.d, { w: w * 0.3, al: 'right', fs: 0.015 * kf, c: LC.soft });
+    const b = T('body', x, y + a.h + 0.004 * ky, p.what, { w: w * 0.82, i: 1, fs: 0.018 * kf, c: LC.ink });
+    const m = T('body', x + w * 0.82, b.y, p.min, { w: w * 0.18, al: 'right', fs: 0.017 * kf, c: LC.gold });
+    const c = T('body', x, b.y + b.h + 0.003 * ky, p.parts, { w: w * 0.92, fs: 0.0145 * kf, c: LC.soft, lh: 1.35 });
+    out.push(a, d, b, m, c); y = c.y + c.h + 0.026 * ky;
+  }
+  return { items: out, y };
+}
 const LAYOUTS = [
-  { k: 'plan', label: 'Practice plan', make: (c) => [
-    { t: 'shape', k: 'round', x: 0.5, y: 0.075, w: 0.9, h: 0.09, f: '#eef2fb', a: 1, rot: 0 },
-    tb('title', 0.08, 0.045, 'This week', { w: 0.84 }),
-    ...['Warm-up', 'Technique', 'Repertoire'].flatMap((h, i) => [
-      { t: 'shape', k: 'round', x: 0.5, y: 0.25 + i * 0.25, w: 0.9, h: 0.21, f: ['#fff3d6', '#e3f2e1', '#fde2e4'][i], a: 1, rot: 0 },
-      tb('heading', 0.09, 0.165 + i * 0.25, h, { w: 0.8, fs: 0.032 }),
-      tb('checklist', 0.09, 0.21 + i * 0.25, 'Scales, slowly\nLong notes\nWith the drone', { w: 0.8 }),
-    ]),
-  ] },
-  { k: 'lesson', label: 'Lesson notes', make: () => [
-    tb('title', 0.08, 0.05, 'Lesson', { w: 0.6 }),
-    tb('note', 0.62, 0.065, 'date', { w: 0.3, al: 'right' }),
-    { t: 'shape', k: 'line', x: 0.5, y: 0.13, w: 0.84, h: 0.01, lc: '#16181d', lw: 0.002, a: 1, rot: 0 },
-    tb('heading', 0.08, 0.16, 'To work on', { w: 0.8 }),
-    tb('bullets', 0.08, 0.21, 'Bow distribution in the first line\nIntonation of the shifts\nDynamics: more contrast', { w: 0.8 }),
-    tb('sticky', 0.55, 0.58, 'Teacher’s tip: listen to the long notes.', { w: 0.36, rot: 0.04 }),
-    { t: 'img', id: null, x: 0.28, y: 0.68, w: 0.4, h: 0.22, rot: -0.03, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
-  ] },
-  { k: 'collage', label: 'Photo collage', make: () => [
-    tb('fancy', 0.1, 0.05, 'Concert memories', { w: 0.8 }),
-    { t: 'img', id: null, x: 0.3, y: 0.32, w: 0.42, h: 0.28, rot: -0.05, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
-    { t: 'img', id: null, x: 0.7, y: 0.4, w: 0.42, h: 0.28, rot: 0.06, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
-    { t: 'img', id: null, x: 0.45, y: 0.72, w: 0.5, h: 0.3, rot: 0.02, cr: [0, 0, 1, 1], a: 1, fr: 'tape', rr: 0 },
-  ] },
-  { k: 'poster', label: 'Concert poster', make: () => [
-    { t: 'bg', c: '#0f2027', c2: '#2c5364', pat: '', a: 1 },
-    { t: 'img', id: null, x: 0.5, y: 0.36, w: 0.6, h: 0.4, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'arch' },
-    tb('poster', 0.08, 0.62, 'SPRING RECITAL', { w: 0.84, c: '#ffffff' }),
-    tb('elegant', 0.1, 0.72, 'Bach · Fauré · Schumann', { w: 0.8, c: '#f1e7d0' }),
-    { t: 'shape', k: 'banner', x: 0.5, y: 0.86, w: 0.6, h: 0.06, f: '#e2b65c', a: 1, rot: 0 },
-    tb('label', 0.25, 0.845, 'Saturday · 7 pm', { w: 0.5, bg: '', c: '#1d1d1f' }),
-  ] },
-  { k: 'bloom', label: 'Photo poster', make: () => [
-    { t: 'bg', c: '#f6f0ea', pat: '', a: 1 },
-    { t: 'img', id: null, x: 0.5, y: 0.4, w: 0.8, h: 0.52, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'bloom', word: 'ENCORE', wf: 'condensed' },
-    tb('elegant', 0.1, 0.71, 'Spring recital', { w: 0.8, c: '#2f4156', fs: 0.044 }),
-    { t: 'shape', k: 'e:divline', x: 0.5, y: 0.79, w: 0.4, h: 0.4 / (100 / 12) / 1.414, f: '#567c8d', a: 1, rot: 0 },
-    tb('body', 0.15, 0.82, 'Saturday · seven o’clock · the small hall', { w: 0.7, al: 'center', c: '#567c8d' }),
-  ] },
-  { k: 'elegant', label: 'Questions', make: () => [
-    { t: 'bg', c: '#f3ece6', pat: '', a: 1 },
-    tb('title', 0.08, 0.05, 'Q&A', { w: 0.84, fs: 0.16, c: '#5d0d18', ff: 'bodoni', b: 0 }),
-    tb('fancy', 0.08, 0.2, 'ask anything', { w: 0.84, al: 'left', c: '#5d0d18', fs: 0.05 }),
-    { t: 'shape', k: 'line', x: 0.5, y: 0.3, w: 0.84, h: 0.01, lc: '#5d0d18', lw: 0.0018, a: 1, rot: 0 },
-    tb('checklist', 0.08, 0.34, 'Why does the shift go flat?\nHow slow is slow enough?\nWhere should the bow change?\nWhat to play for the audition?', { w: 0.84, c: '#3e2a2c', ff: 'baskerville', fs: 0.028 }),
-    { t: 'shape', k: 'round', x: 0.5, y: 0.8, w: 0.84, h: 0.16, f: '#5d0d18', a: 1, rot: 0 },
-    tb('elegant', 0.12, 0.755, 'answers next lesson', { w: 0.76, c: '#f3ece6', fs: 0.036 }),
-  ] },
-  { k: 'glassq', label: 'Glass quote', make: () => [
-    { t: 'img', id: null, x: 0.5, y: 0.5, w: 1, h: 1, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0 },
-    { t: 'shape', k: 'glass', x: 0.5, y: 0.52, w: 0.78, h: 0.42, f: '#ffffff', a: 1, rot: 0 },
-    tb('note', 0.17, 0.39, 'today’s thought', { w: 0.66, ff: 'script', fs: 0.045, c: '#ffffff' }),
-    tb('heading', 0.17, 0.46, 'Play it slowly, then play it beautifully.', { w: 0.66, ff: 'display', fs: 0.05, c: '#ffffff', fx: 'lift' }),
-  ] },
-  { k: 'olive', label: 'Month goals', make: () => [
+  // ---- concerts
+  { k: 'programme', cat: 'concert', label: 'Programme', make: () => {
+    const T = tbP(false);
+    const head = flowTb(T, 0.1, 0.05, 0.8, [
+      ['spaced', 'Programme', { c: LC.gold, fs: 0.02 }, 0.012],
+      ['elegant', 'An Evening of Chamber Music', { c: LC.ink, fs: 0.048, i: 0 }, 0.012],
+      ['body', 'Saturday 14 June · 7.30 pm · Concert Hall', { al: 'center', c: LC.soft, fs: 0.019 }],
+    ]);
+    const body = progCol(T, 0.1, head.y + 0.06, 0.8, 1.22, 1.45);
+    const yb = Math.min(0.85, body.y + 0.005);
+    return [
+      { t: 'bg', c: LC.paper, pat: '', a: 1 },
+      ...head.items, ornament(0.5, head.y + 0.022, 0.32, LC.gold),
+      ...body.items,
+      rule(0.1, yb, 0.8, LC.rule),
+      T('heading', 0.1, yb + 0.025, BIOS[0][0], { w: 0.38, ff: 'baskerville', fs: 0.027, c: LC.ink, al: 'center' }),
+      T('body', 0.1, yb + 0.062, BIOS[0][1], { w: 0.38, i: 1, al: 'center', fs: 0.021, c: LC.soft }),
+      T('heading', 0.52, yb + 0.025, BIOS[1][0], { w: 0.38, ff: 'baskerville', fs: 0.027, c: LC.ink, al: 'center' }),
+      T('body', 0.52, yb + 0.062, BIOS[1][1], { w: 0.38, i: 1, al: 'center', fs: 0.021, c: LC.soft }),
+    ];
+  } },
+  { k: 'progland2', cat: 'concert', land: 1, label: 'Programme, 2 columns', make: () => {
+    const T = tbP(true), L = 0.06, R = 0.54, cw = 0.4;
+    const head = flowTb(T, L, 0.07, cw, [
+      ['spaced', 'Programme', { c: LC.gold, fs: 0.0125 }, 0.016],
+      ['elegant', 'An Evening of Chamber Music', { c: LC.ink, fs: 0.026, i: 0 }, 0.016],
+      ['body', 'Saturday 14 June · 7.30 pm · Concert Hall', { al: 'center', c: LC.soft, fs: 0.0125 }],
+    ]);
+    const prog = progCol(T, L, head.y + 0.07, cw, 0.66, 1.25);
+    const yb = Math.min(0.86, prog.y);
+    const notes = flowTb(T, R, 0.07, cw, [
+      ['spaced', 'About the music', { c: LC.gold, fs: 0.0125 }, 0.035],
+      ...NOTES.flatMap(([h, t]) => [['heading', h, { ff: 'baskerville', fs: 0.0155, c: LC.ink }, 0.01], ['body', t, { fs: 0.0122, c: '#2c303a', lh: 1.5 }, 0.035]]),
+    ]);
+    return [
+      { t: 'bg', c: LC.paper, pat: '', a: 1 },
+      vrule(0.5, 0.08, 0.84, LC.rule, true),
+      ...head.items, ornament(L + cw / 2, head.y + 0.03, 0.16, LC.gold, true), ...prog.items,
+      T('body', L, yb, BIOS[0][0] + ', ' + BIOS[0][1] + '   ·   ' + BIOS[1][0] + ', ' + BIOS[1][1], { w: cw, al: 'center', i: 1, fs: 0.0135, c: LC.ink }),
+      ...notes.items,
+      ornament(R + cw / 2, 0.83, 0.12, LC.gold, true),
+      T('body', R, 0.87, 'Please switch off your phones. Thank you for coming.', { w: cw, al: 'center', i: 1, fs: 0.0115, c: LC.soft }),
+    ];
+  } },
+  { k: 'progland3', cat: 'concert', land: 1, label: 'Programme, 3 columns', make: () => {
+    const T = tbP(true), cw = 0.27, X = [0.045, 0.365, 0.685];
+    const prog = flowTb(T, X[0], 0.07, cw, [
+      ['spaced', 'Programme', { c: LC.gold, fs: 0.011 }, 0.02],
+      ['elegant', 'An Evening of Chamber Music', { c: LC.ink, fs: 0.0195, i: 0 }, 0.014],
+      ['body', 'Saturday 14 June · 7.30 pm\nConcert Hall', { al: 'center', c: LC.soft, fs: 0.0112, lh: 1.45 }],
+    ]);
+    const list = progCol(T, X[0], prog.y + 0.075, cw, 0.62, 1.5);
+    const notes = flowTb(T, X[1], 0.07, cw, [
+      ['spaced', 'About the music', { c: LC.gold, fs: 0.011 }, 0.045],
+      ...NOTES.flatMap(([h, t]) => [['heading', h, { ff: 'baskerville', fs: 0.015, c: LC.ink }, 0.012], ['body', t, { fs: 0.0119, c: '#2c303a', lh: 1.55 }, 0.05]]),
+    ]);
+    const bios = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, T('spaced', X[2], 0.07, 'The performers', { w: cw, c: LC.gold, fs: 0.011 })];
+    let y = 0.14;
+    for (const [n, ins, txt] of BIOS) {
+      bios.push(photo(X[2] + 0.045, y + 0.07, 0.08, 0.08 * 1.414, 'circle'));
+      bios.push(T('heading', X[2] + 0.1, y + 0.035, n, { w: cw - 0.1, ff: 'baskerville', fs: 0.016, c: LC.ink }));
+      bios.push(T('body', X[2] + 0.1, y + 0.078, ins, { w: cw - 0.1, i: 1, fs: 0.013, c: LC.soft }));
+      const b = T('body', X[2], y + 0.16, txt, { w: cw, fs: 0.0119, c: '#2c303a', lh: 1.55 }); bios.push(b);
+      y = b.y + b.h + 0.07;
+    }
+    bios.push(ornament(X[2] + cw / 2, 0.83, 0.1, LC.gold, true), T('spaced', X[2], 0.86, 'Thank you for coming', { w: cw, c: LC.gold, fs: 0.0105 }), T('body', X[2], 0.895, 'Please switch off your phones.', { w: cw, al: 'center', i: 1, fs: 0.0105, c: LC.soft }));
+    return [...bios, vrule(0.34, 0.08, 0.84, LC.rule, true), vrule(0.66, 0.08, 0.84, LC.rule, true), ...prog.items, ornament(X[0] + cw / 2, prog.y + 0.025, 0.12, LC.gold, true), ...list.items, ...notes.items];
+  } },
+  { k: 'notes', cat: 'concert', label: 'Programme notes', make: () => {
+    const T = tbP(false);
+    const f = flowTb(T, 0.1, 0.05, 0.8, [
+      ['spaced', 'About the music', { c: LC.gold, fs: 0.02 }, 0.012],
+      ['elegant', 'Programme notes', { c: LC.ink, fs: 0.048, i: 0 }, 0.06],
+      ...NOTES.flatMap(([h, t]) => [['heading', h, { ff: 'baskerville', fs: 0.029, c: LC.ink }, 0.012], ['body', t, { fs: 0.0215, c: '#2c303a', lh: 1.55 }, 0.05]]),
+    ]);
+    return [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, ornament(0.5, 0.155, 0.32, LC.gold), ...f.items, T('note', 0.5, Math.min(0.92, f.y + 0.01), 'notes by the performers', { w: 0.4, al: 'right', fs: 0.024, c: LC.gold })];
+  } },
+  { k: 'performers', cat: 'concert', label: 'The performers', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, T('spaced', 0.1, 0.05, 'Tonight', { w: 0.8, c: LC.gold, fs: 0.02 }), T('elegant', 0.1, 0.085, 'The performers', { w: 0.8, c: LC.ink, fs: 0.048, i: 0 }), ornament(0.5, 0.165, 0.32, LC.gold)];
+    BIOS.forEach(([n, ins, txt], i) => {
+      const y = 0.22 + i * 0.37, left = i % 2 === 0;
+      out.push(photo(left ? 0.27 : 0.73, y + 0.13, 0.32, 0.26, 'arch'));
+      const tx = left ? 0.47 : 0.1;
+      const f = flowTb(T, tx, y + 0.02, 0.43, [['heading', n, { ff: 'baskerville', fs: 0.032, c: LC.ink }, 0.006], ['body', ins, { i: 1, fs: 0.021, c: LC.gold }, 0.02], ['body', txt, { fs: 0.0185, c: '#2c303a', lh: 1.5 }]]);
+      out.push(...f.items);
+    });
+    return out;
+  } },
+  { k: 'running', cat: 'concert', label: 'Student concert', make: () => {
+    const T = tbP(false), rows = [['Name Surname', 'Minuet in G', 'J. S. Bach'], ['Name Surname', 'Gavotte', 'F.-J. Gossec'], ['Name Surname', 'The Swan', 'C. Saint-Saëns'], ['Name Surname', 'Allegro', 'S. Suzuki'], ['Name Surname', 'Sicilienne', 'M. T. von Paradis'], ['Name Surname', 'Csárdás', 'V. Monti'], ['Everyone', 'Ode to Joy', 'L. van Beethoven']];
+    const out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }, T('spaced', 0.1, 0.05, 'Studio of Teacher Name', { w: 0.8, c: LC.gold, fs: 0.02 }), T('magazine', 0.06, 0.085, 'Spring concert', { w: 0.88, c: LC.ink, fs: 0.068 }), T('body', 0.1, 0.18, 'Sunday 22 March · 4 pm · the music school hall', { w: 0.8, al: 'center', c: LC.soft, fs: 0.019 }), ornament(0.5, 0.225, 0.3, LC.gold)];
+    rows.forEach(([who, what, by], i) => {
+      const y = 0.27 + i * 0.088;
+      out.push({ t: 'shape', k: 'circle', x: 0.135, y: y + 0.02, w: 0.06, h: 0.06 / 1.414, f: '', lc: LC.gold, lw: 0.0015, a: 1, rot: 0 });
+      out.push(T('heading', 0.105, y + 0.0055, String(i + 1), { w: 0.06, al: 'center', ff: 'baskerville', fs: 0.022, c: LC.gold }));
+      out.push(T('heading', 0.2, y - 0.004, what, { w: 0.4, ff: 'baskerville', fs: 0.025, c: LC.ink }));
+      out.push(T('body', 0.2, y + 0.03, by, { w: 0.4, i: 1, fs: 0.018, c: LC.soft }));
+      out.push(T('body', 0.62, y + 0.006, who, { w: 0.28, al: 'right', fs: 0.019, c: LC.ink }));
+      if (i < rows.length - 1) out.push(rule(0.2, y + 0.07, 0.7, LC.rule, 0.001));
+    });
+    out.push(T('note', 0.1, 0.9, 'thank you for coming!', { w: 0.8, al: 'center', fs: 0.03, c: LC.gold }));
+    return out;
+  } },
+  { k: 'invite', cat: 'concert', label: 'Invitation', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#f4efe8', c2: '#e9dfd2', pat: '', a: 1 },
+      box(0.08, 0.07, 0.84, 0.86, '#fffdf9'), box(0.1, 0.085, 0.8, 0.83, '', { lc: '#c9ad7a', lw: 0.0015 }),
+      T('fancy', 0.12, 0.13, 'You are invited', { w: 0.76, c: LC.gold, fs: 0.06 }),
+      T('spaced', 0.12, 0.26, 'to a recital', { w: 0.76, c: LC.soft, fs: 0.022 }),
+      T('magazine', 0.1, 0.31, 'Your Name', { w: 0.8, c: LC.ink, fs: 0.08 }),
+      T('body', 0.12, 0.43, 'cello', { w: 0.76, al: 'center', i: 1, fs: 0.026, c: LC.soft }),
+      ornament(0.5, 0.5, 0.3, LC.gold),
+      T('heading', 0.12, 0.55, 'Saturday 14 June', { w: 0.76, al: 'center', ff: 'baskerville', fs: 0.034, c: LC.ink }),
+      T('body', 0.12, 0.61, '7.30 pm · Concert Hall\nBach · Schumann · Fauré · Brahms', { w: 0.76, al: 'center', fs: 0.022, c: '#2c303a', lh: 1.5 }),
+      T('spaced', 0.12, 0.78, 'Reception afterwards', { w: 0.76, c: LC.gold, fs: 0.018 }),
+    ];
+  } },
+  { k: 'poster', cat: 'concert', label: 'Concert poster', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: LC.navy, c2: '#2a3550', pat: '', a: 1 },
+      T('spaced', 0.1, 0.05, 'In concert', { w: 0.8, c: LC.gold2, fs: 0.02 }),
+      photo(0.5, 0.33, 0.58, 0.4, 'arch'),
+      T('magazine', 0.06, 0.56, 'Spring Recital', { w: 0.88, c: '#f7f1e6', fs: 0.08 }),
+      ornament(0.5, 0.67, 0.3, LC.gold2),
+      T('body', 0.1, 0.7, 'Bach · Schumann · Fauré · Brahms', { w: 0.8, al: 'center', i: 1, fs: 0.026, c: '#e9dfca' }),
+      T('spaced', 0.1, 0.8, 'Saturday 14 June · 7.30 pm', { w: 0.8, c: LC.gold2, fs: 0.02 }),
+      T('spaced', 0.1, 0.84, 'Concert Hall · free entry', { w: 0.8, c: '#cfc6b4', fs: 0.017 }),
+    ];
+  } },
+  { k: 'recital', cat: 'concert', label: 'Word poster', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#111317', pat: '', a: 1 },
+      T('spaced', 0.1, 0.06, 'The concert series presents', { w: 0.8, c: LC.gold2, fs: 0.018 }),
+      photo(0.5, 0.34, 0.9, 0.36, 'word', { word: 'RECITAL', wf: 'condensed' }),
+      rule(0.1, 0.58, 0.8, LC.gold2, 0.0016),
+      T('magazine', 0.08, 0.61, 'An evening of chamber music', { w: 0.84, c: '#f8f3ea', fs: 0.055 }),
+      T('spaced', 0.1, 0.77, 'Saturday · 7.30 pm · Concert Hall', { w: 0.8, c: '#e8d9bf', fs: 0.02 }),
+      T('signature', 0.1, 0.83, 'free entry', { w: 0.8, c: LC.gold2, fs: 0.06 }),
+    ];
+  } },
+  { k: 'archposter', cat: 'concert', label: 'Arch poster', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#efe7da', pat: '', a: 1 },
+      photo(0.5, 0.38, 0.66, 0.5, 'arch'),
+      T('magazine', 0.06, 0.66, 'Spring', { w: 0.88, c: LC.ink, fs: 0.11 }),
+      T('spaced', 0.1, 0.8, 'student concert', { w: 0.8, c: LC.gold, fs: 0.026 }),
+      ornament(0.5, 0.86, 0.34, LC.gold),
+      T('body', 0.1, 0.89, 'Sunday · 4 pm · the music school hall', { w: 0.8, al: 'center', i: 1, fs: 0.019, c: LC.soft }),
+    ];
+  } },
+  { k: 'tickets', cat: 'concert', label: 'Tickets', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }];
+    for (let i = 0; i < 4; i++) {
+      const y = 0.04 + i * 0.235;
+      out.push(rbox(0.06, y, 0.88, 0.2, LC.paper, { lc: LC.rule, lw: 0.0015 }), box(0.06, y, 0.035, 0.2, LC.navy));
+      out.push(vrule(0.72, y + 0.02, 0.16, LC.gold, false));
+      out.push(T('spaced', 0.13, y + 0.025, 'Admit one', { w: 0.55, al: 'left', c: LC.gold, fs: 0.016 }));
+      out.push(T('heading', 0.13, y + 0.055, 'An Evening of Chamber Music', { w: 0.56, ff: 'baskerville', fs: 0.028, c: LC.ink }));
+      out.push(T('body', 0.13, y + 0.135, 'Saturday 14 June · 7.30 pm · Concert Hall', { w: 0.56, fs: 0.017, c: LC.soft }));
+      out.push(T('spaced', 0.74, y + 0.045, 'Row · Seat', { w: 0.18, c: LC.soft, fs: 0.014 }));
+      out.push(T('heading', 0.74, y + 0.085, 'C 12', { w: 0.18, al: 'center', ff: 'baskerville', fs: 0.04, c: LC.ink }));
+    }
+    return out;
+  } },
+  // ---- career
+  { k: 'cv', cat: 'career', label: 'CV', make: () => {
+    const T = tbP(false), ink = LC.ink, soft = '#5c6270', acc = LC.blue;
+    const sec = (x, y, w, head) => [T('spaced', x, y, head, { w, al: 'left', c: acc, fs: 0.017, ls: 0.24 }), rule(x, y + 0.03, w, '#c9d2e3')];
+    const entry = (x, y, w, a, b, when) => [
+      T('heading', x, y, a, { w: w - 0.14, fs: 0.02, c: ink, ff: 'avenir' }),
+      T('body', x + w - 0.14, y, when, { w: 0.14, al: 'right', fs: 0.016, c: soft }),
+      T('body', x, y + 0.026, b, { w, fs: 0.017, c: soft, lh: 1.35 }),
+    ];
+    return [
+      { t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      box(0, 0, 1, 0.17, LC.pale),
+      photo(0.165, 0.085, 0.17, 0.12, 'circle'),
+      T('title', 0.3, 0.04, 'Your Name', { w: 0.62, ff: 'display', fs: 0.058, c: ink }),
+      T('spaced', 0.3, 0.105, 'Cellist · Teacher', { w: 0.62, al: 'left', c: acc, fs: 0.019, ls: 0.2 }),
+      box(0, 0.17, 0.33, 0.83, '#f7f8fb'),
+      ...sec(0.05, 0.2, 0.24, 'Contact'),
+      T('body', 0.05, 0.245, 'name@email.com\n+00 000 000 000\nCity, Country\nyourwebsite.com', { w: 0.26, fs: 0.016, c: ink, lh: 1.6 }),
+      ...sec(0.05, 0.38, 0.24, 'Languages'),
+      T('body', 0.05, 0.425, 'English, fluent\nFrench, good\nGerman, basic', { w: 0.26, fs: 0.016, c: ink, lh: 1.6 }),
+      ...sec(0.05, 0.53, 0.24, 'Also'),
+      T('bullets', 0.05, 0.575, 'Baroque cello\nChamber music\nTeaching children\nConducting', { w: 0.26, fs: 0.016, c: ink, lh: 1.6 }),
+      ...sec(0.37, 0.2, 0.56, 'Education'),
+      ...entry(0.37, 0.245, 0.56, 'Master of Music, Performance', 'Conservatoire name, City · with Teacher Name', '2022–24'),
+      ...entry(0.37, 0.315, 0.56, 'Bachelor of Music', 'University or conservatoire, City', '2018–22'),
+      ...sec(0.37, 0.4, 0.56, 'Prizes'),
+      ...entry(0.37, 0.445, 0.56, 'First prize, national competition', 'Senior category, solo and orchestra rounds', '2023'),
+      ...entry(0.37, 0.515, 0.56, 'Chamber music prize', 'With your trio or quartet', '2021'),
+      ...sec(0.37, 0.6, 0.56, 'Performing'),
+      ...entry(0.37, 0.645, 0.56, 'Principal cello, youth orchestra', 'Seasons at home and on tour', '2019–'),
+      ...entry(0.37, 0.715, 0.56, 'Solo recitals and concertos', 'Haydn C major, Elgar, Saint-Saëns No. 1', 'since 2017'),
+      ...sec(0.37, 0.8, 0.56, 'Teaching'),
+      ...entry(0.37, 0.845, 0.56, 'Teacher, music school', 'Pupils from 6 to 18, chamber groups, exam preparation', '2020–'),
+    ];
+  } },
+  { k: 'cvclassic', cat: 'career', label: 'CV, classic', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }];
+    out.push(T('magazine', 0.08, 0.05, 'Your Name', { w: 0.84, c: LC.ink, fs: 0.07 }), T('spaced', 0.1, 0.135, 'Cellist', { w: 0.8, c: LC.gold, fs: 0.02 }), T('body', 0.1, 0.165, 'name@email.com · +00 000 000 000 · yourwebsite.com', { w: 0.8, al: 'center', c: LC.soft, fs: 0.017 }), ornament(0.5, 0.205, 0.28, LC.gold));
+    const S = [
+      ['Education', [['2022–24', 'Master of Music, Performance', 'Conservatoire name, City · with Teacher Name'], ['2018–22', 'Bachelor of Music', 'University or conservatoire, City']]],
+      ['Prizes', [['2023', 'First prize, national competition', 'Senior category'], ['2021', 'Chamber music prize', 'With your trio or quartet']]],
+      ['Performances', [['2024', 'Soloist, Elgar Concerto', 'Orchestra name, Concert Hall'], ['2023', 'Recital tour', 'Five cities, with Partner Name, piano'], ['since 2019', 'Principal cello', 'Youth orchestra, seasons and tours']]],
+      ['Teaching', [['since 2020', 'Teacher, music school', 'Pupils from 6 to 18, chamber groups']]],
+    ];
+    let y = 0.25;
+    for (const [h, rows] of S) {
+      out.push(T('spaced', 0.1, y, h, { w: 0.8, al: 'left', c: LC.gold, fs: 0.017, ls: 0.24 }), rule(0.1, y + 0.03, 0.8, LC.rule));
+      y += 0.048;
+      for (const [when, a, b] of rows) {
+        out.push(T('body', 0.1, y, when, { w: 0.16, fs: 0.017, c: LC.soft }), T('heading', 0.28, y - 0.002, a, { w: 0.62, ff: 'baskerville', fs: 0.021, c: LC.ink }), T('body', 0.28, y + 0.027, b, { w: 0.62, i: 1, fs: 0.017, c: LC.soft }));
+        y += 0.062;
+      }
+      y += 0.012;
+    }
+    return out;
+  } },
+  { k: 'bio', cat: 'career', label: 'Biography', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#f6f1ea', pat: '', a: 1 },
+      photo(0.5, 0.25, 0.56, 0.36, 'arch'),
+      T('magazine', 0.08, 0.46, 'Your Name', { w: 0.84, c: LC.ink, fs: 0.075 }),
+      T('spaced', 0.1, 0.56, 'cello', { w: 0.8, c: LC.gold, fs: 0.022 }),
+      T('body', 0.1, 0.61, 'Your Name began playing the cello at the age of seven. Write here where you studied and with whom, the prizes you have won and the orchestras, ensembles and halls you have played with and in.\n\nAdd what makes you you: the music you love, the projects you run, your teaching. Keep it to two short paragraphs and write it in the third person, as programmes print it.', { w: 0.8, fs: 0.0195, c: '#2c303a', lh: 1.55 }),
+    ];
+  } },
+  { k: 'repertoire', cat: 'career', label: 'Repertoire list', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: LC.paper, pat: '', a: 1 }];
+    out.push(T('spaced', 0.1, 0.05, 'Your Name · cello', { w: 0.8, c: LC.gold, fs: 0.02 }), T('elegant', 0.1, 0.085, 'Repertoire', { w: 0.8, c: LC.ink, fs: 0.05, i: 0 }), ornament(0.5, 0.165, 0.3, LC.gold));
+    const S = [['Concertos', [['Haydn', 'Concerto in C major, Hob. VIIb:1'], ['Elgar', 'Concerto in E minor, Op. 85'], ['Saint-Saëns', 'Concerto No. 1 in A minor, Op. 33']]], ['Sonatas', [['Beethoven', 'Sonata No. 3 in A major, Op. 69'], ['Brahms', 'Sonata No. 1 in E minor, Op. 38'], ['Debussy', 'Sonata in D minor']]], ['Solo works', [['Bach', 'Suites Nos. 1–3, BWV 1007–1009'], ['Cassadó', 'Suite for solo cello']]], ['Chamber music', [['Schubert', 'Piano Trio No. 1 in B♭ major, D. 898'], ['Dvořák', 'Piano Trio No. 4 “Dumky”, Op. 90']]]];
+    let y = 0.21;
+    for (const [h, rows] of S) {
+      out.push(T('spaced', 0.1, y, h, { w: 0.8, al: 'left', c: LC.gold, fs: 0.016, ls: 0.24 }), rule(0.1, y + 0.028, 0.8, LC.rule));
+      y += 0.045;
+      for (const [who, what] of rows) { out.push(T('heading', 0.1, y, who, { w: 0.22, ff: 'baskerville', fs: 0.02, c: LC.ink }), T('body', 0.33, y + 0.001, what, { w: 0.57, i: 1, fs: 0.019, c: '#2c303a' })); y += 0.038; }
+      y += 0.025;
+    }
+    return out;
+  } },
+  { k: 'audition', cat: 'career', label: 'Audition list', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, box(0, 0, 1, 0.16, LC.pale)];
+    out.push(T('spaced', 0.08, 0.04, 'Audition', { w: 0.6, al: 'left', c: LC.blue, fs: 0.019 }), T('title', 0.08, 0.07, 'Your Name', { w: 0.5, ff: 'display', fs: 0.05, c: LC.ink }), T('body', 0.6, 0.06, 'cello\nConservatoire name\nDate · time', { w: 0.32, al: 'right', fs: 0.017, c: '#5c6270', lh: 1.5 }));
+    const rows = [['Bach', 'Suite No. 3 in C major', 'Prélude', '4′'], ['Haydn', 'Concerto in C major', 'I. Moderato, with cadenza', '10′'], ['Brahms', 'Sonata No. 1 in E minor', 'I. Allegro non troppo', '9′'], ['Popper', 'High School of Cello Playing', 'Étude No. 13', '3′'], ['Orchestral excerpts', 'Brahms 2, Verdi Requiem', 'as asked', '5′']];
+    out.push(T('spaced', 0.08, 0.2, 'Order', { w: 0.1, al: 'left', c: LC.blue, fs: 0.014 }), T('spaced', 0.2, 0.2, 'Piece', { w: 0.5, al: 'left', c: LC.blue, fs: 0.014 }), T('spaced', 0.8, 0.2, 'Time', { w: 0.12, al: 'right', c: LC.blue, fs: 0.014 }), rule(0.08, 0.235, 0.84, '#c9d2e3'));
+    rows.forEach(([who, what, part, min], i) => {
+      const y = 0.26 + i * 0.1;
+      out.push(T('heading', 0.08, y, String(i + 1), { w: 0.08, ff: 'display', fs: 0.04, c: '#c9d2e3' }));
+      out.push(T('heading', 0.2, y, who + ' · ' + what, { w: 0.58, fs: 0.021, c: LC.ink, ff: 'avenir' }), T('body', 0.2, y + 0.03, part, { w: 0.58, i: 1, fs: 0.018, c: '#5c6270' }), T('body', 0.8, y + 0.005, min, { w: 0.12, al: 'right', fs: 0.021, c: LC.ink }));
+      out.push(rule(0.08, y + 0.075, 0.84, '#e6ebf3', 0.001));
+    });
+    out.push(T('heading', 0.5, 0.77, 'Total about 31 minutes', { w: 0.42, al: 'right', fs: 0.019, c: LC.blue, ff: 'avenir' }));
+    out.push(T('note', 0.08, 0.84, 'notes: bring the music for the panel, tune before going in', { w: 0.84, fs: 0.026, c: '#5c6270' }));
+    return out;
+  } },
+  { k: 'letter', cat: 'career', label: 'Cover letter', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('magazine', 0.08, 0.05, 'Your Name', { w: 0.84, c: LC.ink, fs: 0.056, al: 'left' }),
+      T('body', 0.08, 0.115, 'Cellist · name@email.com · +00 000 000 000 · yourwebsite.com', { w: 0.84, fs: 0.016, c: LC.soft }),
+      rule(0.08, 0.15, 0.84, LC.gold, 0.002),
+      T('body', 0.08, 0.19, 'Name of the person\nOrchestra or school\nStreet, City', { w: 0.5, fs: 0.018, c: LC.ink, lh: 1.5 }),
+      T('body', 0.6, 0.19, 'City, date', { w: 0.32, al: 'right', fs: 0.018, c: LC.soft }),
+      T('heading', 0.08, 0.31, 'Application for the position of section cello', { w: 0.84, ff: 'baskerville', fs: 0.022, c: LC.ink }),
+      T('body', 0.08, 0.36, 'Dear Name,\n\nWrite a first paragraph about the position and why you are applying for it.\n\nIn the second, say what you bring: your studies, your playing in orchestras and chamber groups, and what you would love to do with them.\n\nEnd by thanking them and saying that you look forward to playing for the panel.\n\nWith best wishes,', { w: 0.84, fs: 0.019, c: '#2c303a', lh: 1.6 }),
+      T('signature', 0.08, 0.78, 'Your Name', { w: 0.5, al: 'left', c: LC.ink, fs: 0.06 }),
+    ];
+  } },
+  { k: 'lessons', cat: 'career', label: 'Lessons flyer', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: LC.paper, pat: '', a: 1 },
+      photo(0.5, 0.22, 0.84, 0.3, 'round'),
+      T('spaced', 0.1, 0.4, 'Now taking new pupils', { w: 0.8, c: LC.gold, fs: 0.02 }),
+      T('magazine', 0.06, 0.435, 'Cello lessons', { w: 0.88, c: LC.ink, fs: 0.085 }),
+      T('body', 0.1, 0.55, 'For children and adults, from the very first notes to exams and auditions.', { w: 0.8, al: 'center', i: 1, fs: 0.022, c: '#2c303a', lh: 1.45 }),
+      ornament(0.5, 0.635, 0.3, LC.gold),
+      T('bullets', 0.2, 0.67, 'Lessons of 30, 45 or 60 minutes\nA first lesson to meet\nChamber music for young players\nIn person or online', { w: 0.6, fs: 0.02, c: LC.ink, lh: 1.6, ff: 'baskerville' }),
+      box(0.1, 0.84, 0.8, 0.1, LC.navy),
+      T('heading', 0.1, 0.857, 'Your Name', { w: 0.8, al: 'center', ff: 'baskerville', fs: 0.026, c: '#f7f1e6' }),
+      T('body', 0.1, 0.895, 'name@email.com · +00 000 000 000', { w: 0.8, al: 'center', fs: 0.018, c: LC.gold2 }),
+    ];
+  } },
+  { k: 'cert', cat: 'career', label: 'Certificate', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#fffdf7', pat: '', a: 1 },
+      box(0.05, 0.04, 0.9, 0.92, '', { lc: '#b8914a', lw: 0.006 }), box(0.07, 0.06, 0.86, 0.88, '', { lc: '#d9c08a', lw: 0.0015 }),
+      T('gold', 0.1, 0.12, 'Certificate', { w: 0.8, fs: 0.07 }),
+      T('spaced', 0.1, 0.22, 'of achievement', { w: 0.8, c: LC.gold, fs: 0.022 }),
+      T('body', 0.1, 0.3, 'This is to certify that', { w: 0.8, al: 'center', i: 1, fs: 0.024, c: '#4a4f5a' }),
+      T('signature', 0.1, 0.35, 'Name of the pupil', { w: 0.8, c: LC.ink, fs: 0.075 }),
+      T('body', 0.12, 0.5, 'has played with great care and musicality in the spring concert, and completed this year’s scales, studies and pieces.', { w: 0.76, al: 'center', fs: 0.022, c: '#2c303a', lh: 1.5 }),
+      ornament(0.5, 0.64, 0.3, '#b8914a'),
+      rule(0.16, 0.8, 0.28, '#4a4f5a'), rule(0.56, 0.8, 0.28, '#4a4f5a'),
+      T('body', 0.16, 0.815, 'teacher', { w: 0.28, al: 'center', i: 1, fs: 0.018, c: LC.soft }),
+      T('body', 0.56, 0.815, 'date', { w: 0.28, al: 'center', i: 1, fs: 0.018, c: LC.soft }),
+    ];
+  } },
+  // ---- practice (a lighter family: white paper, slate ink, soft green and blue)
+  { k: 'week', cat: 'practice', label: 'Week planner', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.08, 0.04, 'My practice week', { w: 0.5, c: '#1f2430' }),
+      T('note', 0.6, 0.06, 'week of …', { w: 0.32, al: 'right', fs: 0.026, c: '#567c8d' }),
+      ...['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].flatMap((d, i) => [
+        rbox(0.07, 0.14 + i * 0.115, 0.86, 0.1, i % 2 ? '#f6f7fb' : '#eef4f0'),
+        T('heading', 0.1, 0.155 + i * 0.115, d, { w: 0.24, fs: 0.022, c: '#2f4156' }),
+        T('checklist', 0.36, 0.15 + i * 0.115, 'scales\npiece', { w: 0.32, fs: 0.019, lh: 1.6, c: '#2f4156' }),
+        T('note', 0.68, 0.16 + i * 0.115, '… min', { w: 0.2, al: 'right', fs: 0.024, c: '#9aa3ad' }),
+      ]),
+    ];
+  } },
+  { k: 'log', cat: 'practice', label: 'Practice log', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Practice log', { w: 0.5, c: '#1f2430' }), T('note', 0.6, 0.06, 'month …', { w: 0.33, al: 'right', fs: 0.026, c: '#567c8d' })];
+    const cols = [[0.07, 0.13, 'Date'], [0.21, 0.45, 'What I practised'], [0.67, 0.1, 'Min'], [0.78, 0.15, 'How it went']];
+    out.push(rbox(0.06, 0.13, 0.88, 0.045, '#eef4f0'));
+    for (const [x, w, h] of cols) out.push(T('heading', x, 0.141, h, { w, fs: 0.016, c: '#2f4156', ff: 'avenir' }));
+    for (let i = 0; i < 16; i++) out.push(rule(0.06, 0.225 + i * 0.045, 0.88, '#e3e8ee', 0.001));
+    out.push(...[0.2, 0.66, 0.77].map((x) => vrule(x, 0.13, 0.81, '#e3e8ee', false)));
+    out.push(T('note', 0.07, 0.95 - 0.02, 'total this month: … hours', { w: 0.86, al: 'right', fs: 0.024, c: '#567c8d' }));
+    return out;
+  } },
+  { k: 'lesson', cat: 'practice', label: 'Lesson notes', make: () => {
+    const T = tbP(false);
+    return [
+      { t: 'bg', c: '#ffffff', pat: '', a: 1 },
+      T('title', 0.07, 0.04, 'Lesson', { w: 0.45, c: '#1f2430' }),
+      T('note', 0.55, 0.06, 'date …', { w: 0.38, al: 'right', fs: 0.026, c: '#567c8d' }),
+      rule(0.07, 0.125, 0.86, '#cfd8e0'),
+      rbox(0.07, 0.15, 0.42, 0.24, '#eef4f0'), T('heading', 0.1, 0.17, 'To work on', { w: 0.36, fs: 0.022, c: '#2f4156' }),
+      T('checklist', 0.1, 0.215, 'Bow distribution\nIntonation of the shifts\nDynamics: more contrast', { w: 0.37, fs: 0.018, lh: 1.7, c: '#2f4156' }),
+      rbox(0.51, 0.15, 0.42, 0.24, '#f6f7fb'), T('heading', 0.54, 0.17, 'For next week', { w: 0.36, fs: 0.022, c: '#2f4156' }),
+      T('checklist', 0.54, 0.215, 'Scale: D major, 3 octaves\nStudy No. 4, slowly\nPiece: first page by heart', { w: 0.37, fs: 0.018, lh: 1.7, c: '#2f4156' }),
+      T('heading', 0.07, 0.43, 'What the teacher said', { w: 0.86, fs: 0.022, c: '#2f4156' }),
+      ...Array.from({ length: 8 }, (_, i) => rule(0.07, 0.5 + i * 0.045, 0.86, '#e3e8ee', 0.001)),
+      T('sticky', 0.6, 0.86, 'Ask about: the vibrato in bar 12', { w: 0.33, fs: 0.022 }),
+    ];
+  } },
+  { k: 'piece', cat: 'practice', label: 'Piece tracker', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('spaced', 0.07, 0.045, 'Learning a piece', { w: 0.86, al: 'left', c: '#567c8d', fs: 0.018 }), T('title', 0.07, 0.07, 'Title of the piece', { w: 0.86, c: '#1f2430', fs: 0.05 }), T('body', 0.07, 0.135, 'Composer · for the concert on …', { w: 0.86, i: 1, fs: 0.02, c: '#6b6f7a' })];
+    const stages = ['Notes', 'Rhythm', 'In tempo', 'By heart', 'Ready'];
+    out.push(rbox(0.06, 0.2, 0.88, 0.05, '#eef4f0'), T('heading', 0.08, 0.213, 'Section', { w: 0.24, fs: 0.016, c: '#2f4156' }));
+    stages.forEach((s, j) => out.push(T('heading', 0.34 + j * 0.12, 0.213, s, { w: 0.12, al: 'center', fs: 0.015, c: '#2f4156' })));
+    ['Bars 1–16', 'Bars 17–32', 'Bars 33–48', 'Bars 49–64', 'Cadenza', 'Coda'].forEach((sct, i) => {
+      const y = 0.27 + i * 0.075;
+      out.push(T('body', 0.08, y + 0.012, sct, { w: 0.24, fs: 0.019, c: '#2f4156' }));
+      stages.forEach((_, j) => out.push({ t: 'shape', k: 'round', x: 0.4 + j * 0.12, y: y + 0.025, w: 0.045, h: 0.045 / 1.414, f: '', lc: '#9fb8c3', lw: 0.0018, a: 1, rot: 0 }));
+      out.push(rule(0.06, y + 0.06, 0.88, '#e3e8ee', 0.001));
+    });
+    out.push(T('heading', 0.07, 0.75, 'Tricky places', { w: 0.86, fs: 0.022, c: '#2f4156' }));
+    out.push(...Array.from({ length: 3 }, (_, i) => rule(0.07, 0.82 + i * 0.045, 0.86, '#e3e8ee', 0.001)));
+    return out;
+  } },
+  { k: 'scales', cat: 'practice', label: 'Scales tracker', make: () => {
+    const T = tbP(false), out = [{ t: 'bg', c: '#ffffff', pat: '', a: 1 }, T('title', 0.07, 0.04, 'Scales', { w: 0.45, c: '#1f2430' }), T('note', 0.55, 0.06, 'tick each day you play it', { w: 0.38, al: 'right', fs: 0.022, c: '#567c8d' })];
+    const keys = [['C', 'a'], ['G', 'e'], ['D', 'b'], ['A', 'f♯'], ['E', 'c♯'], ['B', 'g♯'], ['F♯', 'e♭'], ['D♭', 'b♭'], ['A♭', 'f'], ['E♭', 'c'], ['B♭', 'g'], ['F', 'd']];
+    out.push(T('heading', 0.07, 0.135, 'Major', { w: 0.4, fs: 0.02, c: '#2f4156' }), T('heading', 0.53, 0.135, 'Minor', { w: 0.4, fs: 0.02, c: '#2f4156' }));
+    keys.forEach(([M, m], i) => {
+      const y = 0.18 + i * 0.062;
+      for (const [x, name, tint] of [[0.07, M + ' major', '#eef4f0'], [0.53, m + ' minor', '#f6f7fb']]) {
+        out.push(rbox(x, y, 0.4, 0.05, tint), T('body', x + 0.02, y + 0.012, name, { w: 0.14, fs: 0.018, c: '#2f4156' }));
+        for (let d = 0; d < 7; d++) out.push({ t: 'shape', k: 'round', x: x + 0.18 + d * 0.031, y: y + 0.025, w: 0.022, h: 0.022 / 1.414, f: '#ffffff', lc: '#b9cbd3', lw: 0.0012, a: 1, rot: 0 });
+      }
+    });
+    return out;
+  } },
+  { k: 'olive', cat: 'practice', label: 'Month goals', make: () => [
     { t: 'bg', c: '#475540', pat: '', a: 1 },
     tb('poster', 0.06, 0.05, 'GOALS', { w: 0.5, al: 'left', c: '#d4dbc4', fs: 0.1, ff: 'display', b: 0, ls: 0.06 }),
     tb('fancy', 0.08, 0.15, 'this month', { w: 0.6, al: 'left', c: '#ffffff', fs: 0.042 }),
@@ -2205,49 +3316,7 @@ const LAYOUTS = [
       tb('body', (i % 2 ? 0.55 : 0.08), 0.44 + Math.floor(i / 2) * 0.23, ['Scales in thirds', 'Learn the second movement', 'Record a run-through', 'Twenty minutes of long notes'][i], { w: 0.38, al: 'center', c: '#e9eddf', fs: 0.024 }),
     ]),
   ] },
-  { k: 'mood', label: 'Mood board', make: () => [
-    { t: 'bg', c: '#f8f3ea', pat: '', a: 1 },
-    tb('title', 0.08, 0.05, 'Mood board', { w: 0.84, ff: 'display', c: '#3d2e22' }),
-    { t: 'img', id: null, x: 0.3, y: 0.33, w: 0.44, h: 0.3, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'arch' },
-    { t: 'img', id: null, x: 0.72, y: 0.27, w: 0.36, h: 0.18, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0.2 },
-    { t: 'img', id: null, x: 0.72, y: 0.46, w: 0.36, h: 0.16, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0.2 },
-    ...['#3d2e22', '#8a6a4a', '#c9a96e', '#e8d9bf'].map((c, i) => ({ t: 'shape', k: 'circle', x: 0.17 + i * 0.13, y: 0.65, w: 0.1, h: 0.1 / 1.414, f: c, a: 1, rot: 0 })),
-    { t: 'shape', k: 'e:sprig', x: 0.86, y: 0.8, w: 0.12, h: 0.12 / 0.6 / 1.414, f: '#8a6a4a', a: 1, rot: 0.2 },
-    tb('note', 0.08, 0.72, 'Warm, slow, singing. Like an evening in late summer.', { w: 0.62, c: '#3d2e22' }),
-  ] },
-  { k: 'recital', label: 'Word poster', make: () => [
-    { t: 'bg', c: '#111317', pat: '', a: 1 },
-    tb('spaced', 0.1, 0.06, 'Stand presents', { w: 0.8, c: '#c9a96e' }),
-    { t: 'img', id: null, x: 0.5, y: 0.34, w: 0.9, h: 0.36, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'word', word: 'RECITAL', wf: 'condensed' },
-    { t: 'shape', k: 'line', x: 0.5, y: 0.58, w: 0.8, h: 0.01, lc: '#c9a96e', lw: 0.0016, a: 1, rot: 0 },
-    tb('magazine', 0.08, 0.61, 'An evening of cello', { w: 0.84, c: '#f8f3ea', fs: 0.06 }),
-    tb('spaced', 0.1, 0.76, 'Saturday · 7 pm · small hall', { w: 0.8, c: '#e8d9bf', fs: 0.022 }),
-    tb('signature', 0.1, 0.83, 'free entry', { w: 0.8, c: '#c9a96e', fs: 0.06 }),
-  ] },
-  { k: 'cover', label: 'Magazine cover', make: () => [
-    { t: 'img', id: null, x: 0.5, y: 0.5, w: 1, h: 1, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0 },
-    tb('magazine', 0.04, 0.03, 'Cello', { w: 0.92, c: '#ffffff', fs: 0.17, fx: 'shadow' }),
-    tb('spaced', 0.08, 0.24, 'the practice issue', { w: 0.84, c: '#ffffff', fs: 0.022 }),
-    tb('headline', 0.06, 0.7, 'Slow practice, big results', { w: 0.6, c: '#ffffff', fs: 0.05, fx: 'shadow' }),
-    tb('body', 0.06, 0.86, 'Scales in thirds · the bow arm · stage nerves', { w: 0.6, c: '#ffffff', fs: 0.022 }),
-  ] },
-  { k: 'polaroids', label: 'Polaroid wall', make: () => [
-    { t: 'bg', c: '#f1ece4', pat: 'dots', a: 1 },
-    tb('note', 0.1, 0.05, 'this year in music', { w: 0.8, al: 'center', fs: 0.05, c: '#3d2e22' }),
-    ...[[0.3, 0.3, -0.08], [0.7, 0.28, 0.06], [0.28, 0.62, 0.05], [0.72, 0.64, -0.05]].map(([x, y, r]) => ({ t: 'img', id: null, x, y, w: 0.36, h: 0.2, rot: r, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 })),
-    { t: 'tape', x0: 0.24, y0: 0.18, x1: 0.36, y1: 0.18, w: 0.02, c: '#f4a3a3', pat: 'stripes', a: 0.85 },
-    { t: 'tape', x0: 0.64, y0: 0.16, x1: 0.76, y1: 0.16, w: 0.02, c: '#7fd1cc', pat: 'dots', a: 0.85 },
-    tb('note', 0.1, 0.86, 'first recital · summer course · new bow', { w: 0.8, al: 'center', fs: 0.03, c: '#5b4636' }),
-  ] },
-  { k: 'ticket', label: 'Concert ticket', make: () => [
-    { t: 'bg', c: '#fbe1e4', c2: '#f0b3bf', pat: '', a: 1 },
-    { t: 'img', id: null, x: 0.5, y: 0.32, w: 0.62, h: 0.32, rot: -0.03, cr: [0, 0, 1, 1], a: 1, fr: 'shadow', rr: 0, mask: 'stamp' },
-    tb('gold', 0.08, 0.53, 'Admit one', { w: 0.84 }),
-    tb('elegant', 0.1, 0.63, 'Bach suites, all six', { w: 0.8, c: '#7d3346' }),
-    { t: 'shape', k: 'round', x: 0.5, y: 0.8, w: 0.7, h: 0.1, f: '#7d3346', a: 1, rot: 0 },
-    tb('spaced', 0.15, 0.785, 'row C · seat 12', { w: 0.7, c: '#fff6f6', fs: 0.024 }),
-  ] },
-  { k: 'journal', label: 'Practice journal', make: () => [
+  { k: 'journal', cat: 'practice', label: 'Practice journal', make: () => [
     { t: 'bg', c: '#fffdf8', pat: 'grid', a: 1 },
     tb('chapter', 0.08, 0.05, 'Practice journal', { w: 0.84, c: '#2f4156' }),
     tb('note', 0.62, 0.12, 'date:', { w: 0.3, al: 'right', fs: 0.026, c: '#567c8d' }),
@@ -2258,37 +3327,89 @@ const LAYOUTS = [
     tb('heading', 0.12, 0.53, 'What went well', { w: 0.76, fs: 0.028, c: '#567c8d' }),
     tb('sticky', 0.58, 0.79, 'Next time: record it!', { w: 0.34, rot: -0.04 }),
   ] },
-  { k: 'archposter', label: 'Arch poster', make: () => [
-    { t: 'bg', c: '#e7dcd2', pat: '', a: 1 },
-    { t: 'img', id: null, x: 0.5, y: 0.38, w: 0.66, h: 0.5, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'arch' },
-    tb('magazine', 0.06, 0.66, 'Spring', { w: 0.88, c: '#4a0d16', fs: 0.11 }),
-    tb('spaced', 0.1, 0.8, 'student concert', { w: 0.8, c: '#7d1f2c', fs: 0.026 }),
-    { t: 'shape', k: 'e:divline', x: 0.5, y: 0.86, w: 0.34, h: 0.34 / (100 / 12) / 1.414, f: '#7d1f2c', a: 1, rot: 0 },
+  { k: 'elegant', cat: 'practice', label: 'Questions for my teacher', make: () => [
+    { t: 'bg', c: '#f3ece6', pat: '', a: 1 },
+    tb('title', 0.08, 0.05, 'Q&A', { w: 0.84, fs: 0.16, c: '#5d0d18', ff: 'bodoni', b: 0 }),
+    tb('fancy', 0.08, 0.2, 'ask anything', { w: 0.84, al: 'left', c: '#5d0d18', fs: 0.05 }),
+    { t: 'shape', k: 'line', x: 0.5, y: 0.3, w: 0.84, h: 0.01, lc: '#5d0d18', lw: 0.0018, a: 1, rot: 0 },
+    tb('checklist', 0.08, 0.34, 'Why does the shift go flat?\nHow slow is slow enough?\nWhere should the bow change?\nWhat to play for the audition?', { w: 0.84, c: '#3e2a2c', ff: 'baskerville', fs: 0.028 }),
+    { t: 'shape', k: 'round', x: 0.5, y: 0.8, w: 0.84, h: 0.16, f: '#5d0d18', a: 1, rot: 0 },
+    tb('elegant', 0.12, 0.755, 'answers next lesson', { w: 0.76, c: '#f3ece6', fs: 0.036 }),
   ] },
-  { k: 'repertoire', label: 'Repertoire', make: () => [
-    tb('title', 0.08, 0.05, 'Repertoire', { w: 0.84 }),
-    ...[0, 1, 2, 3].flatMap((i) => [
-      { t: 'shape', k: 'circle', x: 0.14, y: 0.22 + i * 0.17, w: 0.1, h: 0.1 / 1.414, f: ['#2b6fd6', '#d12f2f', '#2f9e55', '#7b3fc4'][i], a: 1, rot: 0 },
-      tb('heading', 0.23, 0.195 + i * 0.17, ['Piece', 'Piece', 'Piece', 'Piece'][i] + ' ' + (i + 1), { w: 0.68, fs: 0.03 }),
-      tb('body', 0.23, 0.235 + i * 0.17, 'Composer · movement · goal for this month', { w: 0.68 }),
-    ]),
+  // ---- for sharing
+  { k: 'collage', cat: 'social', label: 'Photo collage', make: () => [
+    tb('fancy', 0.1, 0.05, 'Concert memories', { w: 0.8 }),
+    { t: 'img', id: null, x: 0.3, y: 0.32, w: 0.42, h: 0.28, rot: -0.05, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
+    { t: 'img', id: null, x: 0.7, y: 0.4, w: 0.42, h: 0.28, rot: 0.06, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 },
+    { t: 'img', id: null, x: 0.45, y: 0.72, w: 0.5, h: 0.3, rot: 0.02, cr: [0, 0, 1, 1], a: 1, fr: 'tape', rr: 0 },
+  ] },
+  { k: 'polaroids', cat: 'social', label: 'Polaroid wall', make: () => [
+    { t: 'bg', c: '#f1ece4', pat: 'dots', a: 1 },
+    tb('note', 0.1, 0.05, 'this year in music', { w: 0.8, al: 'center', fs: 0.05, c: '#3d2e22' }),
+    ...[[0.3, 0.3, -0.08], [0.7, 0.28, 0.06], [0.28, 0.62, 0.05], [0.72, 0.64, -0.05]].map(([x, y, r]) => ({ t: 'img', id: null, x, y, w: 0.36, h: 0.2, rot: r, cr: [0, 0, 1, 1], a: 1, fr: 'polaroid', rr: 0 })),
+    { t: 'tape', x0: 0.24, y0: 0.18, x1: 0.36, y1: 0.18, w: 0.02, c: '#f4a3a3', pat: 'stripes', a: 0.85 },
+    { t: 'tape', x0: 0.64, y0: 0.16, x1: 0.76, y1: 0.16, w: 0.02, c: '#7fd1cc', pat: 'dots', a: 0.85 },
+    tb('note', 0.1, 0.86, 'first recital · summer course · new bow', { w: 0.8, al: 'center', fs: 0.03, c: '#5b4636' }),
+  ] },
+  { k: 'cover', cat: 'social', label: 'Magazine cover', make: () => [
+    { t: 'img', id: null, x: 0.5, y: 0.5, w: 1, h: 1, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0 },
+    tb('magazine', 0.04, 0.03, 'Cello', { w: 0.92, c: '#ffffff', fs: 0.17, fx: 'shadow' }),
+    tb('spaced', 0.08, 0.24, 'the practice issue', { w: 0.84, c: '#ffffff', fs: 0.022 }),
+    tb('headline', 0.06, 0.7, 'Slow practice, big results', { w: 0.6, c: '#ffffff', fs: 0.05, fx: 'shadow' }),
+    tb('body', 0.06, 0.86, 'Scales in thirds · the bow arm · stage nerves', { w: 0.6, c: '#ffffff', fs: 0.022 }),
+  ] },
+  { k: 'glassq', cat: 'social', label: 'Glass quote', make: () => [
+    { t: 'img', id: null, x: 0.5, y: 0.5, w: 1, h: 1, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0 },
+    { t: 'shape', k: 'glass', x: 0.5, y: 0.52, w: 0.78, h: 0.42, f: '#ffffff', a: 1, rot: 0 },
+    tb('note', 0.17, 0.39, 'today’s thought', { w: 0.66, ff: 'script', fs: 0.045, c: '#ffffff' }),
+    tb('heading', 0.17, 0.46, 'Play it slowly, then play it beautifully.', { w: 0.66, ff: 'display', fs: 0.05, c: '#ffffff', fx: 'lift' }),
+  ] },
+  { k: 'mood', cat: 'social', label: 'Mood board', make: () => [
+    { t: 'bg', c: '#f8f3ea', pat: '', a: 1 },
+    tb('title', 0.08, 0.05, 'Mood board', { w: 0.84, ff: 'display', c: '#3d2e22' }),
+    { t: 'img', id: null, x: 0.3, y: 0.33, w: 0.44, h: 0.3, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0, mask: 'arch' },
+    { t: 'img', id: null, x: 0.72, y: 0.27, w: 0.36, h: 0.18, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0.2 },
+    { t: 'img', id: null, x: 0.72, y: 0.46, w: 0.36, h: 0.16, rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0.2 },
+    ...['#3d2e22', '#8a6a4a', '#c9a96e', '#e8d9bf'].map((c, i) => ({ t: 'shape', k: 'circle', x: 0.17 + i * 0.13, y: 0.65, w: 0.1, h: 0.1 / 1.414, f: c, a: 1, rot: 0 })),
+    { t: 'shape', k: 'e:sprig', x: 0.86, y: 0.8, w: 0.12, h: 0.12 / 0.6 / 1.414, f: '#8a6a4a', a: 1, rot: 0.2 },
+    tb('note', 0.08, 0.72, 'Warm, slow, singing. Like an evening in late summer.', { w: 0.62, c: '#3d2e22' }),
   ] },
 ];
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
+const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['social', 'For sharing']];
+let layCat = 'concert';
 (function buildLayouts() {
   const g = $('#insLayouts');
+  // the layouts in sections, like the notebook covers
+  const cats = el('div', 'el-cats lay-cats');
+  for (const [id, label] of LAYOUT_CATS) {
+    const b = el('button', id === layCat ? 'on' : '', label);
+    b.addEventListener('click', () => { layCat = id; $$('.lay-cats button').forEach((x) => x.classList.toggle('on', x === b)); $$('#insLayouts .ins-layout').forEach((x) => { x.hidden = x.dataset.cat !== layCat; }); });
+    cats.append(b);
+  }
+  g.before(cats);
   for (const L of LAYOUTS) {
-    const b = el('button', 'ins-layout'); const c = el('canvas'); c.width = 200; c.height = 283; b.append(c, el('span', '', L.label));
-    b.addEventListener('click', () => {
+    const b = el('button', 'ins-layout' + (L.land ? ' land' : '')); const c = el('canvas'); c.width = L.land ? 283 : 200; c.height = L.land ? 200 : 283; b.append(c, el('span', '', L.label));
+    b.dataset.cat = L.cat || 'practice'; b.hidden = b.dataset.cat !== layCat;
+    b.addEventListener('click', async () => {
       const items = L.make();
       const bg = items.filter((x) => x.t === 'bg'), rest = items.filter((x) => x.t !== 'bg');
-      const entry = addItems(rest, false);
+      closeInkPops(); clearSelection();
+      // in a notebook: a new page of its own (sideways when the layout is); elsewhere, on the page
+      if (NBK()) {
+        await addPaperPage('plain', { land: !!L.land, items: [...bg.map((x) => ({ c2: '', pat: '', ...x })), ...rest], quiet: true });
+        if (!V.inking) setInking(true);
+        inkHint(L.label + ': a new page. Tap anything to change it.', 2800);
+        return;
+      }
+      addItems(rest, false);
       if (bg.length) setBackground(bg[0]);
       inkHint('Layout added. Tap anything to change it.', 2600);
     });
     g.append(b);
   }
 })();
+globalThis.__layouts = LAYOUTS;
 async function drawLayoutThumbs() {
   await loadMusicFont();
   $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of LAYOUTS[i].make()) {
@@ -2353,7 +3474,7 @@ const TB = { style: 'body' };
 function tbFromStyle(k, x, y, txt) {
   const st = TEXT_STYLES.find((t) => t.k === k) || TEXT_STYLES[2];
   const w = ['title', 'heading', 'poster', 'outline', 'elegant', 'retro', 'shadow', 'neon', 'fancy', 'arc'].includes(st.k) ? 0.8 : st.k === 'label' ? 0.34 : st.k === 'sticky' ? 0.36 : 0.6;
-  const it = { t: 'tb', x: +clamp(x, 0.03, 0.97 - w).toFixed(4), y: +clamp(y, 0.02, 0.95).toFixed(4), w, txt: txt || '', ff: st.ff, fs: st.fs, b: st.b || 0, i: st.i || 0, u: 0, caps: st.caps || 0, ls: st.ls || 0, lh: st.lh || 0, al: st.al, c: st.c || penColor(), bg: st.bg || '', pad: st.pad || 0, fx: st.fx || '', fc: st.fc || '', curve: st.curve || 0, a: 1 };
+  const it = { t: 'tb', x: +clamp(x, 0.03, 0.97 - w).toFixed(4), y: +clamp(y, 0.02, 0.95).toFixed(4), w, txt: txt || '', ff: st.ff, fs: st.fs, b: st.b || 0, i: st.i || 0, u: 0, caps: st.caps || 0, ls: st.ls || 0, lh: st.lh || 0, al: st.al, c: st.c || penColor(), bg: st.bg || '', pad: st.pad || 0, fx: st.fx || '', fc: st.fc || '', curve: st.curve || 0, list: st.list || '', a: 1 };
   return it;
 }
 // the style of one combination, applied to a box that already has words
@@ -2546,7 +3667,7 @@ $$('#erMode button').forEach((b) => b.addEventListener('click', () => { INK.eras
 $('#erClear').addEventListener('click', async () => {
   const entry = lastEntry && V.pages.includes(lastEntry) ? lastEntry : centreEntry(); if (!entry) return;
   if (!(await ask('Clear everything on this page?', { ok: 'Clear page', danger: true, sub: 'You can undo it.' }))) return;
-  const before = entry.layer.items.slice(); entry.layer.setItems([]); pushUndo(entry.layer.key, before, []); closeInkPops();
+  const before = entry.layer.items.slice(), after = before.filter(isHiddenItem); entry.layer.setItems(after, true); pushUndo(entry.layer.key, before, after.slice()); closeInkPops();
 });
 function syncTapePop() {
   const g = $('#tapePats');
@@ -2710,8 +3831,10 @@ function slurItem(a, b, path, rect) {
 }
 function startInk(e, entry) {
   lastEntry = entry;
-  if (!entry.layer.ready) { GS = { kind: 'done', id: e.pointerId }; return; }   // markings still loading
   const tool = INK.tool;
+  // markings still loading (a moment after the page opens): a pen or highlighter line is kept and
+  // joins them; anything else waits
+  if (!entry.layer.ready && tool !== 'pen' && tool !== 'hl') { GS = { kind: 'done', id: e.pointerId }; return; }
   const rect = entry.inner.getBoundingClientRect();
   const p = relPos(entry, e, rect);
   const before = entry.layer.items.slice();
@@ -2726,6 +3849,16 @@ function startInk(e, entry) {
     const item = { t: 'stamp', k: INK.stamp, c: penColor(), a: st.a, s: inkSize('stamp', st.size), x: +p[0].toFixed(4), y: +p[1].toFixed(4) };
     entry.layer.commit(item); pushUndo(entry.layer.key, before, entry.layer.items.slice());
     GS = { kind: 'done', id: e.pointerId };
+    return;
+  }
+  // a note: laid where the page was tapped, open to write in; the tool goes back to the one before
+  if (tool === 'note') {
+    GS = { kind: 'done', id: e.pointerId };
+    const nid = noteId(), item = { t: 'note', nid, x: +clamp(p[0] - 0.01, 0, 0.9).toFixed(4), y: +clamp(p[1] - 0.01, 0, 0.92).toFixed(4), c: INK.noteC || 'yellow', txt: '' };
+    openNote(nid);
+    const after = [...before, item]; entry.layer.setItems(after); pushUndo(entry.layer.key, before, entry.layer.items.slice());
+    INK.tool = INK.beforeNote || 'pen'; syncInkBar();
+    setTimeout(() => { const t = entry.inner.querySelector(`.snote[data-nid="${nid}"] textarea`); if (t) t.focus(); }, 60);
     return;
   }
   if (tool === 'eraser') { GS = { kind: 'erase', id: e.pointerId, entry, rect, before, type: e.pointerType, changed: false }; GS.changed = entry.layer.eraseAt(p[0], p[1], eraserR(), INK.eraser.whole); showEraserDot(e, entry); return; }
@@ -2774,7 +3907,7 @@ function moveInk(e) {
   if (GS.kind === 'erase') {
     (GS.erasePts = GS.erasePts || []).push(...list.map((ev) => relPos(GS.entry, ev, GS.rect)));
     showEraserDot(e, GS.entry);
-    if (!GS.eraseRaf) { const g = GS; g.eraseRaf = requestAnimationFrame(() => { g.eraseRaf = 0; const pts = g.erasePts || []; g.erasePts = []; if (pts.length && g.entry.layer.eraseMany(pts, eraserR(), NBK() && INK.eraser.whole)) g.changed = true; }); }
+    if (!GS.eraseRaf) { const g = GS; g.eraseRaf = requestAnimationFrame(() => { g.eraseRaf = 0; const pts = g.erasePts || []; g.erasePts = []; if (pts.length && g.entry.layer.eraseMany(pts, eraserR(), INK.eraser.whole)) g.changed = true; }); }
     return;
   }
   if (GS.kind === 'lasso') { for (const ev of list) { GS.pts.push([ev.clientX, ev.clientY]); GS.rel.push(relPos(GS.entry, ev, GS.rect)); } scheduleLive(); return; }
@@ -2909,7 +4042,7 @@ function endInk(cancelled) {
   const L = g.entry && g.entry.layer;
   if (g.kind === 'erase') {
     if (g.eraseRaf) cancelAnimationFrame(g.eraseRaf);
-    if (g.erasePts && g.erasePts.length && L.eraseMany(g.erasePts, eraserR(), NBK() && INK.eraser.whole)) g.changed = true;
+    if (g.erasePts && g.erasePts.length && L.eraseMany(g.erasePts, eraserR(), INK.eraser.whole)) g.changed = true;
     if (g.changed) pushUndo(L.key, g.before, L.items.slice()); return;
   }
   if (g.kind === 'tape' && g.slur) { if (!g.item) return; L.commit(g.item); pushUndo(L.key, g.before, L.items.slice()); return; }
@@ -2948,8 +4081,12 @@ function endInk(cancelled) {
   }
   const done = g.item;
   done.p = done.p.map((p) => [+p[0].toFixed(5), +p[1].toFixed(5), +p[2].toFixed(2)]);
+  if (!L.ready) { L.commit(done); L.loaded.then(() => pushUndo(L.key, L.items.filter((x) => x !== done), L.items.slice())); return; }
   L.commit(done);
   pushUndo(L.key, g.before, L.items.slice());
+  // zoomed in, the writing is drawn again at the full sharpness of the screen at once, so a line
+  // looks the same after the Pencil lifts as while it was being drawn
+  if (Z.s > 1.05 && L && !L.view) sharpenInk();
 }
 let eraserDot = null;
 function showEraserDot(e, entry) {
@@ -3055,7 +4192,7 @@ stage.addEventListener('pointerdown', (e) => {
   }
   // text boxes are placed with a tap, so a finger can still swipe to turn the page with that tool
   if (V.inking && INK.finger && (INK.tool === 'tbox' || INK.tool === 'text')) { e.preventDefault(); startNav(e); GS.place = true; return; }
-  if (V.inking && INK.finger) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
+  if (V.inking && (INK.finger || INK.tool === 'note')) { const entry = entryAt(e.clientX, e.clientY); if (entry) { e.preventDefault(); startInk(e, entry); return; } }
   startNav(e);
 });
 window.addEventListener('pointermove', (e) => {
@@ -3110,6 +4247,12 @@ function pointerEnd(e) {
     } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3 && dt < 800) { turn(dx < 0 ? 1 : -1); return; }
     if (Math.hypot(dx, dy) > 12 || dt > 600) return;
     if (g.place && V.inking) { const entry = entryAt(e.clientX, e.clientY); if (entry) { startInk(e, entry); if (GS && GS.kind === 'done') GS = null; return; } }
+    // a tap at the very side of the page (or of the screen) turns the page, even over a photo
+    // that covers the whole page; a tap further in chooses what is there
+    const pgEntry = entryAt(e.clientX, e.clientY);
+    let sideTap = e.clientX > window.innerWidth * 0.9 || e.clientX < window.innerWidth * 0.1;
+    if (!sideTap && pgEntry) { const pr = pgEntry.pg.getBoundingClientRect(); const fx = (e.clientX - pr.left) / pr.width; sideTap = (fx > 0.88 && pgEntry === V.pages[V.pages.length - 1]) || (fx < 0.12 && pgEntry === V.pages[0]); }
+    if (V.inking && NBK() && sideTap && !Sel.entry) { if (e.clientX > window.innerWidth / 2) turn(1); else turn(-1); return; }
     if (V.inking && NBK()) {
       const hit = objectAt(e.clientX, e.clientY, INK.tool === 'select');
       if (hit) {
@@ -3185,24 +4328,154 @@ $('#jumpAdd').addEventListener('click', () => {
   db.put('scores', V.score); V.usedJumps.clear(); $('#jumpTo').value = ''; renderJumps();
 });
 async function reopenDoc() {
+  // bookmarks, pedal jumps and the parts of sets stay on the same music when pages are deleted,
+  // moved, cut or joined (by the page each was on, found again in the new order)
+  const old = V.doc, sid = V.score.id;
+  // (the page it was on, and which piece of it, for a page cut in pieces)
+  const anchor = (pg) => { if (!(old && pg >= 1 && pg <= old.pages)) return null; const o = old.orig(pg - 1); let occ = 0; for (let i = 0; i < pg - 1; i++) if (old.orig(i) === o) occ++; return { o, occ }; };
+  const marks = { bm: (V.score.bookmarks || []).map((b) => anchor(b.page)), jf: (V.score.jumps || []).map((j) => anchor(j.from)), jt: (V.score.jumps || []).map((j) => anchor(j.to)) };
+  const setParts = (typeof SETS !== 'undefined' ? SETS.list : []).flatMap((st) => (st.items || []).filter((it) => it.sid === sid)).map((it) => ({ it, a: anchor(it.a), b: anchor(it.b) }));
   V.doc = mapDoc(V.base, V.score.pageMap, V.score.cuts, V.score.glue);
+  const firstOf = (a, last) => {
+    if (!a) return null;
+    const o = a.o, at = []; for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === o) at.push(i);
+    let k = at.length ? (at[a.occ] ?? (last ? at[at.length - 1] : at[0])) : -1;
+    if (k < 0) { for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) > o) { k = i; break; } if (k < 0) k = V.doc.pages - 1; }
+    return k + 1;
+  };
+  if (old) {
+    V.score.bookmarks = (V.score.bookmarks || []).map((b, i) => ({ ...b, page: firstOf(marks.bm[i]) ?? b.page }));
+    V.score.jumps = (V.score.jumps || []).map((j, i) => ({ ...j, from: firstOf(marks.jf[i], true) ?? j.from, to: firstOf(marks.jt[i]) ?? j.to })).filter((j) => j.from !== j.to);
+    if (setParts.length) { for (const p of setParts) { p.it.a = firstOf(p.a) ?? p.it.a; p.it.b = Math.max(p.it.a, firstOf(p.b, true) ?? p.it.b); } saveSets(); }
+  }
+  markEdited();   // (the iPhone's copy is out of date)
   V.score.pages = V.doc.pages;
   clearCache(); V.splits.clear();
   updateScrub();
+  await refreshCover(V.score, V.doc);
   await db.put('scores', V.score);
 }
-async function addPaperPage(tpl) {
+// the small picture in the library: made again when the first page is no longer the same one
+// (deleted, moved, turned, joined or cut)
+async function refreshCover(sc, doc) {
+  if (!sc || !doc || !doc.pages || (V.file && V.file.kind === 'paper')) return;
+  const o = doc.orig(0);
+  const key = [o, doc.composite && doc.composite(0) ? 'g' : '', JSON.stringify((doc.piece && doc.piece(0)) || null), (sc.rot && sc.rot[o]) || 0].join('|');
+  if (sc.coverKey === key || (sc.coverKey === undefined && key === '0||null|0')) return;
+  try {
+    const t = await makeThumb(doc); if (!t) return;
+    sc.thumb = t; sc.coverKey = key;
+    if (thumbURLs.has(sc.id)) { URL.revokeObjectURL(thumbURLs.get(sc.id)); thumbURLs.delete(sc.id); }
+  } catch (e) { console.warn(e); }
+}
+async function addPaperPage(tpl, opt = {}) {
   if (!V.file || V.file.kind !== 'paper') return;
   V.file.pages = (V.file.pages || 1) + 1;
   if (typeof tpl === 'string' && tpl !== V.file.template) V.file.pagesTpl = { ...(V.file.pagesTpl || {}), [V.file.pages - 1]: tpl };
-  if (V.score.pageMap) V.score.pageMap.push(V.file.pages - 1 + (V.file.cover ? 1 : 0));
+  // (a sideways page, for a sideways layout)
+  if (opt.land) V.file.pagesLand = { ...(V.file.pagesLand || {}), [V.file.pages - 1]: 1 };
+  const orig = V.file.pages - 1 + (V.file.cover ? 1 : 0);
+  if (V.score.pageMap) V.score.pageMap.push(orig);
+  // what goes on it from the start (a layout)
+  if (opt.items) await saveItems(V.score.id + ':' + orig, opt.items);
   await db.put('files', V.file);
   V.base = await openDocument(V.file);
   await reopenDoc();
   V.score.thumb = V.score.thumb || null;
-  hidePanel(); goTo(V.doc.pages - 1); toast('Page added', 1400);
+  hidePanel(); goTo(V.doc.pages - 1); if (!opt.quiet) toast('Page added', 1400);
 }
 $('#paperAdd').addEventListener('click', () => addPaperPage());
+// Pages from another file, after the page on show: a PDF's pages (copied as they are into a PDF
+// score), photos or pictures. In a notebook each comes as a page with the picture on it.
+// Turn the page on show (the left one of two) a quarter round: a photo taken sideways stands
+// up, or a page is laid sideways like its neighbours. A notebook page changes between upright
+// and sideways paper.
+$('#pgTurn').addEventListener('click', async () => {
+  const sc = V.score, file = V.file; if (!sc || !file || !V.doc) return;
+  if (PG.staged) await savePageChanges(true);
+  const o = V.doc.orig(V.page);
+  if (file.kind === 'paper') {
+    const k = o - (file.cover ? 1 : 0); if (k < 0) { toast('The cover stays as it is.'); return; }
+    const land = { ...(file.pagesLand || {}) }; if (land[k]) delete land[k]; else land[k] = 1;
+    file.pagesLand = land; await db.put('files', file);
+  } else {
+    const rot = { ...(sc.rot || {}) }; rot[o] = (((+rot[o] || 0) + 90) % 360); if (!rot[o]) delete rot[o];
+    sc.rot = rot; scoreFile(sc, file);
+  }
+  try { V.base.destroy(); } catch {}
+  V.base = await openDocument(file);
+  PG.thumbs.clear();
+  await reopenDoc(); layout();
+  if (openPanel === 'pages') renderPagesPanel();
+  const items = V.pages.find((p) => p.orig === o)?.layer?.items || [];
+  toast(`Page ${V.page + 1} turned.` + (items.some((x) => x.t !== 'passage') ? ' Its markings stay where they were: move them if needed.' : ''), 2400);
+});
+$('#pgAddFile').addEventListener('click', () => { if (PG.staged) savePageChanges(true); $('#pgAddInput').value = ''; $('#pgAddInput').click(); });
+$('#pgAddInput').addEventListener('change', (e) => { const f = usableFiles(e.target.files); if (f.length) addPagesFromFiles(f); else if (e.target.files.length) toast('Only PDFs and pictures can be added as pages.'); });
+async function addPagesFromFiles(files) {
+  const sc = V.score, file = V.file; if (!sc || !file) return;
+  if (addPagesFromFiles.busy) { toast('Pages are being added. Wait a moment.'); return; }
+  addPagesFromFiles.busy = true;
+  let n = 0; const tick = () => { n++; $('#toast').textContent = `Adding pages… ${n}`; };
+  toast('Adding pages…', 120000);
+  // (the score closed meanwhile: what was written for it so far goes again)
+  const made = [], inkMade = [];
+  const gone = () => V.score !== sc;
+  const undoMade = async () => { for (const id of made) await db.del('files', id).catch(() => {}); for (const k of inkMade) await db.del('ink', k).catch(() => {}); $('#toast').hidden = true; };
+  try {
+    const oldPages = V.base.pages;
+    const lastShown = Math.min(V.doc.pages - 1, V.page + (V.spread === 2 ? 1 : 0));
+    const afterOrig = V.doc.orig(lastShown);
+    if (file.kind === 'paper') {
+      const pics = await filesAsPictures(files, tick);
+      const aspect = NB_PH / NB_PW;
+      for (const b of pics) {
+        const pic = await putPicture(b);
+        const land = pic.w > pic.h * 1.1, a = land ? 1 / aspect : aspect;
+        let w = 0.92, h = (w * pic.h / pic.w) / a; if (h > 0.92) { h = 0.92; w = (h * a * pic.w) / pic.h; }
+        file.pages = (file.pages || 1) + 1;
+        if (land) file.pagesLand = { ...(file.pagesLand || {}), [file.pages - 1]: 1 };
+        if (file.template !== 'plain') file.pagesTpl = { ...(file.pagesTpl || {}), [file.pages - 1]: 'plain' };   // (blank paper under the picture)
+        const orig = file.pages - 1 + (file.cover ? 1 : 0);
+        if (gone()) { await undoMade(); return; }
+        inkMade.push(sc.id + ':' + orig);
+        await saveItems(sc.id + ':' + orig, [{ t: 'img', id: pic.id, x: 0.5, y: 0.5, w: +w.toFixed(5), h: +h.toFixed(5), rot: 0, cr: [0, 0, 1, 1], a: 1, fr: '', rr: 0 }]);
+      }
+    } else {
+      // kept as files of their own, after the score's own pages (the score's file, maybe a large PDF,
+      // is never written again: that took all the iPad's memory)
+      const ids = [];
+      let pics = [];
+      const flush = async () => { if (!pics.length) return; const f = { id: uid(), kind: 'images', data: pics, partOf: sc.id }; made.push(f.id); await db.put('files', f); ids.push(f.id); pics = []; };
+      for (const f of files) {
+        if (gone()) { await undoMade(); return; }
+        if (/pdf/i.test(f.type) || /\.pdf$/i.test(f.name || '')) { await flush(); const pf = { id: uid(), kind: 'pdf', data: await f.arrayBuffer(), partOf: sc.id }; made.push(pf.id); await db.put('files', pf); ids.push(pf.id); tick(); }
+        else pics.push(...await filesAsPictures([f], tick));
+      }
+      await flush();
+      if (gone()) { await undoMade(); return; }
+      sc.more = [...(sc.more || []), ...ids]; file.more = sc.more;
+    }
+    if (file.kind === 'paper') await db.put('files', file);
+    try { V.base.destroy(); } catch {}
+    delete sc.sizes;
+    V.base = await openDocument(file);
+    const added = [...Array(V.base.pages - oldPages).keys()].map((k) => oldPages + k);
+    if (!added.length) { toast('No pages were found in that file.'); await reopenDoc(); layout(); return; }
+    const map = sc.pageMap ? sc.pageMap.slice() : [...Array(oldPages).keys()];
+    const at = map.indexOf(afterOrig);
+    map.splice(at < 0 ? map.length : at + 1, 0, ...added);
+    sc.pageMap = map;
+    markEdited(); phoneAnswers.clear();
+    await reopenDoc();
+    PG.thumbs.clear();
+    let first = 0; for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === added[0]) { first = i; break; }
+    goTo(first);
+    if (openPanel === 'pages') renderPagesPanel();
+    toast(added.length === 1 ? 'Page added' : added.length + ' pages added', 1800);
+  } catch (err) { console.error(err); if (gone()) await undoMade(); else toast('Those pages could not be added: ' + (err.message || err)); }
+  finally { addPagesFromFiles.busy = false; }
+}
 // In a notebook, a + under the last page adds the next one.
 const paperPlus = el('button', 'paper-plus'); paperPlus.innerHTML = '<svg><use href="#i-plus"/></svg><span>New page</span>';
 paperPlus.hidden = true; $('#score').append(paperPlus);
@@ -3229,15 +4502,24 @@ function pageThumb(o) {
     t = { cv, stale: false };
     PG.thumbs.set(o, t);
     const base = V.base, sid = V.score.id;
-    THQ.q.push(async () => {
+    // drawn only when it comes into view (a long score has hundreds of pages)
+    const job = async () => {
       if (base !== V.base) return;
       const tmp = document.createElement('canvas');
       await base.render(o, tmp, 180, cv.height).catch(() => {});
       const items = (await loadItems(sid + ':' + o).catch(() => [])).filter((s) => s.t !== 'passage');
-      if (items.length) { await preloadAssets(items); const g = tmp.getContext('2d'); for (const s of items) drawItem(g, s, tmp.width, tmp.height, false); }
+      if (items.length) { await preloadAssets(items); await preloadMasks(items); const g = tmp.getContext('2d'); for (const s of items) drawItem(g, s, tmp.width, tmp.height, false); }
       cv.getContext('2d').drawImage(tmp, 0, 0, cv.width, cv.height); tmp.width = tmp.height = 0;
-    });
-    runThumbs();
+    };
+    t.job = job;
+  }
+  if (t.job) {
+    if (!window.IntersectionObserver) { const j = t.job; t.job = null; THQ.q.push(j); runThumbs(); }
+    else {
+      if (t.io) t.io.disconnect();
+      const io = t.io = new IntersectionObserver((es) => { if (t.job && es.some((x) => x.isIntersecting)) { io.disconnect(); t.io = null; const j = t.job; t.job = null; THQ.q.push(j); runThumbs(); } }, { rootMargin: '400px 0px' });
+      io.observe(t.cv);
+    }
   }
   return t.cv;
 }
@@ -3252,36 +4534,31 @@ function renderPagesPanel() {
   const saved = V.score.pageMap || all;
   const map = PG.staged || saved;
   const changed = !!PG.staged && PG.staged.join() !== saved.join();
-  $('#pgSave').hidden = !changed;
+  $('#pgSave').hidden = !changed || !!PG.selecting;
   // cropping, cutting and moving lines are for printed scores, not notebook pages
   $('#panel-pages .tool-list').hidden = NBK();
   PG.sel = new Set([...PG.sel].filter((o) => map.includes(o)));
   const grid = $('#pageGrid'); grid.textContent = '';
-  // no separate "Select" mode: every page has its own round tick to choose it, and the Delete
-  // button shows as soon as one is chosen. Tapping the page itself goes to it.
-  grid.classList.add('selecting');
-  $('#pgSelect').hidden = true;
-  $('#pgHint').textContent = 'Tap the circle on the pages you don’t need, then Delete. Tap a page to go to it.';
+  // Tap a page to go to it. Hold a page: a Delete button comes up on it, and moving the finger
+  // (still holding) carries the page to another place.
+  // Hold a page: choosing starts with it; tap more pages to add them, then Delete at the bottom.
+  // Hold and drag a page to move it.
+  grid.classList.toggle('selecting', !!PG.selecting);
+  $('#pgSelect').hidden = false; $('#pgSelect').textContent = PG.selecting ? 'Cancel' : 'Select';
+  $('#pgHint').textContent = PG.selecting ? 'Tap the pages to delete, then Delete below.' : 'Tap a page to go to it. Hold a page to choose pages to delete; hold and drag it to move it.';
   map.forEach((o, i) => {
-    const b = el('button', 'pthumb' + (PG.sel.has(o) ? ' picked' : '') + (V.doc && V.doc.orig && V.doc.orig(V.page) === o ? ' here' : ''));
+    const b = el('button', 'pthumb' + (V.doc && V.doc.orig && V.doc.orig(V.page) === o ? ' here' : '') + (PG.selecting && PG.sel.has(o) ? ' picked' : ''));
     b.type = 'button';
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     b.append(frame, el('span', 'num', String(i + 1)));
-    // the tick is its own button next to the page (not inside it), so a tap on it only chooses
-    const cell = el('div', 'pcell'); cell.append(b);
-    const pick = el('button', 'pick'); pick.type = 'button'; pick.setAttribute('aria-label', 'Choose page ' + (i + 1)); pick.setAttribute('aria-pressed', String(PG.sel.has(o))); pick.append(icon('i-check'));
-    pick.addEventListener('pointerdown', (e) => e.stopPropagation());
-    pick.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      PG.sel.has(o) ? PG.sel.delete(o) : PG.sel.add(o);
-      b.classList.toggle('picked', PG.sel.has(o)); pick.setAttribute('aria-pressed', String(PG.sel.has(o)));
-      syncPageDelete(map);
-    });
-    cell.append(pick);
-    b.addEventListener('click', async () => {
+    const cell = el('div', 'pcell'); cell.append(b); cell.dataset.i = i;
+    b.addEventListener('click', async (e) => {
+      if (PGH.justHeld) { e.preventDefault(); return; }
+      if (PG.selecting) { if (PG.sel.has(o)) PG.sel.delete(o); else PG.sel.add(o); b.classList.toggle('picked', PG.sel.has(o)); syncPageDelete(map); return; }
       if (PG.staged) await savePageChanges(true);
       hidePanel(); const k = V.doc ? [...Array(V.doc.pages).keys()].find((q) => V.doc.orig(q) === o) : i; goTo(k === undefined ? i : k);
     });
+    pageHold(cell, b, o, i, map);
     grid.append(cell);
   });
   const gone = all.filter((o) => !map.includes(o));
@@ -3292,15 +4569,97 @@ function renderPagesPanel() {
     const b = el('button', 'pthumb gone');
     const frame = el('span', 'pframe'); frame.append(pageThumb(o));
     b.append(frame, el('span', 'num', 'Put back'));
-    b.addEventListener('click', () => { PG.staged = [...map, o].sort((x, y) => x - y); renderPagesPanel(); });
+    b.addEventListener('click', () => { const at = map.findIndex((x) => x > o); const next = map.slice(); next.splice(at < 0 ? next.length : at, 0, o); PG.staged = next; renderPagesPanel(); });
     tg.append(b);
   }
   syncPageDelete(map);
 }
 $('#pgSelect').addEventListener('click', () => { PG.selecting = !PG.selecting; PG.sel.clear(); renderPagesPanel(); });
+const grid0 = () => $('#pageGrid');
+// ---------- holding a page: delete it, or drag it somewhere else ----------
+const PGH = { t: 0, drag: null, justHeld: false, menu: null };
+function pageHoldClose() { if (PGH.menu) { PGH.menu.remove(); PGH.menu = null; } $$('#pageGrid .pcell.held').forEach((c) => c.classList.remove('held')); }
+function pageHold(cell, btn, o, i, map) {
+  let start = null;
+  const cancel = () => { clearTimeout(PGH.t); start = null; };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    pageHoldClose();
+    start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    PGH.justHeld = false;
+    clearTimeout(PGH.t);
+    PGH.t = setTimeout(() => {
+      if (!start) return;
+      PGH.justHeld = true;
+      if (navigator.vibrate) try { navigator.vibrate(10); } catch {}
+      // held: choosing starts with this page (Delete comes up below); moving now drags it instead
+      cell.classList.add('held');
+      if (!PG.selecting) { PG.selecting = true; grid0().classList.add('selecting'); $('#pgSelect').textContent = 'Cancel'; $('#pgHint').textContent = 'Tap the pages to delete, then Delete below.'; }
+      PG.sel.add(o); btn.classList.add('picked'); syncPageDelete(map);
+      PGH.drag = { o, from: i, map, cell, x: start.x, y: start.y, id: start.id, ghost: null, to: i, picked: true };
+    }, 420);
+  });
+  btn.addEventListener('pointermove', (e) => {
+    if (!start || e.pointerId !== start.id) return;
+    if (!PGH.drag && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 9) cancel();   // a scroll, not a hold
+  });
+  btn.addEventListener('pointerup', cancel); btn.addEventListener('pointercancel', () => { if (!PGH.drag || !PGH.drag.ghost) cancel(); });
+  // while a held page is dragged, the panel must not scroll
+  btn.addEventListener('touchmove', (e) => { if (PGH.drag) e.preventDefault(); }, { passive: false });
+}
+window.addEventListener('pointermove', (e) => {
+  const d = PGH.drag; if (!d || e.pointerId !== d.id) return;
+  if (!d.ghost) {
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 12) return;
+    // lifted and carried: a picture of the page follows the finger (moving, not choosing)
+    if (PGH.menu) { PGH.menu.remove(); PGH.menu = null; }
+    if (d.picked) { PG.sel.delete(d.o); if (!PG.sel.size) PG.selecting = false; d.cell.querySelector('.pthumb').classList.remove('picked'); syncPageDelete(d.map); }
+    const src = d.cell.querySelector('canvas'), r = src.getBoundingClientRect();
+    const g = el('canvas', 'pg-ghost'); g.width = src.width; g.height = src.height; g.getContext('2d').drawImage(src, 0, 0);
+    g.style.width = r.width + 'px'; g.style.height = r.height + 'px';
+    document.body.append(g); d.ghost = g; d.w = r.width; d.h = r.height;
+    d.cell.classList.add('carried');
+    // where every page sits now (its place in the grid): the others slide between these places
+    const gr = grid0().getBoundingClientRect();
+    d.cells = $$('#pageGrid .pcell'); d.slots = d.cells.map((c) => { const q = c.getBoundingClientRect(); return { x: q.left - gr.left, y: q.top - gr.top, w: q.width, h: q.height }; });
+    grid0().classList.add('reordering');
+  }
+  d.ghost.style.left = (e.clientX - d.w / 2) + 'px'; d.ghost.style.top = (e.clientY - d.h / 2) + 'px';
+  // where it would go: the place nearest the finger. The other pages move apart to make room
+  // for it there, so you see the new order before letting go.
+  const gr = grid0().getBoundingClientRect(), px = e.clientX - gr.left, py = e.clientY - gr.top;
+  let best = d.to, bd = Infinity;
+  d.slots.forEach((q, k) => { const dd = Math.hypot(px - (q.x + q.w / 2), (py - (q.y + q.h / 2)) * 1.3); if (dd < bd) { bd = dd; best = k; } });
+  if (best !== d.to) { d.to = best; layoutDrag(d); } else if (!d.laid) layoutDrag(d);
+  // near the top or bottom of the panel, it scrolls
+  const pb = $('#panel-pages .panel-body'), pr = pb.getBoundingClientRect();
+  if (e.clientY < pr.top + 60) pb.scrollTop -= 14; else if (e.clientY > pr.bottom - 60) pb.scrollTop += 14;
+});
+function layoutDrag(d) {
+  d.laid = true;
+  // the order it would have: without the carried page, then the carried page put in at d.to
+  const order = d.cells.map((_, k) => k).filter((k) => k !== d.from); order.splice(d.to, 0, d.from);
+  order.forEach((k, slot) => { const a = d.slots[k], b = d.slots[slot]; d.cells[k].style.transform = (a.x === b.x && a.y === b.y) ? '' : `translate(${b.x - a.x}px, ${b.y - a.y}px)`; });
+}
+const pageDragEnd = (e) => {
+  const d = PGH.drag; if (!d || (e && e.pointerId !== d.id)) return;
+  PGH.drag = null;
+  setTimeout(() => { PGH.justHeld = false; }, 350);
+  $$('#pageGrid .pcell').forEach((x) => { x.classList.remove('carried'); x.style.transform = ''; });
+  grid0().classList.remove('reordering');
+  if (!d.ghost) { $$('#pageGrid .pcell.held').forEach((c) => c.classList.remove('held')); return; }   // held without moving: choosing
+  d.ghost.remove(); pageHoldClose();
+  const to = d.to;
+  if (to === d.from) return;
+  const next = d.map.slice(); next.splice(d.from, 1); next.splice(clamp(to, 0, next.length), 0, d.o);
+  PG.staged = next; renderPagesPanel();
+};
+window.addEventListener('pointerup', pageDragEnd); window.addEventListener('pointercancel', pageDragEnd);
+document.addEventListener('pointerdown', (e) => { if (PGH.menu && !e.target.closest('.pg-menu') && !e.target.closest('.pcell.held')) pageHoldClose(); }, true);
 function syncPageDelete(map) {
   const n = PG.sel.size, btn = $('#pgDelete');
-  btn.hidden = !n;
+  btn.hidden = !PG.selecting;
+  if (PG.selecting) $('#pgSave').hidden = true;
   btn.disabled = !n || n >= map.length;
   btn.querySelector('span').textContent = !n ? 'Choose pages to delete' : n >= map.length ? 'Keep at least one page' : n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
 }
@@ -3308,12 +4667,10 @@ async function setPageMap(next) {
   const all = V.base.pages;
   const cur = V.score.pageMap || [...Array(all).keys()];
   const removed = cur.filter((o) => !next.includes(o));
-  // keep bookmarks and pedal jumps on the same music
-  const newIndex = (pg) => { const o = cur[pg - 1]; let k = next.indexOf(o); if (k < 0) { k = next.findIndex((x) => x > o); if (k < 0) k = next.length - 1; } return k + 1; };
-  V.score.bookmarks = (V.score.bookmarks || []).map((b) => ({ ...b, page: newIndex(b.page) }));
-  V.score.jumps = (V.score.jumps || []).map((j) => ({ ...j, from: newIndex(j.from), to: newIndex(j.to) })).filter((j) => j.from !== j.to);
+  // (bookmarks, pedal jumps and sets are kept on the same music by reopenDoc)
   const curOrig = cur[V.page];
-  V.score.pageMap = next.length === all ? null : next;
+  // the plain order (every page, in order) needs no map; any other order or set is kept
+  V.score.pageMap = next.length === all && next.every((o, i) => o === i) ? null : next;
   await reopenDoc();
   const k = next.indexOf(curOrig);
   V.page = clamp(k >= 0 ? k : V.page, 0, V.doc.pages - 1);
@@ -3325,10 +4682,11 @@ $('#pgDelete').addEventListener('click', () => {
   const all = [...Array(V.base.pages).keys()];
   const map = PG.staged || V.score.pageMap || all;
   if (!PG.sel.size || PG.sel.size >= map.length) return;
-  // the pages go at once (they wait below, to put back); Save keeps the change
+  // the pages go at once (they wait below, to put back)
+  const n = PG.sel.size;
   PG.staged = map.filter((o) => !PG.sel.has(o));
-  PG.sel.clear();
-  renderPagesPanel();
+  PG.sel.clear(); PG.selecting = false;
+  savePageChanges(true).then(() => { renderPagesPanel(); toast(n === 1 ? 'Page deleted. It waits under Deleted pages, to put back.' : `${n} pages deleted. They wait under Deleted pages, to put back.`, 3000); });
 });
 // keep the changes: the score or notebook is laid out once, with the panel closed
 async function savePageChanges(quiet) {
@@ -3339,7 +4697,7 @@ async function savePageChanges(quiet) {
   const n = cur.filter((o) => !next.includes(o)).length, back = next.filter((o) => !cur.includes(o)).length;
   await setPageMap(next);
   goTo(V.page, false);
-  if (!quiet) toast(n ? (n === 1 ? 'Page deleted. Put it back any time from Pages.' : `${n} pages deleted. Put them back any time from Pages.`) : back === 1 ? 'Page put back.' : 'Pages put back.', 2600);
+  if (!quiet) toast(n ? (n === 1 ? 'Page deleted. Put it back any time from Pages.' : `${n} pages deleted. Put them back any time from Pages.`) : back === 1 ? 'Page put back.' : back ? 'Pages put back.' : 'Pages moved.', 2600);
 }
 $('#pgSaveBtn').addEventListener('click', () => { hidePanel(); });
 $('#pgCancel').addEventListener('click', () => { PG.staged = null; PG.sel.clear(); renderPagesPanel(); });
@@ -3377,37 +4735,62 @@ $('#pgCut').addEventListener('click', async () => {
 // Pull lines from the next page up onto this one (no turn in the middle of a line).
 $('#pgGlue').addEventListener('click', async () => {
   if (!V.doc) return;
-  if (V.page >= V.doc.pages - 1) { toast('This is the last page.'); return; }
+  // two pages side by side: the lines come onto the right-hand page (the one before the turn)
+  const at = V.spread === 2 && V.page + 1 <= V.doc.pages - 1 && V.doc.orig(V.page + 1) !== V.doc.orig(V.page) ? V.page + 1 : V.page;
+  if (at >= V.doc.pages - 1) { toast(V.spread === 2 ? 'These are the last pages: there is nothing after them to move up.' : 'This is the last page.'); return; }
   hidePanel(); setInking(false);
-  const o = V.doc.orig(V.page);
+  const o = V.doc.orig(at);
   const cur = (V.score.glue || {})[o];
-  let next = V.doc.composite(V.page) ? V.doc.gluedFrom(V.page) : V.doc.orig(V.page + 1);
-  if (V.doc.piece(V.page) || (!V.doc.composite(V.page) && V.doc.piece(V.page + 1))) { toast('Lines can be moved between whole pages (not pieces of a cut page).', 3500); return; }
-  const r = await openGluer({ doc: V.base, orig: o, next, glue: cur, pageLabel: `Page ${V.page + 1} and ${V.page + 2}` });
+  let next = V.doc.composite(at) ? V.doc.gluedFrom(at) : V.doc.orig(at + 1);
+  if (V.doc.piece(at) || (!V.doc.composite(at) && V.doc.piece(at + 1))) { toast('Lines can be moved between whole pages (not pieces of a cut page).', 3500); return; }
+  const r = await openGluer({ doc: V.base, orig: o, next, glue: cur, pageLabel: `Page ${at + 1} and ${at + 2}` });
   if (!r) return;
   V.score.glue = { ...(V.score.glue || {}) };
   if (r.remove) delete V.score.glue[o]; else V.score.glue[o] = r;
   await db.put('scores', V.score);
   await reopenDoc();
-  for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === o) { V.page = i; break; }
-  layout();
-  toast(r.remove ? 'The lines are back on their page.' : 'Lines moved up. The turn now falls between lines.', 2200);
+  // back where you were (the spread keeps its left page)
+  for (let i = 0; i < V.doc.pages; i++) if (V.doc.orig(i) === o) { V.page = at === V.page ? i : Math.max(0, i - 1); break; }
+  clearCache(); layout();
+  // the glued pages must follow each other: if something stops it (a page deleted or cut), say so
+  const ok = r.remove || [...Array(V.doc.pages).keys()].some((i) => V.doc.composite(i) && V.doc.orig(i) === o);
+  toast(r.remove ? 'The lines are back on their page.' : ok ? `Lines moved up onto page ${at + 1}. The turn now falls between lines.` : 'The lines could not be moved: the two pages are no longer one after the other.', 2600);
 });
 
 // ---------- export ----------
-$('#exportPdfBtn').addEventListener('click', () => showPanel('exportpdf'));
-async function doExport(withInk) {
+$('#exportPdfBtn').addEventListener('click', () => { fillExportPics(); $('#expPages').hidden = true; $('#expWith').hidden = $('#expClean').hidden = false; $('#expHint').textContent = 'Deleted pages are left out. The file opens in the share sheet: save it to Files, mail it or AirDrop it.'; showPanel('exportpdf'); });
+async function doExport(withInk, only) {
   hidePanel();
   toast('Making the PDF…', 60000);
+  await flushInk();
   try {
-    const blob = await exportPdf({ score: V.score, file: V.file, doc: V.doc, withInk, boxOf: (i) => cropOf(i), onProgress: (f) => { $('#toast').textContent = `Making the PDF… ${Math.round(f * 100)}%`; } });
-    setPaperColor(PAPER_COLOR[S.paper] || '#fff');
-    const name = (V.score.title || 'Score').replace(/[\\/:*?"<>|]+/g, '').slice(0, 80) + (withInk ? '' : ' (clean)') + '.pdf';
+    let blob; try { blob = await exportPdf({ score: V.score, file: V.file, doc: V.doc, withInk, only, boxOf: (i) => cropOf(i, true), onProgress: (f) => { $('#toast').textContent = `Making the PDF… ${Math.round(f * 100)}%`; } }); } finally { setPaperColor(PAPER_COLOR[S.paper] || '#fff'); }
+    const pagePart = only && only.length === 1 ? ' – page ' + (only[0] + 1) : '';
+    const name = (V.score.title || 'Score').replace(/[\\/:*?"<>|]+/g, '').slice(0, 80) + pagePart + (withInk ? '' : ' (clean)') + '.pdf';
     $('#toast').hidden = true;
     await shareBlob(blob, name);
   } catch (e) { console.error(e); toast('The PDF could not be made: ' + (e.message || e)); }
 }
 $('#expWith').addEventListener('click', () => doExport(true));
+// A page as a picture (to send, or to put in another app): the page on show, or either of the two
+function fillExportPics() {
+  const box = $('#expPics'); box.textContent = '';
+  if (!V.doc) return;
+  const shown = [V.page, ...(V.spread === 2 && V.page + 1 < V.doc.pages ? [V.page + 1] : [])];
+  for (const i of shown) {
+    const b = el('button', 'rec-choice wide-choice'); b.append(icon('i-image'), el('b', '', shown.length > 1 ? (i === V.page ? 'Left page as a picture' : 'Right page as a picture') : 'This page as a picture'), el('span', '', 'Page ' + (i + 1) + ' · a JPEG with your markings'));
+    b.addEventListener('click', () => doExportPicture(i)); box.append(b);
+  }
+}
+async function doExportPicture(i) {
+  hidePanel(); toast('Making the picture…', 60000);
+  try {
+    let blob; try { blob = await exportPicture({ score: V.score, doc: V.doc, i, withInk: !stage.classList.contains('hide-ink'), box: cropOf(i, true) }); } finally { setPaperColor(PAPER_COLOR[S.paper] || '#fff'); }
+    const name = (V.score.title || 'Score').replace(/[\\/:*?"<>|]+/g, '').slice(0, 80) + ' – page ' + (i + 1) + '.jpg';
+    $('#toast').hidden = true;
+    await shareBlob(blob, name);
+  } catch (e) { console.error(e); toast('The picture could not be made: ' + (e.message || e)); }
+}
 // a notebook's own bar
 $('#nbPhotoBtn').addEventListener('click', () => { if (!V.inking) setInking(true); $('#insFile').click(); });
 $('#nbAddBtn').addEventListener('click', () => {
@@ -3417,7 +4800,22 @@ $('#nbAddBtn').addEventListener('click', () => {
 });
 $('#apSame').addEventListener('click', async () => { $('#addPagePop').hidden = true; const last = V.file && V.file.pagesTpl && V.file.pagesTpl[(V.file.pages || 1) - 1]; await addPaperPage(last || undefined); });
 $('#nbPagesBtn').addEventListener('click', () => showPanel('pages'));
-$('#nbExportBtn').addEventListener('click', () => { finishTextBox(); clearSelection(); doExport(true); });
+// a notebook: the page on show (or either of the two), or the whole notebook
+$('#nbExportBtn').addEventListener('click', () => {
+  finishTextBox(); clearSelection();
+  const box = $('#expPages'); box.textContent = '';
+  const shown = [V.page, ...(V.spread === 2 && V.page + 1 < V.doc.pages ? [V.page + 1] : [])];
+  const cover = V.file && V.file.cover ? 1 : 0;
+  for (const i of shown) {
+    const b = el('button', 'rec-choice wide-choice'); b.append(icon('i-pdf'), el('b', '', shown.length > 1 ? (i === V.page ? 'The left page' : 'The right page') : 'This page'), el('span', '', i < cover ? 'The cover' : 'Page ' + (i + 1 - cover) + ' only'));
+    b.addEventListener('click', () => doExport(true, [i])); box.append(b);
+  }
+  const all = el('button', 'rec-choice wide-choice'); all.append(icon('i-pen'), el('b', '', 'The whole notebook'), el('span', '', V.doc.pages + ' pages'));
+  all.addEventListener('click', () => doExport(true)); box.append(all);
+  box.hidden = false; $('#expWith').hidden = $('#expClean').hidden = true; fillExportPics();
+  $('#expHint').textContent = 'The file opens in the share sheet: save it to Files, mail it, print it or AirDrop it.';
+  showPanel('exportpdf');
+});
 $('#expClean').addEventListener('click', () => doExport(false));
 
 // ---------- trim margins ----------
@@ -3437,7 +4835,8 @@ async function setTrim(on) {
     score.trimBox = box; $('#toast').hidden = true;
     if (V.score !== score) { db.put('scores', score); return; }
   }
-  V.crop = on ? V.score.trimBox : null;
+  // (switched again while measuring: the switch as it is now decides)
+  V.crop = V.score.trim && V.score.trimBox ? V.score.trimBox : null;
   await db.put('scores', V.score);
   clearCache(); V.splits.clear(); layout();
 }
@@ -3449,8 +4848,9 @@ async function measureMargins() {
   for (let i = 0; i < Math.min(base.pages, 12); i++) {
     const [pw, ph] = base.sizes[i];
     const c = document.createElement('canvas');
-    await base.render(i, c, 240, Math.round((240 * ph) / pw)).catch(() => {});
-    box = unionBox(box, contentBox(c)); c.width = c.height = 0;
+    const done = await rqAdd(3, () => base.render(i, c, 240, Math.round((240 * ph) / pw)).then(() => true), () => V.score !== score).catch(() => false);
+    if (done) box = unionBox(box, contentBox(c));
+    c.width = c.height = 0;
     if (V.score !== score) { delete score._measuring; return; }
   }
   delete score._measuring;
@@ -3458,7 +4858,16 @@ async function measureMargins() {
   if (box) { const m = 0.012; box = { x: Math.max(0, box.x - m), y: Math.max(0, box.y - m), w: Math.min(1, box.w + 2 * m), h: Math.min(1, box.h + 2 * m) }; }
   score.autoBox = box && (box.w < 0.96 || box.h < 0.96) ? box : null;
   await db.put('scores', score);
-  if (V.score === score && score.autoBox) { clearCache(); layout(); }
+  // drawn again at the new size; until then the pages already drawn are shown, so nothing waits
+  if (V.score === score && score.autoBox) layoutWhenFree(score);
+}
+// A new layout made by Stand itself (not by you) waits until you are not writing, typing or moving
+// something: a page drawn again under the Pencil would lose the line being written.
+function layoutWhenFree(score, tries = 0) {
+  if (V.score !== score) return;
+  const busy = GS || Sel.entry || (typeof textEdit !== 'undefined' && textEdit) || (typeof tbEdit !== 'undefined' && tbEdit);
+  if (busy && tries < 240) { setTimeout(() => layoutWhenFree(score, tries + 1), 250); return; }
+  layout();
 }
 $('#trimMargins').addEventListener('change', (e) => setTrim(e.target.checked));
 
@@ -3530,7 +4939,7 @@ $('#delScoreYes').addEventListener('click', async () => {
 // Items for a passage go on the page's markings layer, without undo steps of their own.
 function mapPassageItems(key, fn) {
   const L = layerFor(key);
-  if (L && L.ready) { L.setItems(fn(L.items.slice())); return; }
+  if (L && L.ready) { L.setItems(fn(L.items.slice()), true); return; }
   loadItems(key).then((items) => saveItems(key, fn(items)));
 }
 initPassages({
@@ -3577,7 +4986,8 @@ const practice = {
     // which half hour of the day: for the practice plan
     const nowD = new Date(), slot = nowD.getHours() * 2 + (nowD.getMinutes() >= 30 ? 1 : 0);
     const sd = this.slots[k] || (this.slots[k] = {}); sd[slot] = (sd[slot] || 0) + dt;
-    setSetting('log', this.log); setSetting('log2', this.log2); setSetting('slots', this.slots);
+    // (a backup being restored: its log is not written over before Stand starts again)
+    if (!window.__restoring) { setSetting('log', this.log); setSetting('log2', this.log2); setSetting('slots', this.slots); }
     if (openPanel === 'goal') renderTracker();
   },
 };
@@ -3585,7 +4995,7 @@ setInterval(() => { practice.flush(); renderGoal(); }, 15000);
 
 // ---------- practice from the iPad, on the iPhone ----------
 // The iPhone keeps the iPad's log next to its own and shows both together.
-const IPAD = { data: null, busy: false, last: 0 };
+const IPAD = { data: null, busy: false, last: 0, tried: 0 };
 function allPractice() {
   const d = IPAD.data; if (!d) return { log: practice.log, log2: practice.log2, slots: practice.slots };
   const log = { ...practice.log }; for (const [k, v] of Object.entries(d.log || {})) log[k] = (log[k] || 0) + v;
@@ -3607,9 +5017,136 @@ async function practiceForPhone() {
   for (const d of Object.values(log2)) for (const id of Object.keys(d.pieces || {})) titles[id] = titleOf(id);
   const pieces = scores.filter((x) => (x.seconds || 0) > 59).map((x) => ({ id: x.id, title: x.title, composer: x.composer || '', seconds: Math.round(x.seconds) }));
   for (const x of pieces) titles[x.id] = x.title;
-  return { v: 1, at: Date.now(), log: keep(practice.log), log2, titles, pieces, goal: S.goal || 30, slots: keep(practice.slots || {}) };
+  return { v: 1, at: Date.now(), log: keep(practice.log), log2, titles, pieces, goal: S.goal || 30, slots: keep(practice.slots || {}), plan: practice.plan };
 }
-const pHost = new PracticeHost(practiceForPhone);
+// The iPhone asks for the scores, to read them: the list with small pictures, then one score as
+// page pictures (the markings as a clear layer of their own). The same question asked twice at
+// once (nearby and over the internet) is answered from the same work.
+const blobToData = (b) => new Promise((res) => { if (!b) { res(null); return; } const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(b); });
+const canvasData = (c, type, q) => new Promise((res) => c.toBlob((b) => blobToData(b).then(res), type, q));
+const phoneAnswers = new Map();
+// A score goes page by page (the iPhone asks for each in turn): only one page is ever drawn and
+// held at a time here and there (a whole score at once took all the memory of both).
+// (the same question come twice at once, nearby and over the internet: answered by the same work)
+const phoneLive = new Map();
+function answerPhone(q) {
+  if (q && (q.what === 'page' || q.what === 'scoreinfo')) {
+    const k = q.what + ':' + q.id + ':' + (q.i ?? '');
+    if (phoneLive.has(k)) return phoneLive.get(k);
+    const p = q.what === 'page' ? pageForPhone(q.id, q.i) : infoForPhone(q.id);
+    phoneLive.set(k, p); const off = () => { if (phoneLive.get(k) === p) phoneLive.delete(k); }; p.then(off, off);
+    return p;
+  }
+  const key = JSON.stringify(q || {});
+  const hit = phoneAnswers.get(key); if (hit && Date.now() - hit.t < 60000) return hit.p;
+  const p = (q && q.what === 'score') ? scoreForPhone(q.id) : scoresForPhone();
+  // (only the list is kept for a moment: a whole score is never kept)
+  if (!(q && q.what === 'score')) { phoneAnswers.set(key, { t: Date.now(), p }); p.catch(() => phoneAnswers.delete(key)); }
+  return p;
+}
+// the score being sent, kept open while its pages are asked for (closed when nobody asks for a while)
+// (opened again when the score has changed since: its pages, their order, its markings)
+const PH = { id: null, key: null, base: null, doc: null, sc: null, t: 0, closeT: 0, busy: Promise.resolve(), opening: null };
+const phoneStamp = (id) => { const sc = scores.find((x) => x.id === id); if (!sc) return 0; const cur = V.score && V.score.id === id ? V.score : sc; return Math.max(sc.added || 0, cur.edited || sc.edited || 0); };
+async function phoneDoc(id) {
+  const key = id + ':' + phoneStamp(id);
+  if (PH.key === key && PH.doc) { PH.t = Date.now(); return PH; }
+  if (PH.opening && PH.opening.key === key) return PH.opening.p;
+  phoneDocClose();
+  const p = (async () => {
+    const sc0 = scores.find((x) => x.id === id); if (!sc0) throw new Error('none');
+    const sc = V.score && V.score.id === id ? V.score : sc0;
+    const file = await db.get('files', sc.fileId); if (!file) throw new Error('none');
+    scoreFile(sc, file);
+    const base = await openDocument(file, sc.sizes);
+    if (!PH.opening || PH.opening.key !== key) { try { base.destroy(); } catch {} throw new Error('busy'); }
+    Object.assign(PH, { id, key, base, doc: mapDoc(base, sc.pageMap, sc.cuts, sc.glue), sc, t: Date.now(), opening: null });
+    clearInterval(PH.closeT); PH.closeT = setInterval(() => { if (Date.now() - PH.t > 25000) phoneDocClose(); }, 5000);
+    return PH;
+  })();
+  PH.opening = { key, p };
+  p.catch(() => { if (PH.opening && PH.opening.p === p) PH.opening = null; });
+  return p;
+}
+function phoneDocClose() { clearInterval(PH.closeT); if (PH.base) try { PH.base.destroy(); } catch {} Object.assign(PH, { id: null, key: null, base: null, doc: null, sc: null, opening: null }); }
+// (all questions about a score in turn: one never closes the score another is drawing)
+function phoneJob(fn) { const job = PH.busy.then(fn); PH.busy = job.catch(() => {}); return job; }
+function infoForPhone(id) {
+  return phoneJob(async () => {
+    const P = await phoneDoc(id);
+    return { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
+  });
+}
+function pageForPhone(id, i) {
+  // one page at a time, in turn (two questions at once never draw two pages together)
+  return phoneJob(async () => {
+    const P = await phoneDoc(id), doc = P.doc;
+    if (!(i >= 0 && i < doc.pages)) throw new Error('none');
+    const [pw, ph] = doc.sizes[i], W = 1170, H = Math.round((W * ph) / pw);
+    const c = document.createElement('canvas');
+    // (a page that could not be drawn is an error, never a white page kept on the iPhone)
+    try { await doc.render(i, c, W, H); } catch (e) { c.width = c.height = 0; throw new Error('draw'); }
+    const img = await canvasData(c, 'image/jpeg', 0.8);
+    c.width = c.height = 0;
+    if (!img) throw new Error('draw');
+    let ink = null;
+    const ik = doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i);
+    const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
+    if (items.length) {
+      await preloadAssets(items); await preloadMasks(items);
+      const k = document.createElement('canvas'); k.width = W; k.height = H; const g = k.getContext('2d');
+      for (const it of items) drawItem(g, it, W, H, false);
+      ink = await canvasData(k, 'image/png'); k.width = k.height = 0;
+    }
+    P.t = Date.now();
+    return { v: 2, id, i, w: W, h: H, img, ink };
+  });
+}
+async function scoresForPhone() {
+  const out = [];
+  for (const sc0 of scores.filter((x) => !x.preview && x.kind !== 'comp')) {
+    const sc = V.score && V.score.id === sc0.id ? { ...sc0, edited: V.score.edited, pages: V.score.pages } : sc0;   // (the open score is the newest)
+    out.push({ id: sc.id, title: sc.title, composer: sc.composer || '', pages: sc.pages || 0, folder: (folderOf(sc.folder) || {}).name || '', fid: folderOf(sc.folder) ? sc.folder : '', stamp: Math.max(sc.added || 0, sc.edited || 0), thumb: await blobToData(sc.thumb) });
+  }
+  out.sort((a, b) => a.title.localeCompare(b.title));
+  return { v: 1, at: Date.now(), scores: out };
+}
+async function scoreForPhone(id) {
+  const sc = scores.find((x) => x.id === id); if (!sc) throw new Error('none');
+  const file = await db.get('files', sc.fileId); if (!file) throw new Error('none');
+  scoreFile(sc, file);
+  const base = await openDocument(file, sc.sizes);
+  try {
+    const doc = mapDoc(base, sc.pageMap, sc.cuts, sc.glue), pages = [];
+    for (let i = 0; i < Math.min(doc.pages, 150); i++) {
+      const [pw, ph] = doc.sizes[i], W = 1300, H = Math.round((W * ph) / pw);
+      const c = document.createElement('canvas');
+      await doc.render(i, c, W, H).catch(() => {});
+      const img = await canvasData(c, 'image/jpeg', 0.84);
+      let ink = null;
+      const items = (await loadItems(sc.id + ':' + doc.orig(i)).catch(() => [])).filter((x) => x.t !== 'passage');
+      if (items.length) {
+        await preloadAssets(items);
+        const k = document.createElement('canvas'); k.width = W; k.height = H; const g = k.getContext('2d');
+        for (const it of items) drawItem(g, it, W, H, false);
+        ink = await canvasData(k, 'image/png'); k.width = k.height = 0;
+      }
+      c.width = c.height = 0;
+      pages.push({ w: W, h: H, img, ink });
+    }
+    return { v: 1, id, pages };
+  } finally { try { base.destroy && base.destroy(); if (base.pdf) base.pdf.destroy(); } catch {} }
+}
+const pHost = new PracticeHost(practiceForPhone, answerPhone);
+window.__answerPhone = answerPhone;
+// The practice plan (the week in half hours) is the same on both: the one changed last wins.
+function adoptPlan(d) {
+  const p = d && d.plan;
+  if (!p || !p.weeks || !(p.at > (practice.plan.at || 0))) return;
+  practice.plan = { weeks: {}, remind: false, lead: 0, ...p };
+  setSetting('plan', practice.plan);
+  if (openPanel === 'goal') renderTracker();
+}
 function syncPracticeHost() {
   if (PHONE) return;
   const on = S.shareIphone !== false && document.visibilityState === 'visible';
@@ -3625,11 +5162,19 @@ $('#iphoneCodeBtn').addEventListener('click', async () => {
   const code = await pHost.showCode();
   $('#iphoneCode').textContent = code ? code.replace(/(\d{3})(\d{3})/, '$1 $2') : 'No connection';
 });
-document.addEventListener('visibilitychange', () => { if (!PHONE) setTimeout(syncPracticeHost, 300); else if (document.visibilityState === 'visible' && IPAD.data && Date.now() - IPAD.last > 120000) getIpadPractice(true); });
+document.addEventListener('visibilitychange', () => { if (!PHONE) setTimeout(syncPracticeHost, 300); else if (document.visibilityState === 'visible' && (IPAD.data || hasKnownIpad()) && Date.now() - Math.max(IPAD.last, IPAD.tried) > 60000) getIpadPractice(true); });
+// On the iPhone the iPad's practice comes by itself: when the iPad is found nearby, and every few
+// minutes while Stand is open (one short question, nothing in between).
+function phoneAutoPractice() {
+  directWatch((n) => { if (n && S.ipadCard !== false && Date.now() - Math.max(IPAD.last, IPAD.tried) > 45000) getIpadPractice(true); });
+  setInterval(() => { if (document.visibilityState === 'visible' && S.ipadCard !== false && Date.now() - Math.max(IPAD.last, IPAD.tried) > (IPAD.data ? 8 : 2) * 60000) getIpadPractice(true); }, 60000);
+}
 function agoShort(t) { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); }
 function renderIpadCard() {
   if (!PHONE) return;
   const d = IPAD.data, AP = allPractice(), log = AP.log;
+  // (nothing from the iPad yet: the card waits out of sight; the two find each other by themselves)
+  $('#ipadCard').classList.toggle('waiting', !d && $('#icCodeBox').hidden);
   $('#icEmpty').hidden = !!d || IPAD.busy || !$('#icCodeBox').hidden;
   $('#icRefresh').hidden = !d;
   $('#icSub').textContent = d ? 'iPad and iPhone · updated ' + agoShort(d.at) : 'From your iPad';
@@ -3646,13 +5191,13 @@ function renderIpadCard() {
   for (const [t, v] of rows.slice(0, 4)) { const li = el('li'); const bar = el('i'); bar.style.setProperty('--w', Math.max(6, (v / top) * 100) + '%'); li.append(el('span', 't', t), el('span', 'm', fmtMinutes(v)), bar); ul.append(li); }
 }
 async function getIpadPractice(quiet, code) {
-  if (IPAD.busy) return; IPAD.busy = true;
+  if (IPAD.busy) return; IPAD.busy = true; IPAD.tried = Date.now();
   $('#icFind').hidden = !!quiet; $('#icFindText').textContent = 'Looking for your iPad…'; if (!quiet) { $('#icCodeBox').hidden = true; } renderIpadCard();
   try {
     // iCloud first (no searching needed); then straight from the iPad
     if (!code && cloudAvailable() && await pullPracticeFromCloud() && IPAD.data && Date.now() - (IPAD.data.at || 0) < 6 * 3600e3) { IPAD.busy = false; $('#icFind').hidden = true; renderIpadCard(); return; }
     const d = await fetchPractice(code ? { code } : {});
-    if (d && d.v === 1) { IPAD.data = d; IPAD.last = Date.now(); await setSetting('ipadPractice', d); $('#icCodeBox').hidden = true; if (!quiet) toast('Practice from your iPad is here'); }
+    if (d && d.v === 1) { IPAD.data = d; IPAD.last = Date.now(); adoptPlan(d); await setSetting('ipadPractice', d); $('#icCodeBox').hidden = true; if (!quiet) toast('Practice from your iPad is here'); }
   } catch {
     if (!quiet) { $('#icCodeBox').hidden = false; $('#icCode').value = ''; }
   }
@@ -3677,7 +5222,7 @@ async function pullPracticeFromCloud() {
   if (!cloudAvailable()) return false;
   const d = await cloudGet(CLOUD_OTHER());
   if (d && d.v === 1 && (!IPAD.data || (d.at || 0) >= (IPAD.data.at || 0))) {
-    IPAD.data = d; IPAD.last = Date.now(); await setSetting('ipadPractice', d);
+    IPAD.data = d; IPAD.last = Date.now(); adoptPlan(d); await setSetting('ipadPractice', d);
     renderIpadCard(); renderGoal(); renderToday(); if (openPanel === 'goal') renderTracker();
     return true;
   }
@@ -3692,8 +5237,11 @@ async function initPracticeSync() {
   if (cloudAvailable()) { if (!PHONE) IPAD.data = (await getSetting('ipadPractice', null)) || null; setTimeout(() => { pullPracticeFromCloud(); pushPracticeSoon(); }, 2000); }
   if (!PHONE) { setTimeout(syncPracticeHost, 3000); return; }
   IPAD.data = (await getSetting('ipadPractice', null)) || null;
+  phoneAutoPractice();
   renderIpadCard(); renderGoal(); renderToday();
-  if (IPAD.data || hasKnownIpad()) setTimeout(() => getIpadPractice(true), 1500);
+  // (found by itself on the same Wi-Fi: no button to press)
+  setTimeout(() => getIpadPractice(true), 1500);
+  window.__phs = initPhoneScores({ askIpad: (q, ms) => (window.__askIpadTest || askIpad)(q, ms), toast, connected: (fn) => directWatch((n) => { if (n) fn(); }) });
 }
 $('#icConnect').addEventListener('click', () => getIpadPractice(false));
 $('#icRefresh').addEventListener('click', () => getIpadPractice(false));
@@ -3704,6 +5252,13 @@ $('#icCode').addEventListener('input', (e) => { const v = e.target.value.replace
 $('#icStats').addEventListener('click', () => showPanel('goal'));
 $('#icPieces').addEventListener('click', () => showPanel('goal'));
 document.addEventListener('visibilitychange', () => { practice.lastTick = Date.now(); if (document.visibilityState === 'visible' && V.doc) keepAwake(); });
+// going to the background: everything waiting is written now (iOS may end Stand there)
+function saveAllNow() {
+  flushInk(); flushEdited();
+  if (V.score && !V.score.preview && V.score.lastPage !== V.page) { V.score.lastPage = V.page; db.put('scores', V.score).catch(() => {}); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveAllNow(); });
+window.addEventListener('pagehide', saveAllNow);
 
 // =====================================================================
 // Metronome
@@ -4042,15 +5597,29 @@ function renderIntonation() {
       : 'Watch ' + off.slice(0, 3).map((c) => `${c.label}${c.sub || ''} (${Math.round(Math.abs(c.st.avg))}¢ ${c.st.avg > 0 ? 'sharp' : 'flat'})`).join(', ') + '. Bars above the line are sharp, below are flat; tap a note for more.';
 }
 $('#intoReset').addEventListener('click', () => { if ($('#intoReset').dataset.armed !== '1') { $('#intoReset').dataset.armed = '1'; $('#intoReset').textContent = 'Tap again to clear'; setTimeout(() => { $('#intoReset').dataset.armed = ''; $('#intoReset').textContent = 'Start over'; }, 3000); return; } S.into = null; S.into2 = null; saveSettings(); renderIntonation(); });
-setInterval(() => {
-  if (!INTO.dirty) return;
-  INTO.dirty = false;
-  if (openPanel === 'tuner' && currentTunerTab === 'tune') renderIntonation();
-  clearTimeout(INTO.saveT); INTO.saveT = setTimeout(saveSettings, 3000);
-}, 600);
+// The tuner's screen timers run only while the tuner listens (none at all when it is off).
+const TT = { t: 0, n: 0 };
+function tunerTimers() {
+  if (TT.t) return;
+  TT.t = setInterval(() => {
+    if (!tuner.active && !INTO.dirty) { clearInterval(TT.t); TT.t = 0; return; }
+    TT.n++;
+    if (tuner.running && ((openPanel === 'tuner' && currentTunerTab === 'tune') || TU.mini)) drawTrace();
+    if (TT.n % 6 === 0 && INTO.dirty) {
+      INTO.dirty = false;
+      if (openPanel === 'tuner' && currentTunerTab === 'tune') renderIntonation();
+      clearTimeout(INTO.saveT); INTO.saveT = setTimeout(saveSettings, 3000);
+    }
+    // iOS sometimes keeps the sound asleep until the screen is touched (after Stand was away): say so
+    if (TT.n % 8 === 0 && tuner.running && !lastReading) {
+      let st = 'running'; try { st = getCtx().state; } catch {}
+      if (st !== 'running') { if (openPanel === 'tuner') $('#tCents').textContent = 'Tap the screen to start listening'; if (TU.mini) $('#mtCents').textContent = 'Tap to listen'; }
+    }
+  }, 100);
+}
 
 tuner.onReading = (r) => {
-  lastReading = r;
+  lastReading = r; if (!TT.t) tunerTimers();
   if (currentTunerTab === 'tune') feedIntonation(r);
   const face = $('#tunerFace');
   $$('#stringRow button').forEach((b) => { const near = r && !r.held && r.string === b.dataset.label; b.classList.toggle('near', near); b.classList.toggle('ok', near && Math.abs(r.cents) < 3); });
@@ -4162,13 +5731,7 @@ function paintTrace(sel) {
   }
 
 }
-setInterval(() => { if (tuner.running && ((openPanel === 'tuner' && currentTunerTab === 'tune') || TU.mini)) drawTrace(); }, 100);
-// iOS sometimes keeps the sound asleep until the screen is touched (after Stand was away): say so
-setInterval(() => {
-  if (!tuner.running || lastReading) return;
-  let st = 'running'; try { st = getCtx().state; } catch {}
-  if (st !== 'running') { if (openPanel === 'tuner') $('#tCents').textContent = 'Tap the screen to start listening'; if (TU.mini) $('#mtCents').textContent = 'Tap to listen'; }
-}, 800);
+
 async function startTuner() {
   try {
     TU.userStopped = false;
@@ -4222,6 +5785,7 @@ $('#mtClose').addEventListener('click', (e) => { e.stopPropagation(); showMiniTu
   box.addEventListener('click', (e) => { if (e.target.closest('.mt-x')) return; });
 }
 function updateTunerButtons() {
+  if (tuner.active) tunerTimers();
   const b = $('#tunerToggle');
   // while the microphone is still opening the tuner already counts as on (a tap then stops it)
   b.innerHTML = tuner.active ? '<svg><use href="#i-stop"/></svg><span>Stop tuner</span>' : '<svg><use href="#i-mic"/></svg><span>Start tuner</span>';
@@ -4392,11 +5956,16 @@ $('#hChord').addEventListener('click', () => {
 $('#hStop').addEventListener('click', () => { stopHarmonics(); setSounding(false); H.lit = 0; drawHarmonics(); });
 
 // ---------- drone ----------
+const DL = { adding: false };   // adding notes to "My list"
 (function buildDroneUI() {
   const box = $('#droneNotes');
   NOTE_NAMES.forEach((n, i) => {
     const b = el('button', '', n); b.dataset.pc = i;
-    b.addEventListener('click', () => { if (drone.running) drone.change(i); else drone.pc = i; keyEar.set(i, drone.chord === 'minor'); syncDrone(); persistDrone(); });
+    b.addEventListener('click', () => {
+      // adding notes to "My list": each note tapped joins the list, in order
+      if (DL.adding && droneMode() === 'list') { S.droneList = [...(S.droneList || []), i]; saveSettings(); syncDrone(); b.classList.add('added'); setTimeout(() => b.classList.remove('added'), 260); return; }
+      if (drone.running) drone.change(i); else drone.pc = i; keyEar.set(i, drone.chord === 'minor'); syncDrone(); persistDrone();
+    });
     box.append(b);
   });
   const sel = $('#droneSound'); sel.textContent = '';
@@ -4417,18 +5986,26 @@ function syncDrone() {
   const mode = droneMode();
   $$('#droneModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
   $('#droneModeHint').textContent = {
-    stay: 'Tap a note above whenever the key changes; the drone glides to it.',
+    stay: 'Tap a note above whenever the key changes, or press a pedal; the drone glides to it.',
     listen: 'Stand listens to you and moves the drone to the key you are playing in (it waits until the new key is clear).',
-    list: 'Put the notes in order once, then tap Next (or the ▶ in the bar at the bottom) when the music moves on.',
+    list: 'Tap Add notes, then the notes in the order of the piece. While playing, tap Next (or ▶ in the bar at the bottom, or a pedal) when the music moves on.',
     walk: 'The drone walks through the keys by itself, to practise every key.',
   }[mode];
-  $('#droneListen').hidden = mode !== 'listen';
+  $('#droneListen').hidden = mode !== 'listen'; $('#droneSensRow').hidden = $('#droneSensEnds').hidden = mode !== 'listen';
+  $('#droneSens').value = S.earSens ?? 0.6;
   $('#droneListBox').hidden = mode !== 'list';
   $('#droneWalkRow').hidden = mode !== 'walk';
+  $('#dronePedal').value = S.dronePedal || 'semi'; $('#dronePedalRow').hidden = mode === 'list' || mode === 'walk';
   $('#droneWalk').value = S.droneWalk === 'chromatic' ? 'chromatic' : 'fifths'; $('#droneWalkBars').value = S.droneWalkBars || 8; $('#droneWalkBarsRow').hidden = mode !== 'walk';
   const list = S.droneList || [];
   const chips = $('#droneChips'); chips.textContent = '';
-  if (!list.length) chips.append(el('span', 'hint', 'No notes yet: choose a note above, then Add.'));
+  if (!DL.adding && !list.length) chips.append(el('span', 'hint', 'No notes yet. Tap Add notes, then the notes in order.'));
+  if (DL.adding && !list.length) chips.append(el('span', 'hint', 'Tap the notes above, in order.'));
+  $('#droneListAdd').innerHTML = DL.adding ? '<svg><use href="#i-check"/></svg><span>Done</span>' : '<svg><use href="#i-plus"/></svg><span>Add notes</span>';
+  $('#droneListAdd').classList.toggle('primary', DL.adding);
+  $('#droneListBox').classList.toggle('adding', DL.adding);
+  $('#droneNotes').classList.toggle('adding', DL.adding && mode === 'list');
+  if (mode !== 'list') DL.adding = false;
   list.forEach((pc, i) => { const b = el('button', i === (S.droneListAt || 0) && drone.running ? 'on' : '', NOTE_NAMES[pc]); const x = el('span', 'x', '×'); b.append(x); x.addEventListener('click', (e) => { e.stopPropagation(); list.splice(i, 1); S.droneList = list; saveSettings(); syncDrone(); }); b.addEventListener('click', () => { S.droneListAt = i; saveSettings(); if (drone.running) drone.change(pc); else drone.pc = pc; syncDrone(); }); chips.append(b); });
   const nx = list.length ? list[((S.droneListAt || 0) + 1) % list.length] : null;
   $('#droneNextNote').textContent = nx === null ? '' : NOTE_NAMES[nx];
@@ -4450,22 +6027,34 @@ $('#droneVol').addEventListener('input', (e) => { drone.setVolume(+e.target.valu
 $('#droneWalk').addEventListener('change', (e) => { S.droneWalk = e.target.value; saveSettings(); syncDrone(); walk.reset(); });
 function droneMode() { return S.droneMode || (S.droneWalk && S.droneWalk !== 'stay' ? 'walk' : 'stay'); }
 $$('#droneModeSeg button').forEach((b) => b.addEventListener('click', () => { S.droneMode = b.dataset.mode; if (S.droneMode === 'walk' && (!S.droneWalk || S.droneWalk === 'stay')) S.droneWalk = 'fifths'; saveSettings(); syncDrone(); walk.reset(); }));
-function droneNext() {
+function droneNext(dir = 1) {
   const list = S.droneList || []; if (!list.length) return;
-  S.droneListAt = ((S.droneListAt || 0) + 1) % list.length; saveSettings();
+  S.droneListAt = ((S.droneListAt || 0) + (dir < 0 ? list.length - 1 : 1)) % list.length; saveSettings();
   const pc = list[S.droneListAt];
   if (drone.running) drone.change(pc); else drone.pc = pc;
   syncDrone();
 }
-$('#droneNext').addEventListener('click', droneNext);
-$('#dronePillNext').addEventListener('click', droneNext);
-$('#droneListAdd').addEventListener('click', () => { S.droneList = [...(S.droneList || []), drone.pc]; saveSettings(); syncDrone(); });
+$('#droneNext').addEventListener('click', () => droneNext());
+$('#dronePillNext').addEventListener('click', () => droneNext());
+// "Add notes": while on, every note tapped above joins the list; Done ends it
+$('#droneListAdd').addEventListener('click', () => { DL.adding = !DL.adding; syncDrone(); });
 $('#droneListClear').addEventListener('click', () => { S.droneList = []; S.droneListAt = 0; saveSettings(); syncDrone(); });
-// a pedal (or the arrow keys) steps through the list when no score is open
+// A pedal (or the arrow keys) moves the drone while it sounds and no score is open: through your
+// list, or a semitone / a fifth up and down (Pedal moves the drone).
 document.addEventListener('keydown', (e) => {
-  if (!$('#score').hidden || e.target.matches('input, select, textarea')) return;
-  if (drone.running && droneMode() === 'list' && ['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); droneNext(); }
+  if (!$('#score').hidden || e.target.matches('input, select, textarea') || !drone.running) return;
+  const fwd = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(e.key), back = ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key);
+  if (!fwd && !back) return;
+  const mode = droneMode();
+  if (mode === 'list') { if ((S.droneList || []).length) { e.preventDefault(); droneNext(fwd ? 1 : -1); } return; }
+  const how = S.dronePedal || 'semi';
+  if (how === 'off') return;
+  e.preventDefault();
+  const step = how === 'fifths' ? 7 : 1;
+  drone.change((drone.pc + (fwd ? step : 12 - step)) % 12);
+  keyEar.set(drone.pc, drone.chord === 'minor'); syncDrone(); persistDrone();
 });
+$('#dronePedal').addEventListener('change', (e) => { S.dronePedal = e.target.value; saveSettings(); });
 // listening for the key
 const keyEar = {
   ear: null,
@@ -4476,18 +6065,22 @@ const keyEar = {
         if (!drone.running) return;
         if (drone.chord === 'major' || drone.chord === 'minor') drone.chord = k.minor ? 'minor' : 'major';
         drone.change(k.pc); syncDrone(); persistDrone();
+        // (reading the score, the drone panel closed: said in a word, the pill shows it too)
+        if (!(openPanel === 'tuner' && currentTunerTab === 'drone')) toast('Drone → ' + NOTE_NAMES[k.pc] + (k.minor ? ' minor' : ' major'), 1800);
       }, (k, err) => {
         const t = $('#droneHear');
         if (err) { t.textContent = err; return; }
         if (k) t.innerHTML = `Hearing <b>${NOTE_NAMES[k.pc]} ${k.minor ? 'minor' : 'major'}</b> · drone on <b>${NOTE_NAMES[drone.pc]}</b>`;
         else t.innerHTML = `Listening… the drone stays on <b>${NOTE_NAMES[drone.pc]}</b> until the key clearly changes`;
       });
+      this.ear.sens = S.earSens ?? 0.6;
       this.ear.set(drone.pc, drone.chord === 'minor');
       this.ear.start();
     } else if (!want && this.ear) { this.ear.stop(); this.ear = null; $('#droneHear').textContent = 'Play: when the key clearly changes, the drone moves to it.'; }
   },
   set(pc, minor) { if (this.ear) this.ear.set(pc, minor); },
 };
+$('#droneSens').addEventListener('input', (e) => { S.earSens = +e.target.value; if (keyEar.ear) keyEar.ear.sens = S.earSens; saveSettings(); });
 $('#droneWalkBars').addEventListener('change', (e) => { S.droneWalkBars = +e.target.value; saveSettings(); walk.reset(); });
 function startDrone() { unlock(); drone.start(); walk.reset(); syncDrone(); }
 function stopDrone() { drone.stop(); walk.stop(); syncDrone(); }
@@ -4601,9 +6194,13 @@ function updateScaleButtons() {
   syncMetroLinks();
 }
 // The scale has its own tempo and its own click, in the same clock as the notes: always exactly together.
-function startScale() {
+async function startScale() {
   unlock();
   scale.ref = S.ref;
+  // the sound system must really be running (after the tuner's microphone iOS can leave it asleep)
+  scale.playing = true; updateScaleButtons();
+  await ensureRunning().catch(() => {});
+  if (!scale.playing) return;            // stopped while it was waking
   scale.start(0);
   updateScaleButtons();
 }
@@ -4635,6 +6232,7 @@ $('#scalePillStop').addEventListener('click', stopScale);
 // Recording (audio and video)
 // =====================================================================
 const recorder = new Recorder();
+recorder.onGap = (gap) => toast(gap < 0 ? 'The microphone was lost and could not be opened again. Stop the recording: what was recorded so far is kept.' : 'The microphone changed (headphones or a call). The recording goes on.', 4500);
 const vrec = new VideoRecorder();
 const VW = { t: 0 };
 let recState = null;
@@ -4686,7 +6284,7 @@ function drawLink() {
   $('#linkOff').hidden = st === 'off';
   syncRemoteShape();
 }
-host.onState = (st) => { drawLink(); if (st === 'linked' && openPanel === 'record') showRemotePreview(); if (st === 'lost' || st === 'off') { if (!(recState && recState.iphone)) hideRemotePreview(); } if (st === 'lost' && S.cam === 'iphone') setTimeout(() => { if (host.state === 'lost' && S.cam === 'iphone') host.start(); }, 1500); };
+host.onState = (st) => { if (st === 'linked' && S.shareIphone !== false && !PHONE) setTimeout(async () => { try { host.sendPractice(await practiceForPhone()); } catch {} }, 600); drawLink(); if (st === 'linked' && openPanel === 'record') showRemotePreview(); if (st === 'lost' || st === 'off') { if (!(recState && recState.iphone)) hideRemotePreview(); } if (st === 'lost' && S.cam === 'iphone') setTimeout(() => { if (host.state === 'lost' && S.cam === 'iphone') host.start(); }, 1500); };
 host.onInfo = () => drawLink();
 host.onStream = () => { if (openPanel === 'record' || (recState && recState.iphone)) showRemotePreview(); };
 $$('#linkFacing button').forEach((b) => b.addEventListener('click', () => { host.set({ facing: b.dataset.f }); drawLink(); }));
@@ -4742,6 +6340,20 @@ async function startIphoneVideo() {
   };
   loop();
 }
+// a video the iPhone sent again after a failed try (the iPad had stopped waiting): kept too
+host.onLateFile = async (r) => {
+  try {
+    if (!r || !r.blob || r.blob.size < 2000) return;
+    const blob = r.blob, audio = await decodeVideoAudio(blob), thumb = await videoThumb(blob);
+    const take = { id: uid(), kind: 'video', mime: blob.type, scoreId: V.score ? V.score.id : undefined, page: V.page || 0, name: 'iPhone video', created: Date.now(), mirror: !!r.mirror, thumb, fav: false, source: 'iPhone' };
+    await db.put('files', { id: 'video:' + take.id, data: blob });
+    if (audio && audio.data.length > audio.sr * 0.3) { take.sr = audio.sr; take.dur = audio.data.length / audio.sr; take.peaks = computePeaks(audio.data); take.peak = peakOf(audio.data); take.pcm = true; await db.put('files', { id: 'audio:' + take.id, data: audio.data }); }
+    else take.pcm = false;
+    await db.put('takes', take);
+    toast('The video from the iPhone arrived. It is in Recordings.', 4000);
+    if (openPanel === 'takes') refreshTakes();
+  } catch {}
+};
 async function finishIphoneVideo(st, name) {
   toast('Getting the video from the iPhone…', 900000);
   host.onProgress = (f) => { $('#toast').textContent = `Getting the video from the iPhone… ${Math.round(f * 100)}%`; };
@@ -4884,16 +6496,14 @@ async function startRecording(kind) {
   if (tuner.running) stopTuner();
   S.lastRecKind = kind; saveSettings();
   if (kind === 'video' && S.cam === 'iphone' && !PHONE) return startIphoneVideo();
-  const landscape = window.innerWidth > window.innerHeight;
+  const landscape = devShape() === 'landscape';
   if (kind === 'video' && canNativeVideo() && !PHONE && !(landscape && window.MediaRecorder && navigator.mediaDevices)) { recState = { kind: 'video', native: true, opening: true }; sendFace(); recState = null; return startNativeVideo(); }
   if (kind === 'video') { recState = { kind: 'video', opening: true }; sendFace(); recState = null; }
   const ctx = getCtx();
   let meterSrc = null;
   if (kind === 'video') {
-    try { await vrec.open(S.cam); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera (or Settings › Safari › Camera).' : 'The camera could not start (' + ((e && (e.name || e.message)) || 'unknown') + '). Close other apps using the camera and try again.', 6000); return; }
+    try { await vrec.open(S.cam, undefined, { canvas: PHONE }); } catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Camera access is off. Turn it on in Settings › Stand › Camera (or Settings › Safari › Camera).' : 'The camera could not start (' + ((e && (e.name || e.message)) || 'unknown') + '). Close other apps using the camera and try again.', 6000); return; }
     const cam = $('#cam'); cam.hidden = false; cam.classList.toggle('mirror', S.cam === 'user'); cam.classList.toggle('portrait', vrec.shape === 'portrait');
-    // keep the iPad the way it is while recording, so the video keeps its shape
-    try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: vrec.shape === 'landscape' ? 'landscape' : 'auto' }); } catch {}
     $('#camVideo').srcObject = vrec.stream; $('#camVideo').play().catch(() => {});
     meterSrc = ctx.createMediaStreamSource(vrec.stream);
   } else {
@@ -4906,7 +6516,9 @@ async function startRecording(kind) {
     if (!window.MediaRecorder) { toast('Video recording needs iPadOS 15 or newer.', 6000); vrec.close(); $('#cam').hidden = true; if (recState.metroByUs) stopMetro(); recState = null; return; }
     recState.startTimer = setTimeout(() => {
       if (!recState) return;
-      try { vrec.start(); } catch (e) { console.error(e); toast('Video could not start: ' + (e.message || e.name), 6000); stopRecording(); }
+      try { vrec.start(); } catch (e) { console.error(e); toast('Video could not start: ' + (e.message || e.name), 6000); stopRecording(); return; }
+      // from now on the device keeps the way it is held, so the video keeps its shape
+      try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: vrec.shape === 'landscape' ? 'landscape' : 'portrait' }); } catch {}
     }, wait);
   } else {
     recorder.start(ci.delayed ? ci.startAt : 0);
@@ -5020,6 +6632,32 @@ $('#takeImportFile').addEventListener('change', async (e) => {
     cam.style.left = x + 'px'; cam.style.top = y + 'px'; cam.style.bottom = 'auto';
   });
   cam.addEventListener('pointerup', () => { d = null; });
+  // the phone turned: the camera stays on the screen, and before recording starts the video
+  // takes the new shape (portrait or landscape)
+  const keep = () => {
+    if (cam.hidden) return;
+    if (recState && recState.kind === 'video' && !recState.iphone && !recState.native && !vrec.recording) {
+      const shape = devShape();
+      if (vrec.setShape(shape)) cam.classList.toggle('portrait', shape === 'portrait');
+      else if (vrec.direct && vrec.shape !== shape && !keep.busy) {
+        // the camera's own picture (iPad): opened again in the new shape before recording starts
+        keep.busy = true;
+        vrec.open(S.cam, shape).then((stream) => {
+          $('#camVideo').srcObject = stream; $('#camVideo').play().catch(() => {});
+          cam.classList.toggle('portrait', vrec.shape === 'portrait');
+          try { if (recState && recState.meterSrc) { recState.meterSrc.disconnect(); recState.meterSrc = getCtx().createMediaStreamSource(stream); if (recState.analyser) recState.meterSrc.connect(recState.analyser); } } catch {}
+        }).catch(() => {}).finally(() => { keep.busy = false; });
+      }
+    }
+    if (cam.style.left) {
+      const r = cam.getBoundingClientRect();
+      cam.style.left = clamp(r.left, 8, Math.max(8, innerWidth - r.width - 8)) + 'px';
+      cam.style.top = clamp(r.top, 8, Math.max(8, innerHeight - r.height - 8)) + 'px';
+    }
+  };
+  window.addEventListener('resize', () => requestAnimationFrame(keep));
+  window.addEventListener('orientationchange', () => { setTimeout(keep, 350); setTimeout(keep, 900); });
+  try { screen.orientation && screen.orientation.addEventListener('change', () => setTimeout(keep, 120)); } catch {}
 })();
 
 // =====================================================================
@@ -5027,7 +6665,8 @@ $('#takeImportFile').addEventListener('change', async (e) => {
 // =====================================================================
 const player = new Player();
 let takesScope = 'score', currentTake = null, videoURL = null, nativeVideo = false;
-$$('#takesScope button').forEach((b) => b.addEventListener('click', () => { takesScope = b.dataset.scope; refreshTakes(); }));
+// This score / All also bring you back from a recording to the list
+$$('#takesScope button').forEach((b) => b.addEventListener('click', () => { takesScope = b.dataset.scope; if (!$('#player').hidden) backToTakeList(); else refreshTakes(); }));
 const thumbCache = new Map();
 async function refreshTakes() {
   if (!V.score && takesScope === 'score') takesScope = 'all';
@@ -5076,6 +6715,13 @@ async function selectTake(id) {
     if (!vf) { toast('That video could not be loaded.'); return; }
     videoURL = URL.createObjectURL(vf.data);
     video.src = videoURL; video.load();
+    // a video that will not load is tried once more (a fresh link to the file), then said so
+    let tried = false;
+    video.onerror = () => {
+      if (currentTake !== t && currentTake) return;
+      if (!tried) { tried = true; if (videoURL) URL.revokeObjectURL(videoURL); videoURL = URL.createObjectURL(vf.data); video.src = videoURL; video.load(); return; }
+      toast('This video could not be played on this iPad. Try Share to open it in Photos.', 4500);
+    };
     $('#videoWrap').hidden = false; $('#videoWrap').classList.toggle('mirror', !!t.mirror);
     if (!t.pcm) nativeVideo = true;
   } else $('#videoWrap').hidden = true;
@@ -5090,6 +6736,8 @@ async function selectTake(id) {
   }
   currentTake = t;
   $('#player').hidden = false; $('#delConfirm').hidden = true;
+  $('#panel-takes').classList.add('viewing');
+  const pb = $('#panel-takes .panel-body'); if (pb) pb.scrollTop = 0;
   $('#waveWrap').hidden = nativeVideo; $('.times').hidden = nativeVideo; $('.transport').hidden = nativeVideo;
   $('#exportLabel').textContent = t.kind === 'video' ? 'Share video' : 'Export as heard';
   $('#takeFloat').hidden = t.kind !== 'video' || nativeVideo;
@@ -5207,9 +6855,24 @@ function closeVideoFloat(back) {
   const wrap = $('#videoWrap'), v = $('#takeVideo');
   v.style.transform = '';
   $('#player').insertBefore(wrap, $('#waveWrap'));
+  vfEl.classList.remove('big');
   if (back) showPanel('takes'); else player.pause();
 }
 $('#takeFloat').addEventListener('click', () => openVideoFloat());
+// back from a recording to all the recordings (what is playing over the score keeps playing)
+function backToTakeList() {
+  if (!VF.on) { player.stop(); try { $('#takeVideo').pause(); } catch {} }
+  $('#player').hidden = true; $('#panel-takes').classList.remove('viewing');
+  if (!VF.on) currentTake = null;
+  refreshTakes();
+}
+$('#vfBig').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const big = vfEl.classList.toggle('big');
+  if (big) { vfEl.dataset.w = vfEl.style.width || ''; vfEl.style.width = ''; } else vfEl.style.width = vfEl.dataset.w || '';
+  // stays on the screen
+  requestAnimationFrame(() => { const r = vfEl.getBoundingClientRect(); vfEl.style.left = clamp(r.left, 4, Math.max(4, innerWidth - r.width - 4)) + 'px'; vfEl.style.top = clamp(r.top, 4, Math.max(4, innerHeight - r.height - 4)) + 'px'; vfEl.style.bottom = 'auto'; vfApply(); });
+});
 $('#vfPlay').addEventListener('click', (e) => { e.stopPropagation(); unlock(); player.playing ? player.pause() : player.play(); setTimeout(vfSync, 50); });
 $('#vfSpeed').addEventListener('click', (e) => { e.stopPropagation(); const steps = [1, 0.9, 0.75, 0.6, 0.5]; const i = steps.findIndex((s) => Math.abs(s - player.rate) < 0.01); setSpeed(steps[(i + 1) % steps.length]); vfSync(); });
 $('#vfBack').addEventListener('click', (e) => { e.stopPropagation(); closeVideoFloat(true); });
@@ -5339,9 +7002,14 @@ $('#delTake').addEventListener('click', () => { $('#delConfirm').hidden = false;
 $('#delNo').addEventListener('click', () => { $('#delConfirm').hidden = true; });
 $('#delYes').addEventListener('click', async () => {
   if (!currentTake) return;
-  player.stop(); $('#takeVideo').pause();
+  player.stop(); const video = $('#takeVideo'); try { video.pause(); } catch {}
+  $('#delConfirm').hidden = true;
+  if (VF.on) closeVideoFloat(false);
   await deleteTakeData(currentTake.id);
-  currentTake = null; $('#player').hidden = true; refreshTakes(); toast('Recording deleted');
+  // back to the list (it was hidden while the recording was open: the other recordings stay reachable)
+  if (videoURL) { URL.revokeObjectURL(videoURL); videoURL = null; }
+  video.removeAttribute('src'); try { video.load(); } catch {}
+  currentTake = null; $('#player').hidden = true; $('#panel-takes').classList.remove('viewing'); refreshTakes(); toast('Recording deleted');
 });
 const nativeShare = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standShare;
 async function shareBlob(blob, name) {
@@ -5381,6 +7049,7 @@ $('#studioBtn').addEventListener('click', () => {
   if (!currentTake) return;
   player.stop(); $('#takeVideo').pause(); hidePanel();
   openStudio(currentTake.id);
+  setTimeout(() => { if (!$('#studio').hidden) sectionTour('studio', { force: true }); }, 900);
 });
 $('#shareBtn').addEventListener('click', exportTake);
 
@@ -5437,7 +7106,7 @@ window.addEventListener('resize', () => requestAnimationFrame(() => { drawWave()
 // Manuscript paper
 // =====================================================================
 // A new notebook: a cover (style, colour, title) and engraved paper, chosen with a large preview.
-const NB = { tpl: 'treble', style: 'photo', photo: '19', cat: 'records', dir: 'down', color: '#1d2f6f', staff: 3, bars: 0, paper: 'white', built: false };
+const NB = { tpl: 'treble', style: 'photo', photo: 'r2', cat: 'records', dir: 'down', color: '#1d2f6f', staff: 3, bars: 0, paper: 'white', built: false };
 function paperThumb(k) {
   const c = el('canvas'); c.width = 240; c.height = 170;
   const full = document.createElement('canvas'); full.width = 240; full.height = Math.round(240 * 842 / 595);
@@ -5780,7 +7449,7 @@ function planFor(wk) {
   const before = Object.keys(W).filter((k) => k < wk).sort().pop();
   return before ? W[before] : [];
 }
-function savePlan() { setSetting('plan', practice.plan); }
+function savePlan() { practice.plan.at = Date.now(); setSetting('plan', practice.plan); if (typeof pushPracticeSoon === 'function') pushPracticeSoon(); }
 const slotTime = (s) => `${String(Math.floor(s / 2)).padStart(2, '0')}:${s % 2 ? '30' : '00'}`;
 function renderPlan() {
   const grid = $('#planGrid'); if (!grid) return;
@@ -5878,7 +7547,7 @@ function renderPlan() {
     const p = PL.paint; PL.paint = null;
     practice.plan.weeks[p.wk] = [...p.set].sort();
     savePlan(); renderPlan();
-    if (p.wk === weekKeyOf(new Date())) syncReminders();
+    syncReminders();
   };
   grid.addEventListener('pointerup', end); grid.addEventListener('pointercancel', end);
   grid.style.touchAction = 'pan-y';
@@ -5887,27 +7556,40 @@ function renderPlan() {
 }
 // ---------- reminders (the Stand app on iPad and iPhone) ----------
 const NOTIFY = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standNotify;
+// The reminders of the next seven days: each weekday from the plan of the week it falls in (the
+// phone repeats them every week, so Stand puts them right again whenever it is opened).
 function reminderItems() {
-  const plan = planFor(weekKeyOf(new Date())), lead = practice.plan.lead || 0;
-  const byDay = Array.from({ length: 7 }, () => []);
-  for (const id of plan) { const [d, s] = id.split('-').map(Number); byDay[d].push(s); }
-  const items = [];
-  byDay.forEach((list, d) => {
-    list.sort((a, b) => a - b);
+  const lead = practice.plan.lead || 0, items = [];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (let k = 0; k < 7; k++) {
+    const day = new Date(today.getTime() + k * 864e5);
+    const d = (day.getDay() + 6) % 7;                 // 0 = Monday, as in the plan
+    const list = planFor(weekKeyOf(day)).map((id) => id.split('-').map(Number)).filter(([dd]) => dd === d).map(([, sl]) => sl).sort((a, b) => a - b);
     for (let i = 0; i < list.length; i++) {
       const s0 = list[i]; let s1 = s0; while (list[i + 1] === s1 + 1) { i++; s1++; }
-      let mins = s0 * 30 - lead, day = d;
-      if (mins < 0) { mins += 24 * 60; day = (d + 6) % 7; }
-      items.push({ weekday: ((day + 1) % 7) + 1, hour: Math.floor(mins / 60), minute: mins % 60, title: 'Time to practise', body: `Your plan: ${slotTime(s0)}–${slotTime(s1 + 1).replace('48:00', '24:00')}.` });
+      let mins = s0 * 30 - lead, wd = d;
+      if (mins < 0) { mins += 24 * 60; wd = (d + 6) % 7; }
+      items.push({ weekday: ((wd + 1) % 7) + 1, hour: Math.floor(mins / 60), minute: mins % 60, title: 'Time to practise', body: `Your plan: ${slotTime(s0)}–${slotTime(s1 + 1).replace('48:00', '24:00')}.` });
     }
-  });
+  }
   return items;
 }
-function syncReminders() {
+function syncReminders(extra = []) {
   const N = NOTIFY();
   if (!N) return;
-  if (practice.plan.remind) N.postMessage({ op: 'schedule', items: reminderItems() });
+  if (practice.plan.remind || extra.length) N.postMessage({ op: 'schedule', items: [...(practice.plan.remind ? reminderItems() : []), ...extra] });
   else N.postMessage({ op: 'clear' });
+}
+// put the reminders right whenever Stand opens or comes back (a new week may have its own plan)
+setTimeout(() => syncReminders(), 4000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => syncReminders(), 1500); });
+// a test: a reminder in one minute (it goes again the next time the reminders are put right)
+function testReminder() {
+  if (!NOTIFY()) { toast('Reminders come from the Stand app on iPad and iPhone.', 3000); return; }
+  const t = new Date(Date.now() + 70 * 1000);
+  syncReminders([{ weekday: t.getDay() + 1, hour: t.getHours(), minute: t.getMinutes(), title: 'Stand', body: 'This is how your practice reminders will look.' }]);
+  toast('A test reminder comes in about a minute. Leave Stand (go to the Home Screen) to see it.', 5000);
+  setTimeout(() => syncReminders(), 3 * 60 * 1000);
 }
 window.standNotifyState = (st) => {
   if (st && !st.allowed && st.asked && practice.plan.remind) {
@@ -5920,6 +7602,7 @@ $('#planRemind').addEventListener('change', (e) => {
   practice.plan.remind = e.target.checked; savePlan(); syncReminders(); renderPlan();
   if (e.target.checked) toast('You will get a reminder when a planned practice begins.', 2600);
 });
+$('#planTest').addEventListener('click', testReminder);
 $('#planLead').addEventListener('change', (e) => { practice.plan.lead = +e.target.value; savePlan(); syncReminders(); });
 $('#trChart').addEventListener('click', (e) => {
   const r = e.currentTarget.getBoundingClientRect(); const x = e.clientX - r.left;
@@ -5948,7 +7631,26 @@ $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => { S.them
 $$('#accentSeg button').forEach((b) => b.addEventListener('click', () => { S.accent = b.dataset.accent; saveSettings(); applyAppearance(); }));
 
 // --- wink to turn pages (iPad app, face tracking) ---
-const wink = { on: false, testing: false };
+const wink = { on: false, testing: false, lv: [], det: new WinkLevels(), lastLv: 0, lastTurn: 0 };
+// a wink as the iPad saw it, checked against the levels of both eyes just before it: the winking eye
+// clearly shut, the other clearly open all along (with no levels to go by, it stands)
+function winkOk(eye) {
+  const now = performance.now(), win = wink.lv.filter((q) => now - q.t < 500);
+  if (win.length < 4) return true;
+  const shut = Math.max(...win.map((q) => (eye === 'left' ? q.l : q.r))), other = Math.max(...win.map((q) => (eye === 'left' ? q.r : q.l)));
+  const before = wink.lv.filter((q) => now - q.t >= 500).map((q) => (eye === 'left' ? q.r : q.l)).sort((a, b) => a - b);
+  const rest = before.length ? before[Math.floor(before.length * 0.3)] : 0.1;
+  // as it was: the other eye clearly open; or, with the face aside (that eye half shut all the
+  // time), the other eye no further shut than its own rest
+  return !(other > 0.5 || other > shut * 0.6) || (!(other - rest > 0.3 && other > 0.5) && other < shut * 0.85);
+}
+// the face turned aside: one eye's resting level well above the other's (it looks half shut)
+function faceAside() {
+  const now = performance.now(), old = wink.lv.filter((q) => now - q.t > 400);
+  if (old.length < 8) return false;
+  const med = (k) => { const v = old.map((q) => q[k]).sort((a, b) => a - b); return v[Math.floor(v.length / 2)]; };
+  return Math.abs(med('l') - med('r')) > 0.14;
+}
 function winkSupported() { return !!(NATIVE && NATIVE.standFace && CAPS.face); }
 // --- tap the stand to turn pages (iPad app, motion sensors) ---
 const tapTest = { on: false };
@@ -5965,8 +7667,9 @@ function syncTapUI() {
   $('#followOn').checked = !!S.followTurn;
   $('#tapOn').checked = !!S.tapStand; $('#tapSens').value = Math.round((S.tapSens || 0.6) * 100);
   $('#tapBody').hidden = !S.tapStand;
+  syncEyesUI();
 }
-$('#followOn').addEventListener('change', (e) => { S.followTurn = e.target.checked; saveSettings(); follow.sync(); });
+$('#followOn').addEventListener('change', (e) => { S.followTurn = e.target.checked; saveSettings(); syncEyesUI(); follow.sync(); });
 $('#tapOn').addEventListener('change', (e) => { S.tapStand = e.target.checked; saveSettings(); syncTapUI(); sendTap(); });
 $('#tapSens').addEventListener('input', (e) => { S.tapSens = +e.target.value / 100; saveSettings(); sendTap(); });
 $('#tapTest').addEventListener('click', () => {
@@ -5984,8 +7687,11 @@ window.standTapEvent = (ev) => {
 function sendFace() {
   sendTap();
   if (!winkSupported()) return;
-  const active = (S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing;
-  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing });
+  // (while the eyes are followed, the camera is in use here, and winks are seen from it)
+  let jsCam = false; try { jsCam = !!(eyes.running || EC.on); } catch {}
+  const active = !jsCam && ((S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing);
+  // (the eye levels always come: a wink is checked against them, the other eye clearly open)
+  NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing || !!(S.winkGate ?? 1) });
   wink.on = !!active;
   $('#winkBadge').hidden = !(S.wink && !$('#score').hidden && active);
 }
@@ -6001,12 +7707,51 @@ $('#autoTurn').addEventListener('change', (e) => { S.autoTurn = +e.target.value;
 // Sound routing in the iPad app: the microphone is always the iPad's; the speaker can be forced.
 function sendAudio() { if (NATIVE && NATIVE.standAudio) NATIVE.standAudio.postMessage({ speaker: !!S.audioSpeaker }); }
 $('#audioSpeaker').addEventListener('change', (e) => { S.audioSpeaker = e.target.checked; saveSettings(); sendAudio(); });
+// (the microphone opening or closing resets where the sound goes on iOS: said again)
+window.addEventListener('stand-mic-changed', () => setTimeout(sendAudio, 300));
+// Bluetooth headphones gone into their call mode (poor sound): said once, with what to do
+let callModeSaid = false;
+window.addEventListener('stand-tuner-state', () => { try { updateTunerButtons(); } catch {} });
+window.addEventListener('stand-audio-callmode', () => { if (callModeSaid) return; callModeSaid = true; toast('Your Bluetooth headphones are in call mode, so the sound is poor. Turn off what listens (tuner, listening to turn pages), or tap “Start the sound again” in Settings › Sound.', 6000); });
+// the sound, as it is now, and what happened to it (to tell what went wrong)
+function syncSoundState() {
+  const c = getCtx();
+  $('#soundState').textContent = `Sound system: ${c.state === 'running' ? 'on' : c.state}, ${Math.round(c.sampleRate / 100) / 10} kHz.`;
+  const ol = $('#soundLog'); ol.textContent = '';
+  for (const e of audioLog.slice(-14).reverse()) ol.append(el('li', '', `${new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${e.what} · ${e.state}, ${Math.round(e.sr / 100) / 10} kHz`));
+  if (!audioLog.length) ol.append(el('li', '', 'Nothing yet.'));
+}
+$('#soundReset').addEventListener('click', async () => { await resetSound(); unlock(); setTimeout(() => { syncSoundState(); testBeep(); }, 300); toast('The sound was started again.', 1600); });
+function testBeep() { const c = getCtx(); const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 660; g.gain.setValueAtTime(0, c.currentTime); g.gain.linearRampToValueAtTime(0.25, c.currentTime + 0.02); g.gain.linearRampToValueAtTime(0, c.currentTime + 0.35); o.connect(g).connect(c.destination); o.start(); o.stop(c.currentTime + 0.4); }
+$('#soundTest').addEventListener('click', () => { unlock(); testBeep(); setTimeout(syncSoundState, 300); });
+$('#soundLog').closest('details').addEventListener('toggle', syncSoundState);
 $('#penOpens').addEventListener('change', (e) => { S.penOpens = e.target.checked; saveSettings(); });
 $('#winkSwap').addEventListener('change', (e) => { S.winkSwap = e.target.checked; saveSettings(); });
 $('#winkTest').addEventListener('click', () => { wink.testing = !wink.testing; $('#winkTest').textContent = wink.testing ? 'Stop test' : 'Test'; $('#winkMeter').hidden = !wink.testing; sendFace(); });
+// a wink seen (from the levels here, or the iPad's own): the page turns, once
+function winkFound(rawEye) {
+  const now = performance.now(); if (now - wink.lastTurn < 900) return; wink.lastTurn = now;
+  let eye = rawEye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
+  if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
+  if (!$('#score').hidden && S.wink) {
+    turn(eye === 'right' ? 1 : -1);
+    const f = $('#winkFlash'); f.className = 'wink-flash ' + eye; void f.offsetWidth; f.classList.add('on');
+  }
+}
 window.standFaceEvent = (ev) => {
   if (!ev) return;
   if (ev.type === 'levels') {
+    const now = performance.now();
+    wink.lv.push({ t: now, l: +ev.l || 0, r: +ev.r || 0 }); while (wink.lv.length && now - wink.lv[0].t > 1500) wink.lv.shift();
+    wink.lastLv = now;
+    // the iPad's own winks turn the page as they always did; with the face aside the levels are
+    // judged here too, each eye against its own rest (the iPad misses those winks)
+    wink.det.sens = S.winkSens || 0.7;
+    // (judged here as well, from the levels: a wink is seen ~0.12 s after the eye shuts, sooner than
+    // the iPad's own, which comes later; the first of the two turns the page, once)
+    const e = wink.det.feed(now, +ev.l || 0, +ev.r || 0, !ev.hand);
+    if (e && (faceAside() || (S.winkFast ?? true))) winkFound(e);
+    if (!wink.testing) return;
     const [l, r] = S.winkSwap ? [ev.r, ev.l] : [ev.l, ev.r];
     $('#eyeL').style.setProperty('--v', l); $('#eyeR').style.setProperty('--v', r);
     // a hand over the eyes pauses winking (shown while testing)
@@ -6014,12 +7759,8 @@ window.standFaceEvent = (ev) => {
     return;
   }
   if (ev.type === 'wink') {
-    let eye = ev.eye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
-    if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
-    if (!$('#score').hidden && S.wink) {
-      turn(eye === 'right' ? 1 : -1);
-      const f = $('#winkFlash'); f.className = 'wink-flash ' + eye; void f.offsetWidth; f.classList.add('on');
-    }
+    if (!winkOk(ev.eye)) { if (wink.testing) $('#winkLast').textContent = 'Both eyes closed: not a wink'; return; }
+    winkFound(ev.eye);
   }
   if (ev.type === 'unsupported') { CAPS.face = false; syncWinkUI(); }
 };
@@ -6038,58 +7779,101 @@ async function renderBackup() {
   box.classList.toggle('ok', !!st.at && !st.stale); box.classList.toggle('old', !!st.at && st.stale);
   $('#bkStateTitle').textContent = !st.at ? 'No backup yet' : st.stale ? `Last backup ${ago(st.at)}` : `Backed up ${ago(st.at)}`;
   $('#bkStateText').textContent = !st.at ? `Your library is ${mb(sz.essentials)}${sz.recordings ? `, recordings ${mb(sz.recordings)}` : ''}.` : st.stale ? 'There are changes since then.' : 'Nothing has changed since.';
-  $('#bkTakesSize').textContent = sz.recordings ? `(${mb(sz.recordings)})` : '';
+  $('#bkTakesSize').textContent = sz.recordings ? `(${mb(sz.recordings)})` : '(none yet)';
+  $('#bkLibSize').textContent = `(${mb(sz.essentials)})`;
   $('#bkTakes').disabled = !sz.recordings;
   const set = await getSetting('backupTakes', false); $('#bkTakes').checked = !!set && sz.recordings > 0;
   $('#bkSettingsState').textContent = st.at ? `Last backup ${ago(st.at)}.` : 'Everything in Stand, kept safe outside the app.';
+  const auto = await getSetting('backupAuto', 'week'); $$('#bkAuto button').forEach((x) => x.classList.toggle('on', x.dataset.auto === auto));
+  $('#bkTakesWhich').hidden = !$('#bkTakes').checked;
+  const fresh = (await newTakeIds(false)).length; const nb = $('#bkTakesWhich button[data-which="new"]'); if (nb) nb.textContent = fresh ? `Only new ones (${fresh})` : 'Only new ones (none)';
 }
 async function renderBackupBanner() {
   const b = $('#bkBanner'); if (!b) return;
   const st = await backupState();
   const snooze = await getSetting('backupSnooze', 0);
   const has = scores.length > 0;
-  const show = has && st.stale && st.days >= 7 && Date.now() > snooze;
+  const auto = await getSetting('backupAuto', 'week');
+  const every = auto === 'day' ? 1 : 7;
+  const show = has && st.stale && st.days >= every && Date.now() > snooze;
   b.hidden = !show;
   if (show) {
     $('#bkBannerTitle').textContent = st.at ? 'Time for a new backup' : 'Keep a copy in iCloud Drive';
     $('#bkBannerText').textContent = st.at ? `The last one was ${ago(st.at)}, and you have changed things since.` : 'Your scores and markings are only on this iPad. If Stand is deleted, they go with it.';
+    $('#bkBannerGo').textContent = auto !== 'off' ? 'Save backup' : 'Back up';
   }
 }
 $('#bkLater').addEventListener('click', async () => { await setSetting('backupSnooze', Date.now() + 3 * 864e5); $('#bkBanner').hidden = true; });
 document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="backup"]')) { $('#bkFiles').hidden = true; renderBackup(); } });
 $('#bkTakes').addEventListener('change', (e) => setSetting('backupTakes', e.target.checked));
-$('#bkMake').addEventListener('click', async () => {
-  const btn = $('#bkMake'); btn.disabled = true;
+// ---- making a backup: the library as one file (or a few, when it is very big), the recordings
+// in their own files (only the new ones, unless all are asked for). Names say what each file is.
+const BK = { vols: [] };
+const prettyDay = () => new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+async function newTakeIds(all) {
+  const takes = await db.all('takes');
+  if (all) return takes.map((t) => t.id);
+  const done = new Set(await getSetting('backupTakesDone', []));
+  return takes.filter((t) => !done.has(t.id)).map((t) => t.id);
+}
+const canShareAll = (vols) => { try { const fs = vols.map((v) => new File([v.blob], v.name, { type: 'application/zip' })); return !!(navigator.canShare && navigator.canShare({ files: fs })); } catch { return false; } };
+async function backupNow({ auto = false } = {}) {
+  const btn = $('#bkMake'); if (btn.disabled) return; btn.disabled = true;
   toast('Packing your library…', 60000);
   try {
-    const vols = await buildBackup($('#bkTakes').checked, dayKey());
+    const stamp = prettyDay();
+    const vols = await makeBackupSet('library', stamp, FOLD.list);
+    if ($('#bkTakes').checked) {
+      const ids = await newTakeIds(BK.which === 'all');
+      if (ids.length) { toast('Packing your recordings…', 60000); vols.push(...await makeBackupSet('recordings', stamp, FOLD.list, ids)); }
+    }
+    BK.vols = vols;
     $('#toast').hidden = true;
     const ul = $('#bkList'); ul.textContent = '';
     let saved = 0;
-    const done = async () => { await setSetting('backupAt', Date.now()); await setSetting('backupSnooze', 0); renderBackup(); renderBackupBanner(); };
+    const done = async () => {
+      await setSetting('backupAt', Date.now()); await setSetting('backupSnooze', 0);
+      const recs = vols.filter((v) => v.kind === 'Recordings').flatMap((v) => v.takeIds || []);
+      if (recs.length) await setSetting('backupTakesDone', [...new Set([...(await getSetting('backupTakesDone', [])), ...recs])]);
+      renderBackup(); renderBackupBanner();
+    };
+    const markSaved = (li, go) => { if (!li.classList.contains('saved')) { li.classList.add('saved'); go.textContent = 'Saved'; saved++; } if (saved === vols.length) done(); };
     vols.forEach((v, i) => {
-      const li = el('li'); const name = el('span', '', vols.length > 1 ? `File ${i + 1} of ${vols.length}` : 'Your backup'); name.append(' ', el('small', 'num', mb(v.size)));
+      const li = el('li'); const name = el('span', '', v.kind + (v.count > 1 ? ` · part ${v.part} of ${v.count}` : '')); name.append(' ', el('small', 'num', mb(v.size)));
       const go = el('button', 'btn small' + (i === 0 ? ' primary' : ''), 'Save');
       go.addEventListener('click', async () => {
         await shareBlob(v.blob, v.name);
-        if (!li.classList.contains('saved')) { li.classList.add('saved'); go.textContent = 'Saved'; saved++; }
+        markSaved(li, go);
         const next = ul.children[i + 1]; if (next) next.querySelector('.btn').classList.add('primary');
-        if (saved === vols.length) done();
       });
       li.append(name, go); ul.append(li);
     });
+    const all = vols.length > 1 && canShareAll(vols);
+    $('#bkSaveAll').hidden = !all;
+    $('#bkSaveAll').onclick = async () => {
+      const fs = vols.map((v) => new File([v.blob], v.name, { type: 'application/zip' }));
+      try { await navigator.share({ files: fs }); [...ul.children].forEach((li) => markSaved(li, li.querySelector('.btn'))); } catch {}
+    };
     $('#bkHow').innerHTML = vols.length > 1
-      ? `Your library is big, so the backup is <b>${vols.length} files</b>. Save each one: in the sheet choose <b>Save to Files</b>, then <b>iCloud Drive</b> (a folder called Stand is a good place).`
-      : 'In the sheet that opens, choose <b>Save to Files</b>, then <b>iCloud Drive</b> (a folder called Stand is a good place).';
+      ? `Your backup is <b>${vols.length} files</b>, named by what they hold. ${all ? 'Tap <b>Save all at once</b>, or save them one by one' : 'Save them one by one'}: in the sheet choose <b>Save to Files</b>, then <b>iCloud Drive › Stand</b> (make the folder Stand the first time). Opened in Files, each file is a folder with your scores as PDFs and your recordings.`
+      : 'In the sheet that opens, choose <b>Save to Files</b>, then <b>iCloud Drive › Stand</b> (make the folder Stand the first time). Opened in Files, the file is a folder with your scores as PDFs (in the folders of your library).';
     $('#bkFiles').hidden = false;
-    if (vols.length === 1) ul.querySelector('.btn').click();
+    if (vols.length === 1 || auto) ul.querySelector('.btn').click();
   } catch (err) { console.error(err); toast('The backup could not be made: ' + (err.message || err), 5000); }
   btn.disabled = false;
-});
+}
+$('#bkMake').addEventListener('click', () => backupNow());
+BK.which = 'new';
+$$('#bkTakesWhich button').forEach((b) => b.addEventListener('click', () => { BK.which = b.dataset.which; $$('#bkTakesWhich button').forEach((x) => x.classList.toggle('on', x === b)); }));
+$('#bkTakes').addEventListener('change', () => { $('#bkTakesWhich').hidden = !$('#bkTakes').checked; });
+// automatic: when the time has come and something changed, the banner offers the finished backup
+$$('#bkAuto button').forEach((b) => b.addEventListener('click', async () => { await setSetting('backupAuto', b.dataset.auto); $$('#bkAuto button').forEach((x) => x.classList.toggle('on', x === b)); renderBackupBanner(); }));
+$('#bkBannerGo').addEventListener('click', async () => { showPanel('backup'); renderBackup(); if ((await getSetting('backupAuto', 'week')) !== 'off') backupNow({ auto: true }); });
 $('#bkInput').addEventListener('change', async (e) => {
   const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
   toast('Bringing your library back…', 120000);
   try {
+    window.__restoring = true;
     const r = await restoreFiles(files);
     const miss = r.missing.filter((m) => m.lack.length);
     await setSetting('backupAt', Date.now());
@@ -6097,11 +7881,11 @@ $('#bkInput').addEventListener('change', async (e) => {
     else toast(`Restored ${r.scores} score${r.scores === 1 ? '' : 's'}${r.takes ? ` and ${r.takes} recording${r.takes === 1 ? '' : 's'}` : ''}. Starting again…`, 3000);
     // settings and the practice log come back too: start fresh with them
     setTimeout(() => location.reload(), miss.length ? 9000 : 2200);
-  } catch (err) { console.error(err); toast(err.message || 'That file could not be restored.', 5000); }
+  } catch (err) { window.__restoring = false; console.error(err); toast(err.message || 'That file could not be restored.', 5000); }
 });
 // ask the system to keep our storage (it is never cleared to make room)
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist().catch(() => {}); } catch {}
-document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) { syncWinkUI(); syncTapUI(); $('#appInst').value = S.instrument; applyAppearance(); } });
+document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) { syncWinkUI(); syncTapUI(); syncSoundState(); $('#appInst').value = S.instrument; applyAppearance(); } });
 
 // =====================================================================
 // Repetitions
@@ -6129,6 +7913,7 @@ renderReps();
 // =====================================================================
 const PHONE = /iPhone|iPod/.test(navigator.userAgent) || (Math.min(screen.width, screen.height) < 500 && matchMedia('(pointer: coarse)').matches);
 if (PHONE) document.body.classList.add('phone');
+
 const phone = new CameraPhone();
 function pcDraw(st, f) {
   const s2 = st || phone.state;
@@ -6148,7 +7933,25 @@ function pcDraw(st, f) {
     : (phone.shape === 'portrait' ? 'Vertical. Turn the iPhone sideways for a horizontal video.' : 'Horizontal. Hold it upright for a vertical video.');
   for (const [id, key] of [['#pcBright', 'bright'], ['#pcWarm', 'warm'], ['#pcZoom', 'zoom']]) if (document.activeElement !== $(id)) $(id).value = phone.s[key];
 }
+// the iPad's practice comes along with the camera link
+setInterval(async () => { if (!PHONE && host.state === 'linked' && S.shareIphone !== false) { try { host.sendPractice(await practiceForPhone()); } catch {} } }, 3 * 60000);
+phone.onPractice = async (d) => {
+  if (!d || d.v !== 1) return;
+  IPAD.data = d; IPAD.last = Date.now(); adoptPlan(d); await setSetting('ipadPractice', d);
+  renderIpadCard(); renderGoal(); renderToday(); if (openPanel === 'goal') renderTracker();
+};
 phone.onState = (st, f) => { if (typeof f === 'string') toast(f, 4500); pcDraw(st === 'error' ? phone.state : st, typeof f === 'number' ? f : 0); };
+// a video that could not reach the iPad is kept here, in Recordings, never lost
+phone.onUnsent = async (blob, mirror) => {
+  try {
+    const id = uid();
+    await db.put('files', { id: 'video:' + id, data: blob });
+    const dur = await new Promise((res) => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => res(v.duration || 0); v.onerror = () => res(0); v.src = URL.createObjectURL(blob); });
+    await db.put('takes', { id, kind: 'video', name: 'Camera video (not sent)', created: Date.now(), dur, mime: blob.type, mirror: !!mirror, thumb: await videoThumb(blob).catch(() => null) });
+  } catch {}
+  $('#pcResend').hidden = false;
+};
+$('#pcResend').addEventListener('click', async () => { $('#pcResend').hidden = true; const ok = await phone.resend(); if (!ok && phone.unsent) $('#pcResend').hidden = false; });
 phone.onLocal = (stream) => { const v = $('#pcVideo'); if (v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); } };
 $('#phoneCamTile').addEventListener('click', async () => {
   $('#phonecam').hidden = false; $('#pcCodeBox').hidden = true; $('#pcUseCode').hidden = false; pcDraw('connecting');
@@ -6222,7 +8025,53 @@ async function runGo(idx, atEnd = false) {
     }
     runShow(!sameScore);
     if (it.orig !== undefined) runFlashPassage(it);
+    // the next part, when it is in another score: that score opened and its first pages drawn now,
+    // quietly, so going on to it is quick
+    prewarmRun(RUN.items[idx + 1]);
+    // the next part, when it is in this score, is drawn ahead too
+    const nx = RUN.items[idx + 1];
+    if (nx && V.doc && V.score && nx.sid === V.score.id) {
+      const k = nx.orig !== undefined ? mappedOf(nx.orig) : clamp(nx.a - 1, 0, V.doc.pages - 1);
+      if (k >= 0) { const ids = [k]; pageBox(ids).forEach((b) => renderPage(k, innerW(k, b[0]), innerH(k, b[1]), 1, 2)); }
+    }
   } finally { RUN.busy = false; }
+}
+let RUNPRE = null;   // { sid, p: Promise<{ score, file, base }> }
+function dropRunPre() { const r = RUNPRE; RUNPRE = null; if (r) r.open.then((x) => { if (x && x.base && x.base !== V.base) try { x.base.destroy(); } catch {} }, () => {}); }
+function prewarmRun(it) {
+  if (!it || !RUN.on || (V.score && it.sid === V.score.id)) return;
+  if (RUNPRE && RUNPRE.sid === it.sid) return;
+  dropRunPre();
+  const open = (async () => {
+    await new Promise((r) => setTimeout(r, 900));   // (after the part now on show is drawn)
+    const score = await db.get('scores', it.sid); if (!score) return null;
+    const file = await db.get('files', score.fileId); if (!file) return null;
+    scoreFile(score, file);
+    return { score, file, base: await openDocument(file, score.sizes) };
+  })();
+  const p = (async () => {
+    const o = await open; if (!o) return null;
+    const { score, base } = o;
+    // its first pages at the size they will be shown: drawn into the kept pictures
+    const keep = { doc: V.doc, score: V.score, crop: V.crop, spread: V.spread };
+    let jobs = [];
+    const doc = mapDoc(base, score.pageMap, score.cuts, score.glue);
+    try {
+      V.doc = doc; V.score = score; V.crop = score.trim && score.trimBox ? score.trimBox : null; V.spread = spreadSize();
+      const k = it.orig !== undefined ? Math.max(0, mappedOf(it.orig)) : clamp(it.a - 1, 0, doc.pages - 1);
+      const end = it.orig !== undefined ? k : clamp((it.b || it.a) - 1, k, doc.pages - 1);
+      const ids = [k]; if (V.spread === 2 && k + 1 <= Math.max(end, k + 1) && k + 1 < doc.pages) ids.push(k + 1);
+      jobs = pageBox(ids).map((b, j) => ({ i: ids[j], ...pageKey(ids[j], innerW(ids[j], b[0]), innerH(ids[j], b[1])) }));
+    } finally { Object.assign(V, keep); }
+    for (const j of jobs) {
+      if (!RUNPRE || RUNPRE.sid !== it.sid) break;
+      const c = document.createElement('canvas');
+      await rqAdd(2, (ctl) => doc.render(j.i, c, j.pw, j.ph, { ctl, keep: true }), () => !RUN.on).catch(() => {});
+      c.width = c.height = 0;
+    }
+    return o;
+  })();
+  RUNPRE = { sid: it.sid, open, p };
 }
 function startRun(kind, name, items) {
   if (!items.length) return;
@@ -6231,6 +8080,7 @@ function startRun(kind, name, items) {
   runGo(0);
 }
 function endRun() {
+  dropRunPre();
   RUN.on = false; RUN.items = []; RUN.idx = 0;
   $('#runPill').hidden = true;
   if (V.doc && !$('#score').hidden) layout();
@@ -6396,6 +8246,7 @@ async function spOpenScore(sid, a, b) {
   const score = scores.find((s) => s.id === sid) || await db.get('scores', sid);
   const file = score && await db.get('files', score.fileId);
   if (!file) { toast('This score’s file is missing.'); return; }
+  scoreFile(score, file);
   const token = ++P.token;
   let base, doc;
   // the score on show is used as it is; another one is opened just for its pictures
@@ -6407,6 +8258,9 @@ async function spOpenScore(sid, a, b) {
   }
   Object.assign(P, { sid, base, doc, a: a ?? 0, b: b ?? doc.pages - 1, taps: a === undefined ? 0 : 2, title: score.title });
   if (a === undefined) { P.a = 0; P.b = doc.pages - 1; }
+  // any pages can be chosen (not only one run of pages): a new part starts with none, a part
+  // being changed with its own pages
+  P.sel = new Set(); if (a !== undefined) for (let k = a; k <= (b ?? a); k++) P.sel.add(k);
   $('#spScores').hidden = true; $('#spPages').hidden = false; $('#spTitle').textContent = score.title;
   const strip = $('#spStrip');
   const cells = [];
@@ -6415,7 +8269,11 @@ async function spOpenScore(sid, a, b) {
     const [pw, ph] = doc.sizes[i] || [595, 842];
     const cv = el('canvas'); cv.width = 120; cv.height = Math.round(120 * ph / pw);
     cell.append(cv, el('span', 'num', String(i + 1)));
-    cell.addEventListener('click', () => spTap(i));
+    // tap: this page in or out; hold: every page from the last one chosen to this one
+    let holdT = 0, held = false;
+    cell.addEventListener('pointerdown', () => { held = false; clearTimeout(holdT); holdT = setTimeout(() => { held = true; spRange(i); }, 450); });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) cell.addEventListener(ev, () => clearTimeout(holdT));
+    cell.addEventListener('click', () => { if (held) { held = false; return; } spTap(i); });
     strip.append(cell); cells.push(cv);
   }
   spMark();
@@ -6428,23 +8286,37 @@ async function spOpenScore(sid, a, b) {
 }
 function spTap(i) {
   const P = SETS.pick;
-  // first tap: that page alone; second tap: the range up to it; a third tap starts again
-  if (P.taps === 1) { P.b = Math.max(P.a, i); P.a = Math.min(P.a, i); P.taps = 2; }
-  else { P.a = P.b = i; P.taps = 1; }
+  if (P.sel.has(i)) P.sel.delete(i); else { P.sel.add(i); P.last = i; }
   spMark();
+}
+function spRange(i) {
+  const P = SETS.pick;
+  const from = P.last !== undefined ? P.last : i;
+  for (let k = Math.min(from, i); k <= Math.max(from, i); k++) P.sel.add(k);
+  P.last = i; spMark();
+}
+// the chosen pages as runs of pages one after another: [[a, b], ...] (0-based)
+function spRuns(sel) {
+  const pages = [...sel].sort((x, y) => x - y), runs = [];
+  for (const p of pages) { const r = runs[runs.length - 1]; if (r && p === r[1] + 1) r[1] = p; else runs.push([p, p]); }
+  return runs;
 }
 function spMark() {
   const P = SETS.pick;
-  [...$('#spStrip').children].forEach((c, i) => { c.classList.toggle('on', i >= P.a && i <= P.b); c.classList.toggle('edge', i === P.a || i === P.b); });
-  const pg = P.a === P.b ? `page ${P.a + 1}` : `pages ${P.a + 1}–${P.b + 1}`;
-  $('#spHint').textContent = P.taps === 1 ? `From page ${P.a + 1}. Tap the last page (or Add for just this one).` : P.taps === 2 ? `${pg[0].toUpperCase() + pg.slice(1)} chosen. Tap a page to choose again.` : 'Tap the first page, then the last page.';
-  $('#spOk').textContent = (P.part >= 0 ? 'Use ' : 'Add ') + pg;
+  const runs = spRuns(P.sel);
+  [...$('#spStrip').children].forEach((c, i) => { c.classList.toggle('on', P.sel.has(i)); c.classList.toggle('edge', runs.some((r) => r[0] === i || r[1] === i)); });
+  const n = P.sel.size;
+  const txt = runs.map((r) => (r[0] === r[1] ? `${r[0] + 1}` : `${r[0] + 1}–${r[1] + 1}`)).join(', ');
+  $('#spHint').textContent = n ? `Chosen: page${n === 1 ? '' : 's'} ${txt}. Tap a page to add or take it out; hold one to choose all pages up to it.` : 'Tap the pages you want (any of them). Hold a page to choose all the pages up to it.';
+  $('#spOk').textContent = !n ? 'Choose pages' : (P.part >= 0 ? 'Use ' : 'Add ') + (n === 1 ? `page ${txt}` : `${n} pages`);
+  $('#spOk').disabled = !n;
 }
-$('#spAll').addEventListener('click', () => { const P = SETS.pick; if (!P.doc) return; P.a = 0; P.b = P.doc.pages - 1; P.taps = 2; spMark(); });
+$('#spAll').addEventListener('click', () => { const P = SETS.pick; if (!P.doc) return; P.sel = new Set([...Array(P.doc.pages).keys()]); spMark(); });
 $('#spOk').addEventListener('click', () => {
-  const P = SETS.pick, set = SETS.edit; if (!P || !P.doc || !set) return;
-  const part = { sid: P.sid, a: P.a + 1, b: P.b + 1 };
-  if (P.part >= 0) set.items[P.part] = part; else set.items.push(part);
+  const P = SETS.pick, set = SETS.edit; if (!P || !P.doc || !set || !P.sel.size) return;
+  // each run of pages becomes a part, in page order
+  const parts = spRuns(P.sel).map(([a, b]) => ({ sid: P.sid, a: a + 1, b: b + 1 }));
+  if (P.part >= 0) set.items.splice(P.part, 1, ...parts); else set.items.push(...parts);
   saveSets(); spFree(); SETS.pick = null;
   renderSetParts(); showPanel('setedit');
 });
@@ -6474,7 +8346,9 @@ function renderStudy() {
     const cb = el('input'); cb.type = 'checkbox'; cb.checked = on;
     cb.addEventListener('change', () => { if (cb.checked) delete S.studyOff[g.scoreId]; else S.studyOff[g.scoreId] = true; saveSettings(); renderStudy(); });
     const th = el('i', 'sp-cover'); th.style.backgroundImage = coverOf(g.scoreId);
-    head.append(cb, th, el('strong', '', sc.title), el('span', 'hint', `${g.list.length} passage${g.list.length === 1 ? '' : 's'}`));
+    // the piece and its composer, each on its own line, cut short when long
+    const nm = el('span', 'study-name'); nm.append(el('strong', '', sc.title)); if (sc.composer) nm.append(el('small', '', sc.composer));
+    head.append(cb, th, nm, el('span', 'hint', `${g.list.length} passage${g.list.length === 1 ? '' : 's'}`));
     sec.append(head);
     const urgent = new Map(passMissed(g.list).filter((x) => !x.good).map((x) => [x.p.id, x.text]));
     for (const p of g.list) {
@@ -6482,7 +8356,7 @@ function renderStudy() {
       const dot = el('i', 'study-dot'); dot.style.background = (PASSAGE_KINDS[p.kind] || PASSAGE_KINDS.melodic).color;
       const t = el('div', 'study-txt');
       const last = p.log.length ? p.log[p.log.length - 1].bpm : null;
-      t.append(el('strong', '', p.name), el('span', 'hint', (last ? `${last} of ${p.target} bpm` : `Target ${p.target} bpm`) + (urgent.has(p.id) ? ' · ' + urgent.get(p.id) : '') + ` · page ${+p.key.split(':').pop() + 1}`));
+      t.append(el('strong', '', p.name), el('span', 'hint', (last ? `${last} of ${p.target} bpm` : `Target ${p.target} bpm`) + (urgent.has(p.id) ? ' · ' + urgent.get(p.id) : '') + ` · page ${parseInt(p.key.split(':').pop(), 10) + 1}`));
       const seg = el('div', 'seg study-prio');
       const pr = priorityOf(p);
       [3, 2, 1, 0].forEach((v) => {
@@ -6508,7 +8382,7 @@ function studyItems() {
     if (S.studyOff && S.studyOff[g.scoreId]) continue;
     for (const p of g.list) {
       const prio = priorityOf(p); if (!prio) continue;
-      out.push({ sid: g.scoreId, orig: +p.key.split(':').pop(), pid: p.id, name: p.name, prio, prog: passProgress(p), created: p.created });
+      out.push({ sid: g.scoreId, orig: parseInt(p.key.split(':').pop(), 10), pid: p.id, name: p.name, prio, prog: passProgress(p), created: p.created });
     }
   }
   out.sort((a, b) => b.prio - a.prio || a.prog - b.prog || (a.sid === b.sid ? a.orig - b.orig : 0) || a.created - b.created);
@@ -6520,7 +8394,8 @@ $('#studyStart').addEventListener('click', () => { const items = studyItems(); i
 
 // ---------- tools on the home screen, and the first time Stand opens ----------
 // writing scores needs the iPad's big screen and the Pencil: on the iPhone, Compose is not offered
-const TOOLS = [['tuner', 'Tuner'], ['harmonics', 'Harmonics'], ['drone', 'Drone'], ['metronome', 'Metronome'], ['scales', 'Scales'], ['study', 'Passages'], ['reps', 'Repetitions'], ['pomodoro', 'Practice timer'], ['record', 'Record'], ['takes', 'Recordings'], ['compose', 'Compose']].filter(([k]) => !(k === 'compose' && (/iPhone|iPod/.test(navigator.userAgent) || (Math.min(screen.width, screen.height) < 500 && matchMedia('(pointer: coarse)').matches))));
+// on the iPhone there are no scores, so no Passages either
+const TOOLS = [['tuner', 'Tuner'], ['harmonics', 'Harmonics'], ['drone', 'Drone'], ['metronome', 'Metronome'], ['scales', 'Scales'], ['study', 'Passages'], ['reps', 'Repetitions'], ['pomodoro', 'Practice timer'], ['record', 'Record'], ['takes', 'Recordings'], ['compose', 'Compose']].filter(([k]) => !((k === 'compose' || k === 'study') && (/iPhone|iPod/.test(navigator.userAgent) || (Math.min(screen.width, screen.height) < 500 && matchMedia('(pointer: coarse)').matches))));
 // a sensible start for each instrument (everything else can be switched on)
 function toolsFor(inst) {
   const strings = !!(INSTRUMENTS[inst] && INSTRUMENTS[inst].fifths);
@@ -6591,7 +8466,8 @@ function showWelcome() {
   applyMetroSettings(S.metro || { bpm: 80, meter: '4' });
   if (S.drone) {
     const d = S.drone; Object.assign(drone, { pc: d.pc ?? 9, octave: d.octave ?? 2, volume: d.volume ?? 0.5, lowOct: !!d.lowOct, speed: d.speed || 'medium' });
-    drone.sound = DRONE_VOICES[d.sound] ? d.sound : d.sound === 'organ' ? 'organ' : 'pure';
+    // sounds that are no longer offered become the nearest one kept (Flute, Tanpura → Bow)
+    drone.sound = DRONE_VOICES[d.sound] ? d.sound : d.sound === 'organ' ? 'organ' : d.sound === 'pure' || d.sound === 'soft' ? 'pure' : 'bow';
     drone.chord = d.chord && DRONE_CHORDS[d.chord] ? d.chord : d.third ? (d.minor ? 'minor' : 'major') : d.fifth === false ? 'root' : 'fifth';
   }
   if (S.ink) {
@@ -6606,7 +8482,7 @@ function showWelcome() {
   }
   syncInkBar();
   $('#autoTurn').value = String(S.autoTurn || 0); $('#audioSpeaker').checked = !!S.audioSpeaker; sendAudio(); $('#penOpens').checked = S.penOpens !== false;
-  if (S.scale) { Object.assign(scale, S.scale); if (!S.scale.bpm) scale.bpm = metro.bpm || 60; if (!['piano', 'organ', 'flute', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' ? 'flute' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
+  if (S.scale) { Object.assign(scale, S.scale); if (!S.scale.bpm) scale.bpm = metro.bpm || 60; if (!['piano', 'organ', 'bow', 'pure'].includes(scale.sound)) scale.sound = scale.sound === 'soft' ? 'pure' : scale.sound === 'strings' || scale.sound === 'flute' ? 'bow' : 'piano'; } else scale.octave = DEFAULT_OCT[S.instrument] ?? 3;
   fillInstrumentSelects(); fillKeySelects(); fillHarmonicSelects();
   $('#pureFifths').checked = S.pureFifths;
   $('#countIn').checked = S.countIn; $('#clickWhileRec').checked = S.clickWhileRec;
@@ -6625,6 +8501,8 @@ function showWelcome() {
   await refreshLibrary();
   applyTools();
   // the first time: a short welcome (people who already have scores have been here before)
+  // a preview left open when Stand was closed is kept (nothing is ever lost by surprise)
+  for (const sc of scores.filter((x) => x.preview)) { delete sc.preview; db.put('scores', sc).catch(() => {}); }
   if (!S.welcomed) { if (scores.length) { S.welcomed = true; saveSettings(); } else if (!PHONE) showWelcome(); }
   if (PHONE && !S.phoneToured && !window.__noTour) setTimeout(() => startTour({ phone: true, onDone: () => { S.phoneToured = true; saveSettings(); } }), 700);
   renderGoal(); syncWinkUI(); syncTapUI(); initPracticeSync();
@@ -6843,6 +8721,8 @@ function decideWord(job) {
   wordRead(job, pick ? pick.text : '');
 }
 window.standRecognized = (msg) => {
+  // words read for the composer's capture go there
+  if (String(msg.id).startsWith('cap:')) { if (window.__capTextDone) window.__capTextDone(msg.id, msg.text || ''); return; }
   const job = WORDS.get(msg.id); WORDS.delete(msg.id);
   if (!job || job.decided) return;
   job.answers[String(msg.id).endsWith('~s') ? 1 : 0] = (msg.text || '').trim();
@@ -6866,3 +8746,54 @@ function wordRead(job, text) {
   job.entry.layer.setItems(after); pushUndo(job.entry.layer.key, job.before, after.slice());
   inkHint(`“${text}”`, 2000);
 };
+
+
+// ---------- when Stand closes by itself ----------
+// Every few seconds what is going on is noted; if Stand was ended without going to the background
+// first (iOS closed it: memory, mostly), the next start keeps what it was doing, to show in
+// Settings and find the cause.
+(() => {
+  const K = 'standAlive', KC = 'standCrashes';
+  const get = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+  const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+  const prev = get(K, null);
+  if (prev && prev.open && Date.now() - prev.t < 3 * 864e5) {
+    const list = get(KC, []); list.push(prev); while (list.length > 6) list.shift(); put(KC, list);
+  }
+  const what = () => {
+    const on = [];
+    try {
+      if (!$('#score').hidden && V.score) on.push(NBK() ? 'a notebook' : 'a score' + (V.doc ? ` (${V.doc.pages} pages)` : ''));
+      else if (document.body.classList.contains('at-home')) on.push('the library');
+      if (Z.s > 1.05) on.push('zoomed ' + Math.round(Z.s * 100) + '%');
+      if (V.inking) on.push('writing');
+      if (typeof follow !== 'undefined' && follow.inst && follow.inst.on) on.push('listening to turn');
+      if (typeof eyes !== 'undefined' && eyes.running) on.push('following the eyes');
+      if (S.wink) on.push('winks');
+      if (metro.running) on.push('metronome'); if (drone.running) on.push('drone'); if (scale.playing) on.push('scales'); if (tuner.running) on.push('tuner');
+      if (recState) on.push('recording'); if (player.playing) on.push('playing a take');
+      if (openPanel) on.push('panel ' + openPanel);
+      if (document.querySelector('.cp-root:not([hidden]), #compose:not([hidden])')) on.push('Compose');
+      if (!$('#phScores')?.hidden) on.push('iPhone scores');
+      let px = 0; for (const c of document.querySelectorAll('canvas')) px += c.width * c.height;
+      on.push(Math.round(px / 1e6) + ' M canvas pixels on screen');
+    } catch {}
+    return on.join(', ');
+  };
+  const note = (open) => put(K, { t: Date.now(), open, what: what(), build: (window.standCaps && window.standCaps.build) || '' });
+  note(true);
+  setInterval(() => { if (!document.hidden) note(true); }, 3000);
+  document.addEventListener('visibilitychange', () => note(!document.hidden));
+  window.addEventListener('pagehide', () => note(false));
+  window.__crashes = () => get(KC, []);
+  // Settings: the times Stand closed by itself lately, and what it was doing
+  const show = () => {
+    const list = get(KC, []).filter((c) => Date.now() - c.t < 7 * 864e5);
+    const box = $('#crashBox'); if (!box) return;
+    box.hidden = !list.length;
+    const ol = $('#crashList'); ol.textContent = '';
+    for (const c of list.slice().reverse()) ol.append(el('li', '', `${new Date(c.t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}: ${c.what || '—'}`));
+  };
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-panel="app"]')) setTimeout(show, 50); });
+  $('#crashClear')?.addEventListener('click', () => { put(KC, []); show(); });
+})();

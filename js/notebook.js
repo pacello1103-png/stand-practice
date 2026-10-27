@@ -93,6 +93,11 @@ export function drawNotebookPage(ctx, file, pi, w, h) {
   if (file.pagesTpl && file.pagesTpl[pi]) file = { ...file, template: file.pagesTpl[pi] };
   const t = PAPER_TYPES[file.template] || PAPER_TYPES.treble;
   const o = nbOpts(file);
+  // a page turned sideways (made from a sideways layout): plain paper, the layout is on it
+  if (w > h * 1.05) {
+    ctx.save(); ctx.fillStyle = paperColor(o); ctx.fillRect(0, 0, w, h); ctx.restore();
+    return;
+  }
   const k = w / PAGE_W;
   ctx.save();
   ctx.fillStyle = paperColor(o); ctx.fillRect(0, 0, w, h);

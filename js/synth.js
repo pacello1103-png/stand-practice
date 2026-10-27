@@ -3,7 +3,7 @@
 // strings: a warm bowed tone with a gentle attack, no vibrato (good for intonation)
 import { getCtx } from './audio.js';
 
-export const VOICES = { piano: 'Piano', organ: 'Organ', flute: 'Flute', pure: 'Soft' };
+export const VOICES = { piano: 'Piano', organ: 'Organ', bow: 'Bow', pure: 'Soft' };
 
 const waveCache = new Map();
 function wave(ctx, name, amps) {
@@ -17,6 +17,10 @@ function wave(ctx, name, amps) {
 }
 const STRINGS = Array.from({ length: 24 }, (_, i) => { const k = i + 1; return Math.pow(k, -1.1) * (k % 2 ? 1 : 0.8) * Math.exp(-k / 18); });
 const SOFT = [1, 0.12, 0.04, 0.015];
+// The Bow and Horn drones: the harmonic recipes of the two sounds chosen for Stand (measured from
+// the recordings "Stand sound 3 - Bowed" and "Stand sound 5 - Horn"), steady and in tune.
+const BOW = [1, 0.3127, 0.2451, 0.1433, 0.1278, 0.1359, 0.085, 0.055, 0.0535, 0.0397, 0.0423, 0.0568];
+const HORN = [1, 0.6508, 0.4065, 0.2229, 0.1051, 0.1049, 0.0193];
 
 // Play one note. t: start time, dur: how long it is held. Returns the end time.
 export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
@@ -53,7 +57,7 @@ export function playNote(out, freq, t, dur, voice = 'piano', vel = 1) {
     ns.connect(nf).connect(ng).connect(g); ns.start(t);
     return end + release;
   }
-  if (voice === 'organ' || voice === 'flute' || voice === 'pure' || voice === 'strings') {
+  if (voice === 'organ' || voice === 'flute' || voice === 'pure' || voice === 'strings' || voice === 'bow' || voice === 'horn') {
     // the same sustained voices as the drone, shaped to this note's length
     const h = holdNote(out, freq, voice, vel, t);
     h.stop(t + dur);
@@ -92,9 +96,9 @@ function noise(ctx) {
   return noiseBuf;
 }
 const SAW = Array.from({ length: 48 }, (_, i) => 1 / (i + 1));
-export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, flute: 1.05 };
+export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, flute: 1.05, bow: 1.1, horn: 1.05 };
 const FLUTE = [1, 0.22, 0.04];
-export function holdNote(out, freq, voice = 'strings', level = 1, at) {
+export function holdNote(out, freq, voice = 'strings', level = 1, at, attack = 0.18) {
   const ctx = getCtx(), t = at ?? ctx.currentTime + 0.02;
   const g = ctx.createGain(); g.gain.value = 0; g.connect(out);
   const src = [];
@@ -128,6 +132,9 @@ export function holdNote(out, freq, voice = 'strings', level = 1, at) {
       const fg = ctx.createGain(); fg.gain.value = gv * 3.2; mix.connect(bp).connect(fg).connect(lp);
     }
     const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = Math.max(300, freq * 1.5); const lg = ctx.createGain(); lg.gain.value = 0.35; mix.connect(low).connect(lg).connect(lp);
+  } else if (voice === 'bow' || voice === 'horn') {
+    // the two chosen sounds, exactly as recorded: every harmonic in its place, nothing moving
+    osc(freq, voice, voice === 'bow' ? BOW : HORN).connect(g);
   } else if (voice === 'flute') {
     // one clean tone: a sine with a whisper of second harmonic and a soft breath of air
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = Math.min(5000, freq * 5); lp.Q.value = 0.4; lp.connect(g);
@@ -139,11 +146,11 @@ export function holdNote(out, freq, voice = 'strings', level = 1, at) {
   } else {
     osc(freq).connect(g);
   }
-  g.gain.setTargetAtTime(0.3 * level * (VOICE_GAIN[voice] || 1), t, 0.18);
+  g.gain.setTargetAtTime(0.3 * level * (VOICE_GAIN[voice] || 1), t, attack);
   return {
-    stop(at = getCtx().currentTime) {
-      g.gain.cancelScheduledValues(at); g.gain.setTargetAtTime(0, at, 0.12);
-      for (const n of src) { try { n.stop(at + 0.9); } catch {} }
+    stop(at = getCtx().currentTime, release = 0.12) {
+      g.gain.cancelScheduledValues(at); g.gain.setTargetAtTime(0, at, release);
+      for (const n of src) { try { n.stop(at + Math.max(0.2, release * 8)); } catch {} }
     },
   };
 }

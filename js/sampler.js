@@ -192,6 +192,14 @@ export class Sampler {
     // softer notes are darker as well as quieter, like a real instrument
     const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
     tone.frequency.value = 900 + Math.pow(vel, 1.7) * 17000;
+    // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
+    // quick sweep up from a warm sound), and the top is kept smooth.
+    const bowed = BOWED.has(sid);
+    if (bowed) {
+      const top = Math.min(9000, 2200 + Math.pow(vel, 1.4) * 7500 + (midi - 48) * 40);
+      tone.frequency.setValueAtTime(Math.min(top, 1400 + midi * 8), t);
+      tone.frequency.setTargetAtTime(top, t + 0.01, opts.art === 'acc' || opts.art === 'marc' ? 0.025 : 0.06);
+    }
     const g = ctx.createGain(); g.gain.value = 0;
     src.connect(tone).connect(g).connect(ch.input);
     let level = (0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06);
@@ -202,7 +210,7 @@ export class Sampler {
     const accented = opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'stacc' || opts.art === 'stacciss';
     const shape = !decaying && !accented && !connect;
     const lenAtk = shape ? (dur > 1.2 ? 0.075 : dur > 0.6 ? 0.045 : dur > 0.25 ? 0.02 : 0.006) * (1.15 - vel * 0.5) : 0;
-    const atk = Math.max(0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
+    const atk = Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
     let hold = dur;
     if (opts.art === 'stacc') hold = Math.min(dur, Math.max(0.07, dur * 0.42));
     else if (opts.art === 'stacciss') hold = Math.min(dur, Math.max(0.05, dur * 0.25));
@@ -210,7 +218,7 @@ export class Sampler {
     else hold = Math.max(0.05, dur * 0.94);
     // a sharp, bright edge for accents
     let offset = 0;
-    if ((opts.art === 'stacc' || opts.art === 'acc' || opts.art === 'marc') && !decaying) offset = 0.02;
+    if ((opts.art === 'stacc' || opts.art === 'acc' || opts.art === 'marc') && !decaying && !bowed) offset = 0.02;
     if (connect) offset = Math.min(0.09, (sample.buf.duration || 1) * 0.1);
     if (opts.legato && !decaying) hold = Math.max(hold, dur + 0.05);
     // vibrato: comes in after the start of the note, like a player's
@@ -236,9 +244,10 @@ export class Sampler {
     // the sound of the bow catching the string or the breath starting the note
     if ((BOWED.has(sid) || BLOWN.has(sid)) && !connect && this.noise) {
       const n = ctx.createBufferSource(); n.buffer = this.noise;
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = BOWED.has(sid) ? 2600 + midi * 12 : 1500 + midi * 10; bp.Q.value = BOWED.has(sid) ? 1.4 : 0.9;
-      const ng = ctx.createGain(); const nl = level * (BOWED.has(sid) ? 0.05 : 0.035) * (accented ? 1.8 : 1) * (0.6 + vel * 0.6);
-      ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(nl, t + 0.008); ng.gain.setTargetAtTime(0, t + 0.02, BOWED.has(sid) ? 0.035 : 0.05);
+      // the bow: a soft, low rosin sound (not a hiss), rising and dying away quickly
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = BOWED.has(sid) ? Math.min(1800, 500 + midi * 9) : 1500 + midi * 10; bp.Q.value = BOWED.has(sid) ? 0.8 : 0.9;
+      const ng = ctx.createGain(); const nl = level * (BOWED.has(sid) ? 0.022 : 0.035) * (accented ? 1.5 : 1) * (0.6 + vel * 0.6);
+      ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(nl, t + (BOWED.has(sid) ? 0.02 : 0.008)); ng.gain.setTargetAtTime(0, t + 0.03, BOWED.has(sid) ? 0.04 : 0.05);
       n.connect(bp).connect(ng).connect(ch.input);
       n.start(t, Math.random() * 0.5); n.stop(t + 0.3);
       n.onended = () => { try { ng.disconnect(); } catch {} };

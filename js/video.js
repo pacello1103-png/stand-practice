@@ -4,13 +4,23 @@ import { getCtx } from './audio.js';
 
 const TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
+// How the device is held. The screen's orientation is asked first: while the device turns, the
+// window's width and height can still be the old ones for a moment.
+export function devShape() {
+  try {
+    const t = screen.orientation && screen.orientation.type;
+    if (t) return t.startsWith('landscape') ? 'landscape' : 'portrait';
+  } catch {}
+  if (typeof window.orientation === 'number') return Math.abs(window.orientation) === 90 ? 'landscape' : 'portrait';
+  return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+}
 export class VideoRecorder {
   constructor() { this.stream = null; this.rec = null; this.recording = false; }
   // The picture goes through a canvas in the shape the iPad is held (landscape when it lies on its
   // side), turning the camera's frames if they come the other way round.
-  async open(facing = 'user', shape = window.innerWidth > window.innerHeight ? 'landscape' : 'portrait') {
+  async open(facing = 'user', shape = devShape(), { canvas: forceCanvas = false } = {}) {
     // already open the same way (opened ahead of time): start at once
-    if (this.cam && this.facing === facing && this.shape === shape && this.cam.getVideoTracks().every((t) => t.readyState === 'live')) return this.stream;
+    if (this.cam && this.facing === facing && this.shape === shape && (!forceCanvas || !this.direct) && this.cam.getVideoTracks().every((t) => t.readyState === 'live')) return this.stream;
     this.close();
     const land = shape === 'landscape';
     this.cam = await navigator.mediaDevices.getUserMedia({
@@ -28,12 +38,15 @@ export class VideoRecorder {
     const vw = v.videoWidth, vh = v.videoHeight;
     // When the camera already gives the picture the right way round, it is recorded directly: no
     // copying of frames, so nothing on screen can make the video stutter.
-    if (!vw || (vw > vh) === land || !(document.createElement('canvas').captureStream)) {
+    if (!(document.createElement('canvas').captureStream) || (!forceCanvas && (!vw || (vw > vh) === land))) {
       this.direct = true;
       this.stream = new MediaStream([...this.cam.getVideoTracks(), ...this.cam.getAudioTracks()]);
       return this.stream;
     }
     this.direct = false;
+    // frames that come the other way round when the camera opens are turned (the iPad); frames
+    // that turn later with the phone are drawn upright, whole, with bars at the sides
+    this.turnFrames = !!vw && (vw > vh) !== land;
     const c = this.canvas = document.createElement('canvas');
     c.width = land ? 960 : 540; c.height = land ? 540 : 960;   // smaller frames keep the rotated picture smooth on an iPad
     const g = c.getContext('2d', { alpha: false });
@@ -41,9 +54,17 @@ export class VideoRecorder {
       if (!this.cam) return;
       const w = v.videoWidth, h = v.videoHeight;
       if (w && h) {
-        g.save(); g.translate(c.width / 2, c.height / 2); g.rotate(Math.PI / 2);
-        const k = Math.max(c.height / w, c.width / h); g.drawImage(v, -w * k / 2, -h * k / 2, w * k, h * k);
-        g.restore();
+        const cl = c.width > c.height, fl = w > h;
+        if (fl !== cl && this.turnFrames) {
+          g.save(); g.translate(c.width / 2, c.height / 2); g.rotate(Math.PI / 2);
+          const k = Math.max(c.height / w, c.width / h); g.drawImage(v, -w * k / 2, -h * k / 2, w * k, h * k);
+          g.restore();
+        } else if (fl !== cl) {
+          g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+          const k = Math.min(c.width / w, c.height / h); g.drawImage(v, (c.width - w * k) / 2, (c.height - h * k) / 2, w * k, h * k);
+        } else {
+          const k = Math.max(c.width / w, c.height / h); g.drawImage(v, (c.width - w * k) / 2, (c.height - h * k) / 2, w * k, h * k);
+        }
       }
       if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else this.raf = requestAnimationFrame(draw);
     };
@@ -51,6 +72,15 @@ export class VideoRecorder {
     const out = c.captureStream(30);
     this.stream = new MediaStream([...out.getVideoTracks(), ...this.cam.getAudioTracks()]);
     return this.stream;
+  }
+  // the phone was turned before recording started: the video takes the new shape
+  setShape(shape) {
+    if (this.recording || !this.canvas || shape === this.shape) return false;
+    const land = shape === 'landscape';
+    this.canvas.width = land ? 960 : 540; this.canvas.height = land ? 540 : 960;
+    const v = this.src, vw = v ? v.videoWidth : 0, vh = v ? v.videoHeight : 0;
+    this.shape = shape; this.turnFrames = !!vw && (vw > vh) !== land;
+    return true;
   }
   start() {
     const type = (window.MediaRecorder && TYPES.find((t) => MediaRecorder.isTypeSupported(t))) || '';
@@ -78,7 +108,7 @@ export class VideoRecorder {
     if (this.cam) this.cam.getTracks().forEach((t) => t.stop());
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     if (this.src) { this.src.srcObject = null; this.src.remove(); this.src = null; }
-    this.facing = null;
+    this.facing = null; this.canvas = null;
     this.stream = null; this.cam = null;
   }
 }

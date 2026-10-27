@@ -1,6 +1,6 @@
 // Export a score as a PDF, with or without the markings. Original PDF pages are copied as
 // vectors, so the music stays sharp; markings are laid on top as a transparent image.
-import { drawItem, loadItems, loadMusicFont, setPaperColor, preloadAssets } from './ink.js';
+import { drawItem, loadItems, loadMusicFont, setPaperColor, preloadAssets, preloadMasks } from './ink.js';
 
 let lib = null;
 async function pdfLib() { if (!lib) lib = await import('../vendor/pdf-lib.mjs'); return lib; }
@@ -19,12 +19,14 @@ async function inkPng(items, wPx, hPx) {
 
 // waitMasks: whiteout masks are images that decode asynchronously.
 async function settleMasks(items) {
-  const srcs = items.filter((s) => s.t === 'mask').map((s) => s.d);
-  await Promise.all(srcs.map((src) => new Promise((res) => { const i = new Image(); i.onload = i.onerror = res; i.src = src; })));
+  await preloadMasks(items);
   await preloadAssets(items);
 }
 
-export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf }) {
+const inkKeyOf = (doc, i) => (doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i));
+const kindOf = (doc, file, o) => { const b = doc.base || doc; return b.kindOf ? b.kindOf(o) : file.kind; };
+
+export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf, only }) {
   const { PDFDocument } = await pdfLib();
   setPaperColor('#ffffff');
   await loadMusicFont();
@@ -34,16 +36,19 @@ export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf }
   out.setCreator('Stand');
   let src = null;
   if (file.kind === 'pdf') src = await PDFDocument.load(file.data.slice(0), { ignoreEncryption: true });
-  const n = doc.pages;
-  for (let i = 0; i < n; i++) {
-    onProgress && onProgress(i / n);
+  // (only some pages: a notebook page made from a layout, say)
+  const list = Array.isArray(only) && only.length ? only.filter((i) => i >= 0 && i < doc.pages) : [...Array(doc.pages).keys()];
+  const n = list.length;
+  for (let li = 0; li < n; li++) {
+    const i = list[li];
+    onProgress && onProgress(li / n);
     const orig = doc.orig(i);
-    const items = withInk ? (await loadItems(score.id + ':' + orig)).filter((s) => s.t !== 'passage') : [];
+    const items = withInk ? (await loadItems(score.id + ':' + inkKeyOf(doc, i))).filter((s) => s.t !== 'passage' && s.t !== 'note') : [];
     if (items.length) await settleMasks(items);
     let page = null, W, H;
     const bx = boxOf ? boxOf(i) : null;
     const cropped = bx && !(bx.x < 0.002 && bx.y < 0.002 && bx.w > 0.998 && bx.h > 0.998);
-    if (src) {
+    if (src && orig < src.getPageCount() && !(score.rot && score.rot[orig]) && !(doc.composite && doc.composite(i))) {   // (pages added from other files, pages turned and pages joined with the next are drawn below)
       const sp = src.getPage(orig);
       const rot = (sp.getRotation().angle || 0) % 360;
       if (rot === 0) {
@@ -80,11 +85,39 @@ export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf }
     const jpg = await canvasToBytes(cc, 'image/jpeg', 0.9);
     c.width = c.height = 0; cc.width = cc.height = 0;
     const im = await out.embedJpg(jpg);
-    const ptW = (file.kind === 'images' ? 595 : pw) * fw, ptH = (file.kind === 'images' ? (595 * ph) / pw : ph) * fh;
+    const pics = kindOf(doc, file, orig) === 'images';
+    const ptW = (pics ? 595 : pw) * fw, ptH = (pics ? (595 * ph) / pw : ph) * fh;
     page = out.addPage([ptW, ptH]);
     page.drawImage(im, { x: 0, y: 0, width: ptW, height: ptH });
   }
   onProgress && onProgress(1);
   const bytes = await out.save();
   return new Blob([bytes], { type: 'application/pdf' });
+}
+
+// One page as a picture (JPEG), with or without the markings: { blob }
+export async function exportPicture({ score, doc, i, withInk, box, long = 2400 }) {
+  setPaperColor('#ffffff');
+  await loadMusicFont();
+  const [pw, ph] = doc.sizes[i];
+  const k = long / Math.max(pw, ph);
+  const W = Math.round(pw * k), H = Math.round(ph * k);
+  const c = document.createElement('canvas');
+  await doc.render(i, c, W, H);
+  const g = c.getContext('2d');
+  if (withInk) {
+    const items = (await loadItems(score.id + ':' + inkKeyOf(doc, i))).filter((s) => s.t !== 'passage' && s.t !== 'note');
+    if (items.length) { await preloadAssets(items); await settleMasks(items); for (const s of items) drawItem(g, s, c.width, c.height, false); }
+  }
+  let out = c;
+  if (box && !(box.x < 0.002 && box.y < 0.002 && box.w > 0.998 && box.h > 0.998)) {
+    out = document.createElement('canvas'); out.width = Math.round(W * box.w); out.height = Math.round(H * box.h);
+    out.getContext('2d').drawImage(c, Math.round(box.x * W), Math.round(box.y * H), out.width, out.height, 0, 0, out.width, out.height);
+  }
+  // white under everything (a JPEG has no see-through)
+  const f = document.createElement('canvas'); f.width = out.width; f.height = out.height;
+  const fg = f.getContext('2d'); fg.fillStyle = '#fff'; fg.fillRect(0, 0, f.width, f.height); fg.drawImage(out, 0, 0);
+  const blob = await new Promise((res) => f.toBlob(res, 'image/jpeg', 0.92));
+  c.width = c.height = 0; if (out !== c) out.width = out.height = 0; f.width = f.height = 0;
+  return blob;
 }

@@ -103,6 +103,8 @@ export function renderPassages() {
   const box = $('#passMissed'), ul = $('#passList');
   box.textContent = ''; ul.textContent = '';
   $('#passEmpty').hidden = list.length > 0;
+  box.hidden = !list.length;
+  $('#passSession').hidden = !allPassages().some((g) => g.list && g.list.length);
   if (!list.length) return;
 
   const items = missed(list);

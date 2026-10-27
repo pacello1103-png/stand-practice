@@ -689,6 +689,7 @@ export function drawShape(ctx, s, W, H) {
 // Frosted glass: whatever is under the card shows through, softly blurred, with a light tint,
 // a bright edge and a soft shadow.
 const glassScratch = [document.createElement('canvas'), document.createElement('canvas'), document.createElement('canvas')];
+const rimLayer = { c: document.createElement('canvas'), m: document.createElement('canvas') };
 let canFilter = null;
 function filterWorks() {
   if (window.__glassNoFilter) return false;
@@ -697,27 +698,28 @@ function filterWorks() {
   return canFilter;
 }
 // A soft blur of part of a canvas, smooth at any size (no blocks): the browser's own blur where it
-// has one, otherwise halving step by step and growing back step by step.
-function blurRegion(cv, x0, y0, bw, bh) {
+// has one (with the colours made a little livelier, as glass does), otherwise made smaller just as
+// far as the blur needs and grown back step by step.
+function blurRegion(cv, x0, y0, bw, bh, rad) {
   const [c1, c2, c3] = glassScratch;
-  const rad = Math.max(4, Math.min(bw, bh) / 14);          // blur radius in canvas pixels
-  const pad = Math.ceil(rad * 2);
+  const pad = Math.ceil(rad * 2.5);
   const sx = Math.max(0, x0 - pad), sy = Math.max(0, y0 - pad);
   const ex = Math.min(cv.width, x0 + bw + pad), ey = Math.min(cv.height, y0 + bh + pad);
   const sw = ex - sx, sh = ey - sy;
   if (filterWorks()) {
-    const q = 0.5;                                          // half size is plenty for a blur
+    // (full size for a light blur; a heavy one can be worked out smaller)
+    const q = rad > 14 ? 0.5 : 1;
     c1.width = Math.max(2, Math.round(sw * q)); c1.height = Math.max(2, Math.round(sh * q));
     const g1 = c1.getContext('2d'); g1.clearRect(0, 0, c1.width, c1.height);
     g1.drawImage(cv, sx, sy, sw, sh, 0, 0, c1.width, c1.height);
     c2.width = c1.width; c2.height = c1.height;
     const g2 = c2.getContext('2d'); g2.clearRect(0, 0, c2.width, c2.height);
-    g2.filter = `blur(${(rad * q).toFixed(1)}px)`; g2.drawImage(c1, 0, 0); g2.filter = 'none';
-    return { img: c2, sx: (x0 - sx) * q, sy: (y0 - sy) * q, sw: bw * q, sh: bh * q };
+    g2.filter = `blur(${(rad * q).toFixed(1)}px) saturate(1.45) brightness(1.06)`; g2.drawImage(c1, 0, 0); g2.filter = 'none';
+    return { img: c2, sx: (x0 - sx) * q, sy: (y0 - sy) * q, sw: bw * q, sh: bh * q, full: c1, fq: q, fsx: (x0 - sx) * q, fsy: (y0 - sy) * q };
   }
-  // halve until small, then double back up: each step is a gentle box filter
+  // halve until the blur is reached, then double back up: each step a gentle box filter
   let src = cv, cw = sw, ch = sh, ox = sx, oy = sy;
-  const target = Math.max(6, Math.min(sw, sh) / 36);
+  const target = Math.max(6, Math.min(sw, sh) / Math.max(2, rad / 1.2));
   let flip = 0;
   while (Math.min(cw, ch) / 2 >= target) {
     const c = flip ? c2 : c1; flip ^= 1;
@@ -727,10 +729,8 @@ function blurRegion(cv, x0, y0, bw, bh) {
     g.clearRect(0, 0, nw, nh); g.drawImage(src, ox, oy, cw, ch, 0, 0, nw, nh);
     src = tmp; cw = nw; ch = nh; ox = 0; oy = 0;
   }
-  const small = src;
-  // grow back to a quarter of the size in steps, which removes the blocks
-  let gw = cw, gh = ch, cur = small;
-  const goal = Math.max(gw, Math.round(sw / 4));
+  let gw = cw, gh = ch, cur = src;
+  const goal = Math.max(gw, Math.round(sw / 2));
   while (gw * 2 <= goal) {
     const c = cur === c1 ? c2 : cur === c2 ? c3 : c1;
     c.width = gw * 2; c.height = gh * 2; const g = c.getContext('2d'); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
@@ -740,29 +740,66 @@ function blurRegion(cv, x0, y0, bw, bh) {
   const k = gw / sw;
   return { img: cur, sx: (x0 - sx) * k, sy: (y0 - sy) * k, sw: bw * k, sh: bh * k };
 }
+// Liquid glass: what is under the card shows through clearly, a little softened and livelier, bent
+// at the rim like the edge of a lens, with light catching the top edge and a soft shadow.
+// (s.blur: 0 clear .. 1 frosted; the old frosted look is s.frost)
 function drawGlass(ctx, s, w, h) {
   const r = Math.min(w, h) * 0.1, a = s.a ?? 1, m = Math.min(w, h);
   const T = ctx.getTransform(), cv = ctx.canvas;
+  const scale = Math.hypot(T.a, T.b) || 1;
   const pts = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([x, y]) => [T.a * x + T.c * y + T.e, T.b * x + T.d * y + T.f]);
   const x0 = Math.max(0, Math.floor(Math.min(...pts.map((q) => q[0])))), y0 = Math.max(0, Math.floor(Math.min(...pts.map((q) => q[1]))));
   const x1 = Math.min(cv.width, Math.ceil(Math.max(...pts.map((q) => q[0])))), y1 = Math.min(cv.height, Math.ceil(Math.max(...pts.map((q) => q[1]))));
+  const frost = s.frost ? 1 : s.blur ?? 0.25;
+  const rad = Math.max(2, m * scale * (0.012 + frost * 0.06));
   let blurred = null;
   if (x1 - x0 > 4 && y1 - y0 > 4) {
-    try { blurred = { ...blurRegion(cv, x0, y0, x1 - x0, y1 - y0), bw: x1 - x0, bh: y1 - y0 }; } catch { blurred = null; }
+    try { blurred = { ...blurRegion(cv, x0, y0, x1 - x0, y1 - y0, rad), bw: x1 - x0, bh: y1 - y0 }; } catch { blurred = null; }
   }
-  ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r);
+  const path = () => { ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r); };
+  // the shadow under it
+  ctx.save(); path();
   ctx.shadowColor = 'rgba(20,24,35,.22)'; ctx.shadowBlur = m * 0.09; ctx.shadowOffsetY = m * 0.03;
   ctx.globalAlpha = a; ctx.fillStyle = '#f7f8fa'; ctx.fill(); ctx.restore();
   if (blurred) {
-    ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r); ctx.clip();
+    // the middle: what is behind, softened
+    ctx.save(); path(); ctx.clip();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = a; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(blurred.img, blurred.sx, blurred.sy, blurred.sw, blurred.sh, x0, y0, blurred.bw, blurred.bh); ctx.restore();
+    ctx.drawImage(blurred.img, blurred.sx, blurred.sy, blurred.sw, blurred.sh, x0, y0, blurred.bw, blurred.bh);
+    ctx.restore();
+    // the rim: the same, drawn a little larger from the middle, fading in towards the edge (a lens)
+    const bw = x1 - x0, bh = y1 - y0, band = Math.min(m * scale * 0.1, 46);
+    if (band > 3 && bw > band * 3 && bh > band * 3) {
+      const L = rimLayer.c, M = rimLayer.m;
+      L.width = bw; L.height = bh; M.width = bw; M.height = bh;
+      const lg = L.getContext('2d'), mg = M.getContext('2d');
+      const k = 1 + (band * 2.4) / Math.max(bw, bh);
+      lg.save(); lg.translate(bw / 2, bh / 2); lg.scale(k, k); lg.translate(-bw / 2, -bh / 2);
+      lg.imageSmoothingQuality = 'high'; lg.drawImage(blurred.img, blurred.sx, blurred.sy, blurred.sw, blurred.sh, 0, 0, bw, bh); lg.restore();
+      // the mask: the whole card, less its middle with a soft edge (a blurred shadow, cut out)
+      const rr2 = Math.min(bw, bh) * 0.1;
+      mg.clearRect(0, 0, bw, bh); mg.fillStyle = '#fff'; mg.beginPath(); mg.roundRect(0, 0, bw, bh, rr2); mg.fill();
+      mg.globalCompositeOperation = 'destination-out';
+      mg.shadowColor = '#000'; mg.shadowBlur = band * 0.9; mg.shadowOffsetX = bw * 4;
+      mg.beginPath(); mg.roundRect(band - bw * 4, band, bw - band * 2, bh - band * 2, Math.max(0, rr2 - band)); mg.fill();
+      mg.globalCompositeOperation = 'source-over'; mg.shadowColor = 'transparent';
+      lg.globalCompositeOperation = 'destination-in'; lg.drawImage(M, 0, 0); lg.globalCompositeOperation = 'source-over';
+      ctx.save(); path(); ctx.clip(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = a; ctx.drawImage(L, x0, y0); ctx.restore();
+    }
   }
-  ctx.save(); ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, r);
-  ctx.globalAlpha = a * 0.26; ctx.fillStyle = s.f || '#ffffff'; ctx.fill();
-  const sh = ctx.createLinearGradient(-w / 2, -h / 2, w * 0.1, h * 0.2); sh.addColorStop(0, 'rgba(255,255,255,.5)'); sh.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.save(); path();
+  // a light tint (the colour chosen for the glass)
+  ctx.globalAlpha = a * (0.1 + frost * 0.18); ctx.fillStyle = s.f || '#ffffff'; ctx.fill();
+  // light on the glass: brighter at the top, a sheen across
+  const sh = ctx.createLinearGradient(0, -h / 2, 0, h / 2); sh.addColorStop(0, 'rgba(255,255,255,.28)'); sh.addColorStop(0.45, 'rgba(255,255,255,.04)'); sh.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.globalAlpha = a; ctx.fillStyle = sh; ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = Math.max(1, m * 0.007); ctx.stroke(); ctx.restore();
+  // the edge: bright where the light catches it (top left), darker opposite
+  const eg = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+  eg.addColorStop(0, 'rgba(255,255,255,.95)'); eg.addColorStop(0.35, 'rgba(255,255,255,.35)'); eg.addColorStop(0.65, 'rgba(255,255,255,.25)'); eg.addColorStop(1, 'rgba(255,255,255,.75)');
+  ctx.strokeStyle = eg; ctx.lineWidth = Math.max(1, m * 0.008); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(-w / 2 + m * 0.012, -h / 2 + m * 0.012, w - m * 0.024, h - m * 0.024, Math.max(0, r - m * 0.012));
+  ctx.strokeStyle = 'rgba(0,0,0,.06)'; ctx.lineWidth = Math.max(1, m * 0.006); ctx.stroke();
+  ctx.restore();
 }
 
 // ---------- page backgrounds ----------

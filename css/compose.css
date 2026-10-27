@@ -156,7 +156,7 @@
 .pk-handle::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent); }
 .pk-handle::after { content: ""; position: absolute; left: 3px; top: 50%; width: 16px; height: 28px; margin-top: -14px; border-radius: 8px; background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .cp-sel button.on { background: rgba(255,255,255,.22); }
-#compose.selecting .cp-page canvas.cp-over { touch-action: none; }
+/* Select mode: a finger scrolls (a held finger drags a selection); the pen selects */
 .pk-page .pk-handle { z-index: 3; width: 30px; margin-left: -15px; } .pk-page .pk-handle::before { left: 13px; } .pk-page .pk-handle::after { left: 7px; }
 .mx-adv-btn { align-self: center; } .mx-main .seg { margin-bottom: 4px; }
 
@@ -230,3 +230,21 @@
 .nb-styles img, .nb-styles canvas.ph { width: 100%; aspect-ratio: 1000/1414; object-fit: cover; border-radius: 2px 5px 5px 2px; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
 #nbDir { margin-top: 10px; }
 .cp-select { flex: 1; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink); font: 15px var(--font); padding: 0 10px; }
+
+/* the selection bar never runs off the screen: with many buttons it scrolls sideways */
+.cp-sel { max-width: calc(100vw - 24px); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.cp-sel::-webkit-scrollbar { display: none; }
+
+/* all the cover groups in view: they wrap onto a second row instead of hiding off the side */
+.nb-cats { flex-wrap: wrap; overflow-x: visible; }
+
+/* the rest of the selection bar, under it */
+.cp-sel-more { position: fixed; z-index: 14; width: min(300px, calc(100vw - 16px)); max-height: 60vh; overflow-y: auto; padding: 8px; border-radius: 14px; background: var(--ink); box-shadow: 0 12px 34px rgba(0,0,0,.3); display: flex; flex-wrap: wrap; gap: 4px; }
+.cp-sel-more[hidden] { display: none; }
+.cp-sel-more button { min-height: 38px; padding: 0 12px; border-radius: 9px; color: var(--bg); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; flex: 1 1 calc(50% - 4px); justify-content: flex-start; }
+.cp-sel-more button svg { width: 16px; height: 16px; }
+.cp-sel-more button.on { background: rgba(255,255,255,.22); }
+.cp-sel-more button.danger { color: #ff8f93; }
+.cp-sel-more .sheet-head { flex-basis: 100%; min-height: 26px; color: color-mix(in srgb, var(--bg) 60%, transparent); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
+.cp-sel button.more { font-weight: 700; }
+.cp-sel .what.soft { opacity: .75; font-style: italic; }

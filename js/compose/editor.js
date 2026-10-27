@@ -35,7 +35,7 @@ export const composeState = C;
 // =====================================================================
 export function initCompose(deps) {
   D = deps;
-  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { commitWrite, transpose, transposeToKey, setDuration, renderTab: () => renderTab(), makePdf: (w) => makePdf(w), tapSelect: (x, y, a) => tapSelect(x, y, a) };
+  window.__compose = C; window.__composeRelayout = () => relayout(); window.__composeTest = { applySig: (k, v, st, m, to) => applySig(k, v, st, m, to), readTextBoxes: (r, c) => readTextBoxes(r, c), placeCaptureTexts: (r, a) => placeCaptureTexts(r, a), commitWrite, midiStep, pasteCapture: (st, m) => pasteCapture(st, m), moveSemis, moveNotes, selectBars: (a, b, m0, m1) => selectBars(a, b, m0, m1), transpose, transposeToKey, setDuration, renderTab: () => renderTab(), makePdf: (w) => makePdf(w), tapSelect: (x, y, a) => tapSelect(x, y, a), syncSelBar: () => syncSelBar() };
   // the compose tour starts with the first touch on the editor, not when the panel opens
   const composeEl = document.getElementById('compose');
   // The compose tour starts on the first real tap or stroke. It listens for the click (in the capture
@@ -51,7 +51,7 @@ export async function openComposition(id) {
   const file = meta && await db.get('files', meta.fileId);
   if (!file || !file.data) { D.toast('This score could not be opened.'); return; }
   C.id = id; C.fileId = meta.fileId; C.score = M.migrateScore(file.data);
-  C.undo = []; C.redo = []; C.sel.clear(); C.selBars = null; syncUndo();
+  C.undo = []; C.redo = []; C.sel.clear(); C.selBars = null; C.capDoubt = null; syncUndo();
   meta.opened = Date.now(); db.put('scores', meta);
   await show();
 }
@@ -103,9 +103,12 @@ async function thumbOf() {
 
 // ---------- undo ----------
 function edit(fn, opts = {}) {
+  // (an edit inside another is part of it: one step to undo)
+  if (C.inEdit) return fn();
   const before = JSON.stringify(C.score);
-  const r = fn();
-  if (r === false) return;
+  let r; C.inEdit = true; try { r = fn(); } finally { C.inEdit = false; }
+  if (r === false) { if (JSON.stringify(C.score) !== before) { C.score = JSON.parse(before); relayout(); } return; }
+  checkDoubt();
   C.undo.push(before); if (C.undo.length > 150) C.undo.shift(); C.redo = [];
   if (!opts.keepSel) pruneSel();
   relayout();
@@ -114,9 +117,16 @@ function edit(fn, opts = {}) {
   if (C.tab !== 'text') renderTab();
   return r;
 }
+// a captured bar marked to check, once changed, has been checked
+function checkDoubt() {
+  if (!C.capDoubt) return;
+  const st = M.allStaves(C.score).find((x) => x.id === C.capDoubt.stId);
+  for (const [mm, snap] of [...C.capDoubt.bars]) if (!st || JSON.stringify(st.bars[mm]) !== snap) C.capDoubt.bars.delete(mm);
+  if (!C.capDoubt.bars.size) C.capDoubt = null;
+}
 function syncUndo() { for (const id of ['#cpPalUndo', '#cpUndo']) { const b = $(id); if (b) b.disabled = !C.undo.length; } for (const id of ['#cpPalRedo', '#cpRedo']) { const b = $(id); if (b) b.disabled = !C.redo.length; } }
-function undo() { if (!C.undo.length) return; C.redo.push(JSON.stringify(C.score)); C.score = JSON.parse(C.undo.pop()); pruneSel(); relayout(); syncSelBar(); renderTab(); saveSoon(); syncUndo(); }
-function redo() { if (!C.redo.length) return; C.undo.push(JSON.stringify(C.score)); C.score = JSON.parse(C.redo.pop()); pruneSel(); relayout(); syncSelBar(); renderTab(); saveSoon(); syncUndo(); }
+function undo() { if (!C.undo.length) return; C.redo.push(JSON.stringify(C.score)); C.score = JSON.parse(C.undo.pop()); checkDoubt(); pruneSel(); relayout(); syncSelBar(); renderTab(); saveSoon(); syncUndo(); }
+function redo() { if (!C.redo.length) return; C.undo.push(JSON.stringify(C.score)); C.score = JSON.parse(C.redo.pop()); checkDoubt(); pruneSel(); relayout(); syncSelBar(); renderTab(); saveSoon(); syncUndo(); }
 function pruneSel() { for (const id of [...C.sel]) if (!M.findEvent(C.score, id)) C.sel.delete(id); if (C.selBars) { const all = M.allStaves(C.score); const st = all.find((s) => s.id === C.selBars.stId); if (!st) { C.selBars = null; return; } const sts = (C.selBars.stIds || [C.selBars.stId]).map((id) => all.find((s) => s.id === id)).filter(Boolean); C.selBars = { ...C.selBars, st, sts, from: Math.min(C.selBars.from, C.score.measures.length - 1), to: Math.min(C.selBars.to, C.score.measures.length - 1) }; } }
 
 // =====================================================================
@@ -147,7 +157,7 @@ function pageVisible(p) {
 }
 function paintPage(i) {
   const p = C.pages[i];
-  const opts = { selection: C.sel, selBars: C.selBars, selInk: '#2b6fd6', selColor: 'rgba(43,111,214,0.12)', ranges: true };
+  const opts = { selection: C.sel, selBars: C.selBars, selInk: '#2b6fd6', selColor: 'rgba(43,111,214,0.12)', ranges: true, doubt: C.capDoubt };
   if (pageVisible(p)) {
     const w = parseFloat(p.pg.style.width), h = parseFloat(p.pg.style.height), dpr = pageDpr(p);
     const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
@@ -245,13 +255,14 @@ function targetAt(clientX, clientY) {
   const h = hitTest(C.hits[pa.i], pa.x, pa.y); if (!h || !h.meas.onsets) return null;
   const time = M.timeAt(C.score, h.meas.m);
   const beat = M.WHOLE / time[1];
-  const grid = tupN() ? (M.baseTicks(C.tool.dur) * tupObj(1).m) / tupN() : Math.min(DUR_TICKS(), beat * (time[1] === 8 ? 3 : 1));
+  // a tuplet can start on any place of its plain note value (not only on the beat)
+  const grid = tupN() ? M.baseTicks(C.tool.dur) : Math.min(DUR_TICKS(), beat * (time[1] === 8 ? 3 : 1));
   const t = timeAtX(h.meas, pa.x, grid);
   return { page: pa.i, staff: h.staff, meas: h.meas, t, p: clamp(h.p, -16, 26), x: pa.x, y: pa.y };
 }
 function noteFromTarget(tg) {
   const st = tg.staff.st, inst = tg.staff.inst, m = tg.meas.m;
-  const clef = M.clefAt(st, m);
+  const clef = M.clefAtPos(C.score, st, m, tg.t || 0);
   if (inst.unpitched) return { s: M.CLEFS[clef].bottom + tg.p, a: 0, perc: inst.unpitched };
   const step = M.CLEFS[clef].bottom + tg.p;
   const concert = C.score.layout.concert !== false;
@@ -273,6 +284,16 @@ function preview(tg) {
 }
 function drawHover() {
   C.pages.forEach(clearOver);
+  // the selected marking: a soft blue box around it
+  if (C.markSel && C.score) {
+    C.hits.forEach((hit, i) => {
+      const list = C.markSel.kind === 'span' ? ((hit && hit.spans) || []).filter((h) => h.id === C.markSel.id) : ((hit && hit.marks) || []).filter((h) => h.id === C.markSel.id && h.name === C.markSel.name);
+      for (const h of list) {
+        const g = overCtx(i); g.save(); g.fillStyle = 'rgba(43,111,214,0.18)'; g.strokeStyle = 'rgba(43,111,214,0.9)'; g.lineWidth = 0.15;
+        g.beginPath(); g.roundRect ? g.roundRect(h.x0 - 0.4, h.y0 - 0.4, h.x1 - h.x0 + 0.8, h.y1 - h.y0 + 0.8, 0.5) : g.rect(h.x0 - 0.4, h.y0 - 0.4, h.x1 - h.x0 + 0.8, h.y1 - h.y0 + 0.8); g.fill(); g.stroke(); g.restore();
+      }
+    });
+  }
   const tg = C.placing ? C.placing.tg : C.hover;
   if (!tg || C.mode !== 'write' || !C.score) return;
   const g = overCtx(tg.page);
@@ -310,10 +331,17 @@ function wireInput() {
     }
   });
   box.addEventListener('pointerleave', () => { if (!C.placing) { C.hover = null; drawHover(); } });
+  box.addEventListener('touchmove', (e) => { if (C.lpDrag) e.preventDefault(); }, { passive: false });
   box.addEventListener('pointerdown', (e) => {
     if (!C.score) return;
     if (e.pointerType === 'touch' && !C.finger && C.mode !== 'select') { touchDown(e); return; }
+    // in Select mode a finger scrolls and taps; held still for a moment, it selects by dragging
+    if (e.pointerType === 'touch' && C.mode === 'select') { selectTouchDown(e); return; }
     if (canWrite(e)) {
+      // the pen right on a marking (an accent, a trill, a dynamic): it is selected, not written over
+      const pm = pageAt(e.clientX, e.clientY); let mk = pm && markAt(pm, 0);
+      if (mk && ['tie', 'barline', 'repstart', 'lyric'].includes(mk.kind)) mk = null;
+      if (mk) { e.preventDefault(); C.sel.clear(); C.selBars = null; C.markSel = mk; relayout(); syncSelBar(); drawHover(); return; }
       const tg = targetAt(e.clientX, e.clientY); if (!tg) return;
       e.preventDefault();
       try { box.setPointerCapture(e.pointerId); } catch {}
@@ -327,6 +355,16 @@ function wireInput() {
     e.preventDefault();
     try { box.setPointerCapture(e.pointerId); } catch {}
     const sn = noteAt(pa);
+    // a slur or a hairpin (away from the notes): drag it up or down
+    const sp = !sn && spanAtPoint(pa);
+    if (sp) {
+      // grabbed near an end: that end moves (any way); in the middle: a slur gets taller or flatter,
+      // a hairpin moves up or down
+      const hb = C.spanHit, w = Math.max(0.1, hb.x1 - hb.x0), f = (pa.x - hb.x0) / w;
+      const zone = !['slur', 'hairpin'].includes(sp.kind) ? 'none' : w > 3 && f < 0.22 ? 'a' : w > 3 && f > 0.78 ? 'b' : 'mid';
+      C.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, span: sp, zone, orig: { off: sp.off, ax: sp.ax, ay: sp.ay, bx: sp.bx, by: sp.by, hd: sp.hd }, k: C.pages[pa.i].k };
+      return;
+    }
     C.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, start: hitBar(pa), moved: false, note: sn && !sn.rest ? sn : null };
   });
   const up = (e) => {
@@ -376,6 +414,31 @@ function wireInput() {
   void touches;
 }
 // A finger tap selects a note (or a bar) in either mode; finger drags scroll the page.
+function selectTouchDown(e) {
+  const t0 = performance.now(), x0 = e.clientX, y0 = e.clientY, id = e.pointerId;
+  let started = false;
+  const timer = setTimeout(() => {
+    const pa = pageAt(x0, y0); if (!pa) return;
+    started = true; C.lpDrag = true;
+    const sn = noteAt(pa);
+    try { $('#cpPages').setPointerCapture(id); } catch {}
+    C.drag = { id, x0, y0, start: hitBar(pa), moved: true, note: sn && !sn.rest ? sn : null };
+    // the bar (or note) under the finger is chosen at once, so you see where the drag starts
+    if (C.drag.note) { C.sel.clear(); C.selBars = null; C.sel.add(C.drag.note.id); }
+    else if (C.drag.start) selectBars(C.drag.start.staff.st, C.drag.start.staff.st, C.drag.start.m, C.drag.start.m);
+    relayout(); syncSelBar();
+    if (navigator.vibrate) try { navigator.vibrate(8); } catch {}
+  }, 380);
+  const move = (ev) => { if (ev.pointerId !== id || started) return; if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 10) { clearTimeout(timer); off(); } };
+  const up = (ev) => {
+    if (ev.pointerId !== id) return;
+    clearTimeout(timer); off();
+    if (started) { C.lpDrag = false; return; }
+    if (ev.type === 'pointerup' && performance.now() - t0 < 450 && Math.hypot(ev.clientX - x0, ev.clientY - y0) <= 10) tapSelect(ev.clientX, ev.clientY, false);
+  };
+  const off = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+}
 function touchDown(e) {
   const t0 = performance.now(), x0 = e.clientX, y0 = e.clientY;
   const upOnce = (ev) => {
@@ -400,9 +463,34 @@ function hitBar(pa) {
   const h = hitTest(C.hits[pa.i], pa.x, pa.y); if (!h) return null;
   return { page: pa.i, staff: h.staff, m: h.meas.m, x: pa.x, y: pa.y, meas: h.meas };
 }
+// the slur or hairpin under a point of a page
+function spanAtPoint(pa) {
+  const hit = C.hits[pa.i]; if (!hit || !hit.spans) return null;
+  let best = null, bd = 1e9;
+  for (const h of hit.spans) {
+    if (pa.x < h.x0 - 0.3 || pa.x > h.x1 + 0.3 || pa.y < h.y0 - 0.3 || pa.y > h.y1 + 0.3) continue;
+    const d = Math.abs(pa.y - (h.y0 + h.y1) / 2);
+    if (d < bd) { bd = d; best = h; }
+  }
+  const sp = best ? (C.score.spans || []).find((q) => q.id === best.id) || null : null;
+  if (sp) C.spanHit = best;
+  return sp;
+}
 function moveDrag(e) {
   const d = C.drag;
   if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 8) d.moved = true;
+  if (d.span) {
+    if (!d.moved || d.zone === 'none') return;
+    // follows the pen, in steps of a quarter space, and never further than 8 spaces
+    const q4 = (v) => clamp(Math.round(v * 4) / 4, -8, 8), o = d.orig, dx = (e.clientX - d.x0) / d.k, dy = (e.clientY - d.y0) / d.k;
+    const sp = d.span;
+    if (d.zone === 'a') { sp.ax = q4((o.ax || 0) + dx); if (sp.kind === 'slur') sp.ay = q4((o.ay || 0) + dy); }
+    else if (d.zone === 'b') { sp.bx = q4((o.bx || 0) + dx); if (sp.kind === 'slur') sp.by = q4((o.by || 0) + dy); }
+    else if (sp.kind === 'slur') { const above = (C.spanHit && C.spanHit.above) !== false; sp.hd = clamp(Math.round(((o.hd || 0) + (above ? -dy : dy)) * 4) / 4, -1.5, 6); }
+    else sp.off = q4((o.off || 0) + dy);
+    if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; relayout(); });
+    return;
+  }
   if (d.moved && d.note) {
     const pa = pageAt(e.clientX, e.clientY); if (!pa) return;
     const n2 = noteAt(pa);
@@ -418,6 +506,15 @@ function moveDrag(e) {
 }
 function endDrag(e) {
   const d = C.drag; C.drag = null;
+  if (d.span) {
+    if (d.raf) cancelAnimationFrame(d.raf);
+    if (!d.moved || d.zone === 'none') { C.sel.clear(); C.selBars = null; C.markSel = { id: d.span.id, kind: 'span', name: d.span.kind }; relayout(); syncSelBar(); drawHover(); return; }
+    const keys = ['off', 'ax', 'ay', 'bx', 'by', 'hd'];
+    const fin = {}; for (const k of keys) { fin[k] = d.span[k]; if (d.orig[k] === undefined) delete d.span[k]; else d.span[k] = d.orig[k]; }
+    edit(() => { const q = (C.score.spans || []).find((x) => x.id === d.span.id); if (q) for (const k of keys) { if (fin[k]) q[k] = fin[k]; else delete q[k]; } }, { keepSel: true });
+    hint(d.zone === 'mid' ? (d.span.kind === 'slur' ? 'Taller or flatter. Drag an end to move it; undo to put it back.' : 'Moved. Drag an end to make it longer or shorter.') : 'End moved. Drag the middle to change the curve; undo to put it back.', 2200);
+    return;
+  }
   if (!d.moved) tapSelect(e.clientX, e.clientY, e.shiftKey);
   else if (d.note) renderTab();
 }
@@ -453,8 +550,33 @@ function selectNoteRange(idA, idB) {
   }
   return true;
 }
+function markAt(pa, pad = 0.35) {
+  const hit = C.hits[pa.i]; if (!hit || !hit.marks) return null;
+  let best = null, bd = 1e9;
+  for (const h of hit.marks) {
+    if (pa.x < h.x0 - pad || pa.x > h.x1 + pad || pa.y < h.y0 - pad || pa.y > h.y1 + pad) continue;
+    const d = Math.hypot(pa.x - (h.x0 + h.x1) / 2, pa.y - (h.y0 + h.y1) / 2);
+    if (d < bd) { bd = d; best = h; }
+  }
+  if (!best) return null;
+  const { x0, x1, y0, y1, ...o } = best;
+  return { ...o, page: pa.i };
+}
 function tapSelect(cx, cy, add) {
   const pa = pageAt(cx, cy); if (!pa) { clearSel(); return; }
+  // a marking tapped on its own (staccato, accent, trill, fermata, a dynamic, words): it is selected
+  let mk = !C.extend && markAt(pa);
+  // (a tie or a word under a note head: the note comes first)
+  if (mk && (mk.kind === 'tie' || mk.kind === 'barline') && noteAt(pa)) mk = null;
+  // a slur, hairpin or any line over notes (8va, pedal, trill, endings…): chosen with a tap too
+  if (!mk && !C.extend && !noteAt(pa)) { const sp = spanAtPoint(pa); if (sp) mk = { id: sp.id, kind: 'span', name: sp.kind, page: pa.i }; }
+  if (mk) {
+    const same = C.markSel && C.markSel.id === mk.id && C.markSel.name === mk.name;
+    C.sel.clear(); C.selBars = null; C.markSel = same ? null : mk;
+    relayout(); syncSelBar(); drawHover();
+    return;
+  }
+  C.markSel = null;
   let best = noteAt(pa);
   if (best && C.extend && C.selBars) best = null;
   // "Select more" with notes: the tap selects everything from the first selected note to here
@@ -494,8 +616,9 @@ function tapSelect(cx, cy, add) {
   }
   clearSel();
 }
-function clearSel() { C.extend = false; if (!C.sel.size && !C.selBars) return; C.sel.clear(); C.selBars = null; relayout(); syncSelBar(); renderTab(); }
+function clearSel() { C.extend = false; if (C.markSel) { C.markSel = null; syncSelBar(); drawHover(); } if (!C.sel.size && !C.selBars) return; C.sel.clear(); C.selBars = null; relayout(); syncSelBar(); renderTab(); }
 
+const KEEP_MARKS = ['art', 'dyn', 'txt', 'txtStyle', 'fing', 'lyric', 'chord', 'stem'];
 // Write the note (or rest) the pen just placed.
 function commitWrite(tg) {
   const st = M.voiceView(tg.staff.st, C.tool.voice || 1, C.score), m = tg.meas.m, pos = tg.t;
@@ -510,18 +633,22 @@ function commitWrite(tg) {
     const at = idx >= 0 ? bar[idx] : null;
     if (C.tool.rest) {
       const ev = { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots };
+      if (at) for (const k of ['dyn', 'txt', 'txtStyle', 'fing', 'chord']) if (at[k]) ev[k] = M.clone(at[k]);
       if (tupN()) ev.tup = { ...tupObj(C.tool.dur), ...(at && at.tup && at.tup.i !== undefined ? { i: at.tup.i } : {}) };
       if (at && at.tup && tupN() && M.evTicks(at) === M.evTicks(ev)) bar[idx] = ev; else M.writeEvent(C.score, st, m, pos, ev);
       newId = ev.id; return;
     }
     const n = noteFromTarget(tg);
-    // add to a chord: with Chord on, or writing the same value on top of a note
-    if (at && at.notes && !at.rest && (C.tool.chord || (at.t === C.tool.dur && (at.dots || 0) === C.tool.dots && !!at.tup === !!tupN() && C.tool.chord))) {
+    // add to a chord: with Chord on (without it, writing on top of a note changes the note)
+    if (at && at.notes && !at.rest && C.tool.chord) {
       if (!at.notes.some((q) => q.s === n.s)) { at.notes.push(n); at.notes.sort((a, b) => a.s - b.s); }
       newId = at.id; return;
     }
     const ev = { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [n] };
     if (C.tool.head) ev.head = C.tool.head;
+    // writing over a note keeps what was written on it: lyrics, chord symbols, dynamics,
+    // articulations and words stay when the note (or rest) changes
+    if (at && at !== ev) for (const k of KEEP_MARKS) if (at[k] !== undefined && at[k] !== null && !(Array.isArray(at[k]) && !at[k].length)) { if (k === 'art' && at.rest) continue; ev[k] = M.clone(at[k]); }
     if (tupN()) {
       const tp = tupObj(C.tool.dur);
       ev.tup = tp;
@@ -530,8 +657,13 @@ function commitWrite(tg) {
       const span = Math.round((M.baseTicks(C.tool.dur) * (2 - Math.pow(0.5, C.tool.dots || 0))) * tp.m);
       const slot = span / tp.n;
       const btot = M.barTicks(time);
-      if (span > btot) { hint('This tuplet is longer than the bar. Choose a shorter note value.'); return; }
-      let gpos = Math.floor(pos / span) * span; if (gpos + span > btot) gpos = btot - span;
+      if (span > btot) { hint('This tuplet is longer than the bar. Choose a shorter note value.'); return false; }
+      // the group starts where the note is written (on any place of the plain note value)
+      const unit = M.baseTicks(C.tool.dur);
+      let gpos = Math.round(pos / unit) * unit; if (gpos + span > btot) gpos = Math.floor((btot - span) / unit) * unit;
+      if (gpos < 0) gpos = 0;
+      // it may not cut through another tuplet
+      { let p1 = 0; for (const e of bar) { const l = M.ticksOf(e, time); if (e.tup && p1 < gpos + span && p1 + l > gpos && (p1 < gpos || p1 + l > gpos + span)) { hint('This would cut through another tuplet. Write it after that one, or delete it first.', 3200); return false; } p1 += l; } }
       const offset = Math.max(0, Math.min(tp.n - 1, Math.round((pos - gpos) / slot)));
       ev.tup = { ...tp, i: offset };
       const group = Array.from({ length: tp.n }, (_, i) => (i === offset ? ev : { id: M.newId(), rest: true, keep: true, t: C.tool.dur, dots: C.tool.dots || 0, tup: { ...tp, i } }));
@@ -539,9 +671,9 @@ function commitWrite(tg) {
       let p0 = gpos;
       for (const pc of M.decompose(gpos, span, time, true)) { M.writeEvent(C.score, st, m, p0, { id: M.newId(), rest: true, keep: true, t: pc.t, dots: pc.dots }); p0 += pc.ticks; }
       const b2 = st.bars[m]; const s2 = M.eventStarts(b2, time); const i2 = s2.indexOf(gpos);
-      if (i2 < 0) { newId = null; return; }
+      if (i2 < 0) { newId = null; return false; }
       let k = i2, acc = 0; while (k < b2.length && acc < span) { acc += M.ticksOf(b2[k], time); k++; }
-      if (acc !== span) { newId = null; return; }
+      if (acc !== span) { newId = null; return false; }
       b2.splice(i2, k - i2, ...group);
       newId = ev.id; return;
     }
@@ -579,14 +711,48 @@ function targetBar() {
   const s = selEvents(); if (s.length) return s[0].m;
   return null;
 }
+// the notes of the selection: the selected notes, or everything in the selected bars (both voices)
+function selNoteEvents() {
+  if (C.selBars) {
+    const out = [];
+    for (const st0 of selStaves()) {
+      const info = M.staffInfo(C.score).find((x) => x.st === st0 || x.st.id === (st0.id || st0)); if (!info) continue;
+      for (let m = C.selBars.from; m <= C.selBars.to; m++) for (const v of [1, 2]) {
+        const vst = M.voiceView(info.st, v, C.score); const bar = (v === 2 ? info.st.v2 : info.st.bars) || []; if (!bar[m]) continue;
+        for (const ev of bar[m]) if (ev.notes && !ev.rest) out.push({ ev, st: vst, m, part: info.part, inst: info.inst });
+      }
+    }
+    return out;
+  }
+  return selEvents().filter((f) => f.ev.notes && !f.ev.rest);
+}
+// up or down by semitones, spelled in the key (sharps going up, flats going down when it is not a note of the key)
+function semiNote(n, d, key) {
+  const midi = M.midiOf(n.s, n.a) + d;
+  const pc = ((midi % 12) + 12) % 12, oct = Math.floor(midi / 12) - 1;
+  const cands = [];
+  for (let sc = 0; sc < 7; sc++) for (const a of [0, 1, -1]) {
+    if ((((M.STEP_SEMI[sc] + a) % 12) + 12) % 12 !== pc) continue;
+    let o = oct; const raw = M.STEP_SEMI[sc] + a; if (raw < 0) o += 1; if (raw > 11) o -= 1;
+    cands.push({ s: o * 7 + sc, a });
+  }
+  const sc = (c) => (M.keyAlter(key, c.s) === c.a ? 0 : 10) + (c.a === 0 ? 0 : c.a === (d > 0 ? 1 : -1) ? 1 : 3);
+  cands.sort((x, y) => sc(x) - sc(y));
+  return { ...n, ...cands[0] };
+}
+function moveSemis(d) {
+  const evs = selNoteEvents(); if (!evs.length) { hint('Select notes or bars first.'); return; }
+  edit(() => { for (const f of evs) { const key = M.keyAt(C.score, f.m); f.ev.notes = f.ev.notes.map((n) => (n.perc ? n : semiNote(n, d, key))).sort((a, b) => a.s - b.s); } }, { keepSel: true });
+  const f = evs[0]; unlock(); for (const n of f.ev.notes) sampler.preview(soundOf(f.part), midiOfNote(n, f.inst), 0.55, 0.45, f.part.mix || undefined);
+}
 function moveNotes(steps, chromatic) {
-  const evs = selEvents().filter((f) => f.ev.notes && !f.ev.rest); if (!evs.length) return;
+  const evs = selNoteEvents(); if (!evs.length) { hint('Select notes or bars first.'); return; }
   edit(() => {
     for (const f of evs) {
       const concert = C.score.layout.concert !== false;
       const key = M.keyAt(C.score, f.m);
       f.ev.notes = f.ev.notes.map((n) => {
-        if (chromatic) return n;
+        if (chromatic || n.perc) return n;
         const s = n.s + steps;
         // moving by a step keeps the key; moving by an octave keeps the accidental
         const a = Math.abs(steps) === 7 ? n.a : (concert ? M.keyAlter(key, s) : M.keyAlter(key, s));
@@ -677,10 +843,15 @@ function setDuration(t) {
   const evs = selEvents();
   if (evs.length && C.mode === 'select') {
     edit(() => {
-      for (const f of evs) {
-        const ev = { ...M.clone(f.ev), t, dots: C.tool.dots, full: false };
+      // (one after another, each found again where it is now: a longer note written first takes
+      // the place of the next ones, which are then gone)
+      for (const f of evs.slice().sort((a, b) => a.m - b.m || a.pos - b.pos)) {
+        const bar = f.st.bars[f.m] || [], i = bar.findIndex((e) => e.id === f.ev.id);
+        if (i < 0) continue;
+        const time = M.timeAt(C.score, f.m); let pos = 0; for (let k = 0; k < i; k++) pos += M.ticksOf(bar[k], time);
+        const ev = { ...M.clone(bar[i]), t, dots: C.tool.dots, full: false };
         if (tupN()) ev.tup = tupObj(t); else delete ev.tup;
-        M.writeEvent(C.score, f.st, f.m, f.pos, ev);
+        M.writeEvent(C.score, f.st, f.m, pos, ev);
       }
     }, { keepSel: true });
   }
@@ -797,14 +968,40 @@ function setText(txt) {
   edit(() => { evs[0].ev.txt = txt || null; }, { keepSel: true });
 }
 function deleteSel() {
+  if (C.markSel) { deleteMark(C.markSel); return; }
   if (C.selBars) { clearBars(); return; }
   const evs = selEvents(); if (!evs.length) return;
   edit(() => { for (const f of evs) M.clearEvent(C.score, f.st, f.m, f.ev.id); });
   C.sel.clear(); relayout(); syncSelBar();
 }
+// Empty: the bars keep their time and key, and everything else in them goes: notes, rests'
+// markings, second voices, slurs and every line over the notes, clef changes; with every staff
+// chosen also the tempo marks, rehearsal marks, repeats, endings and D.C. signs
 function clearBars() {
   const b = C.selBars; if (!b) return;
-  edit(() => { for (const st of selStaves()) for (let m = b.from; m <= b.to; m++) st.bars[m] = M.restBar(M.timeAt(C.score, m)); }, { keepSel: true });
+  const S = C.score, sts = selStaves(), ids = new Set(sts.map((x) => x.id));
+  const allSt = sts.length >= M.allStaves(S).length;
+  edit(() => {
+    for (const st of sts) {
+      // (the clef after the emptied bars stays what it was)
+      const after = b.to + 1 < S.measures.length ? M.clefAt(st, b.to + 1) : null;
+      for (let m = b.from; m <= b.to; m++) {
+        st.bars[m] = M.restBar(M.timeAt(S, m));
+        if (st.v2 && st.v2[m]) st.v2[m] = M.restBar(M.timeAt(S, m));
+        if (st.clefs && m > 0 && st.clefs[m] !== undefined) { const c = { ...st.clefs }; delete c[m]; st.clefs = c; }
+      }
+      if (after !== null && M.clefAt(st, b.to + 1) !== after) st.clefs = { ...(st.clefs || {}), [b.to + 1]: after };
+    }
+    const inside = (q) => !(q.b.m < b.from || q.a.m > b.to);
+    S.spans = (S.spans || []).filter((q) => !(inside(q) && (ids.has(q.st) || (q.kind === 'volta' && allSt))));
+    if (allSt) for (let m = b.from; m <= b.to; m++) {
+      const ms = S.measures[m];
+      for (const k of ['rehearsal', 'mark', 'jump', 'start']) delete ms[k];
+      if (ms.bar && !(ms.bar === 'final' && m === S.measures.length - 1)) delete ms.bar;
+      if (ms.tempo) { if (m === 0) ms.tempo = { ...ms.tempo, text: '' }; else delete ms.tempo; }
+    }
+  }, { keepSel: true });
+  hint(allSt ? 'Emptied: notes, markings, lines, tempo and repeats. The time and key stay.' : 'Emptied: notes, markings and lines. The time and key stay.', 2600);
 }
 // copy: a passage of events from one staff
 function copySel() {
@@ -846,7 +1043,7 @@ export function pasteClip(clip, at) {
     const st0 = C.selBars ? C.selBars.st : (selEvents()[0] || {}).st; const m0 = C.selBars ? C.selBars.from : (selEvents()[0] || {}).m;
     if (!st0) { D.toast('Select a bar where the music goes.'); return; }
     const i0 = all.indexOf(st0);
-    clip.lanes.forEach((events, k) => { const st = all[i0 + k]; if (st) pasteClip({ events }, { st, m: m0, pos: 0, quiet: true }); });
+    edit(() => { clip.lanes.forEach((events, k) => { const st = all[i0 + k]; if (st) pasteClip({ events }, { st, m: m0, pos: 0, quiet: true }); }); });
     D.toast('Pasted.', 1400); return;
   }
   let st, m, pos;
@@ -895,39 +1092,159 @@ function deleteBars() {
 // ---------- the bar under the toolbar for what is selected ----------
 function syncSelBar() {
   const bar = $('#cpSel'); bar.textContent = '';
-  const btn = (label, fn, ic, cls) => { const b = el('button', cls || ''); if (ic) b.append(icon(ic)); if (label) b.append(document.createTextNode(label)); b.addEventListener('click', (e) => { e.stopPropagation(); fn(); }); bar.append(b); return b; };
+  document.querySelector('.cp-sel-more')?.remove();
+  // As much as fits on one line without sliding, the most used first; what does not fit goes
+  // under More.
+  const sheet = el('div', 'cp-sel-more'); sheet.hidden = !C.moreOpen;
+  const closeMore = () => { sheet.hidden = true; C.moreOpen = false; moreBtn.classList.remove('on'); };
+  const btn = (label, fn, ic, cls) => { const b = el('button', cls || ''); if (ic) b.append(icon(ic)); if (label) b.append(document.createTextNode(label)); b.addEventListener('click', (e) => { e.stopPropagation(); if (b.parentElement === sheet && !b.classList.contains('keep')) closeMore(); fn(); }); bar.append(b); return b; };
+  const placeMore = () => { if (sheet.hidden) return; const r = bar.getBoundingClientRect(); sheet.style.left = Math.max(8, Math.min(r.right - 300, innerWidth - 308)) + 'px'; sheet.style.top = (r.bottom + 6) + 'px'; };
+  const moreBtn = el('button', 'more'); moreBtn.append(document.createTextNode('More ▾'));
+  moreBtn.addEventListener('click', (e) => { e.stopPropagation(); sheet.hidden = !sheet.hidden; C.moreOpen = !sheet.hidden; moreBtn.classList.toggle('on', !sheet.hidden); placeMore(); });
+  const finish = () => {
+    bar.hidden = false; bar.append(moreBtn); bar.after(sheet);
+    placeSelBar(bar);
+    // move the last buttons into More until the line fits
+    const movable = () => [...bar.children].filter((x) => x.tagName === 'BUTTON' && x !== moreBtn && !x.classList.contains('danger'));
+    let guard = 0;
+    while (bar.scrollWidth > bar.clientWidth + 1 && guard++ < 40) { const l = movable(); if (!l.length) break; sheet.prepend(l[l.length - 1]); }
+    moreBtn.hidden = !sheet.children.length; moreBtn.classList.toggle('on', !!C.moreOpen && !moreBtn.hidden);
+    if (moreBtn.hidden) { sheet.hidden = true; C.moreOpen = false; }
+    placeSelBar(bar); placeMore();
+  };
+  if (C.markSel && SCORE_MARKS[C.markSel.kind]) {
+    const mk = C.markSel, info = SCORE_MARKS[mk.kind];
+    bar.append(el('span', 'what', info.label(mk) + (mk.m !== undefined ? ` · bar ${mk.m + 1}` : '')));
+    const why = info.cannot && info.cannot(mk);
+    if (!why) btn('Delete', () => deleteMark(mk), 'i-trash', 'danger');
+    if (info.change) btn(info.changeLabel || 'Change…', () => info.change(mk), 'i-pen');
+    if (why) bar.append(el('span', 'what soft', why));
+    finish(); return;
+  }
+  if (C.markSel) {
+    const mk = C.markSel, f = mk.kind === 'span' ? null : M.findEvent(C.score, mk.id);
+    if (mk.kind !== 'span' && !f) { C.markSel = null; bar.hidden = true; return; }
+    const label = mk.kind === 'tie' ? 'Tie' : mk.kind === 'chord' ? 'Chord ' + mk.name : mk.kind === 'lyric' ? 'Lyric “' + mk.name + '”' : mk.kind === 'evclef' ? (M.CLEFS[mk.name] ? M.CLEFS[mk.name].name : 'Clef') + ' clef' : mk.kind === 'dyn' ? 'Dynamic ' + mk.name : mk.kind === 'txt' ? 'Words' : mk.kind === 'fing' ? 'Fingering ' + mk.name : mk.kind === 'span' ? (mk.name === 'hairpin' ? 'Hairpin' : MARK_NAME[mk.name] || mk.name) : (MARK_NAME[mk.name] || mk.name);
+    bar.append(el('span', 'what', f ? `${label} · bar ${f.m + 1}` : label));
+    btn('Delete', () => deleteMark(mk), 'i-trash', 'danger');
+    if (mk.kind === 'span' && ['slur', 'hairpin'].includes(mk.name)) btn('Reset shape', () => { edit(() => { const q = (C.score.spans || []).find((x) => x.id === mk.id); if (q) for (const k of ['off', 'ax', 'ay', 'bx', 'by', 'hd']) delete q[k]; }); drawHover(); });
+    else if (mk.kind !== 'span') btn('Select the note', () => { C.markSel = null; C.sel.clear(); C.sel.add(mk.id); relayout(); syncSelBar(); drawHover(); renderTab(); });
+    finish(); return;
+  }
   if (C.selBars) {
     const sts = selStaves();
     const part = M.staffInfo(C.score).find((x) => x.st === C.selBars.st);
     const who = sts.length > 1 ? `${sts.length} staves` : part ? part.part.name : '';
     bar.append(el('span', 'what', (C.selBars.from === C.selBars.to ? `Bar ${C.selBars.from + 1}` : `Bars ${C.selBars.from + 1}–${C.selBars.to + 1}`) + (who ? ' · ' + who : '')));
-    const more = btn('Select more', () => { C.extend = !C.extend; more.classList.toggle('on', C.extend); hint(C.extend ? 'Tap more bars or staves to add them.' : 'Taps select one bar again.', 2200); }, 'i-plus');
-    more.classList.toggle('on', !!C.extend);
+    btn('Delete', deleteBars, 'i-trash', 'danger');
     btn('Copy', copySel, 'i-copy'); btn('Paste', () => pasteClip(C.clip), 'i-paste');
     btn('Play', () => togglePlay(C.selBars.from), 'i-play');
+    const more = btn('Select more', () => { C.extend = !C.extend; more.classList.toggle('on', C.extend); hint(C.extend ? 'Tap more bars or staves to add them.' : 'Taps select one bar again.', 2200); }, 'i-plus');
+    more.classList.toggle('on', !!C.extend);
+    btn('▲', () => moveSemis(1), null, 'keep'); btn('▼', () => moveSemis(-1), null, 'keep');
     btn('Bar before', () => insertBars(1, false)); btn('Bar after', () => insertBars(1, true));
-    btn('Clear', clearBars);
-    btn('Transpose', openTranspose);
-    btn('Delete bars', deleteBars, 'i-trash', 'danger');
-    bar.hidden = false; placeSelBar(bar); return;
+    btn('Empty', clearBars);
+    btn('8va ▲', () => moveNotes(7), null, 'keep'); btn('8va ▼', () => moveNotes(-7), null, 'keep');
+    btn('Transpose…', openTranspose);
+    finish(); return;
   }
   const evs = selEvents();
-  if (!evs.length) { bar.hidden = true; return; }
+  if (!evs.length) { bar.hidden = true; C.moreOpen = false; return; }
   const f = evs[0];
   const what = f.ev.rest ? 'Rest' : f.ev.notes.map((n) => M.noteName(n.s, n.a)).join(' ');
   bar.append(el('span', 'what', evs.length > 1 ? `${evs.length} selected` : `${what} · bar ${f.m + 1}`));
+  btn(f.ev.rest ? 'Clear' : 'Delete', deleteSel, 'i-trash', 'danger');
+  const pitched = evs.some((x) => !x.ev.rest);
+  if (pitched) { btn('▲', () => moveSemis(1), null, 'keep'); btn('▼', () => moveSemis(-1), null, 'keep'); }
+  btn('Copy', copySel, 'i-copy'); btn('Paste', () => pasteClip(C.clip), 'i-paste');
   const moreN = btn('Select more', () => { C.extend = !C.extend; moreN.classList.toggle('on', C.extend); hint(C.extend ? 'Tap the last note: everything up to it is selected. (Or drag from note to note in Select mode.)' : 'Taps select one note again.', 3000); }, 'i-plus');
   moreN.classList.toggle('on', !!C.extend);
-  if (evs.some((x) => !x.ev.rest)) {
-    btn('', () => moveNotes(1), null).append(document.createTextNode('▲'));
-    btn('', () => moveNotes(-1), null).append(document.createTextNode('▼'));
-    btn('8va ▲', () => moveNotes(7)); btn('8va ▼', () => moveNotes(-7));
+  if (pitched) { btn('8va ▲', () => moveNotes(7), null, 'keep'); btn('8va ▼', () => moveNotes(-7), null, 'keep'); btn('Transpose…', openTranspose); }
+  if (evs.some((x) => x.ev.grace)) { btn('Grace ▲', () => graceStep(1), null, 'keep'); btn('Grace ▼', () => graceStep(-1), null, 'keep'); }
+  finish();
+}
+// Things of the score itself, tapped on their own: clefs, key and time signatures, tempo, rehearsal
+// marks, repeats and special barlines, segno and coda, D.C. and the like. Each can be deleted (or,
+// where the score needs one, changed).
+const lastSet = (m, has) => { for (let i = m; i >= 0; i--) if (has(i)) return i; return 0; };
+const staffById = (id) => M.allStaves(C.score).find((x) => x.id === id);
+function changeAt(mk, tab) {
+  const st = (mk.st && staffById(mk.st)) || M.allStaves(C.score)[0];
+  C.markSel = null; C.sel.clear(); selectBars(st, st, mk.m, mk.m);
+  C.tab = tab; $('#cpPal').classList.remove('folded'); relayout(); syncSelBar(); renderTab(); drawHover();
+  hint(tab === 'clef' ? 'Choose the new one in the palette.' : 'Change it in the palette.', 2200);
+}
+const KEY_LABEL = (k) => (KEY_NAMES[+k + 7] || '').split(' / ')[0];
+const SCORE_MARKS = {
+  clef: {
+    label: (mk) => (M.CLEFS[mk.name] ? M.CLEFS[mk.name].name : 'Clef') + ' clef',
+    cannot: (mk) => { const st = staffById(mk.st); if (!st) return ''; const d = lastSet(mk.m, (i) => st.clefs && st.clefs[i] !== undefined && i > 0); return d === 0 && !(st.clefs && st.clefs[mk.m] !== undefined) && M.clefAt(st, mk.m) === st.clef ? 'The first clef can be changed, not deleted.' : ''; },
+    del: (mk) => {
+      const st = staffById(mk.st); if (!st) return;
+      if (st.clefs && st.clefs[mk.m] !== undefined && mk.m > 0) { const c = { ...st.clefs }; delete c[mk.m]; st.clefs = c; return 'Clef change deleted.'; }
+      const d = lastSet(mk.m, (i) => i > 0 && st.clefs && st.clefs[i] !== undefined);
+      if (d > 0) { const c = { ...st.clefs }; delete c[d]; st.clefs = c; return `The clef change in bar ${d + 1} was deleted.`; }
+      if (mk.m > 0) { st.clefs = { ...(st.clefs || {}), [mk.m]: M.clefEnd(st, mk.m - 1) }; return 'Clef change deleted.'; }
+    },
+    change: (mk) => changeAt(mk, 'clef'),
+  },
+  key: {
+    label: (mk) => 'Key signature ' + KEY_LABEL(mk.name),
+    cannot: (mk) => { const d = lastSet(mk.m, (i) => C.score.measures[i].key !== undefined && C.score.measures[i].key !== null); return d === 0 && !C.score.measures[0].key ? 'No key signature to delete.' : ''; },
+    del: (mk) => {
+      const S = C.score, d = lastSet(mk.m, (i) => S.measures[i].key !== undefined && S.measures[i].key !== null);
+      if (d === 0) { S.measures[0].key = 0; return 'Key signature deleted: C major, A minor.'; }
+      delete S.measures[d].key; return `The key change in bar ${d + 1} was deleted.`;
+    },
+    change: (mk) => changeAt(mk, 'clef'),
+  },
+  time: {
+    label: (mk) => 'Time signature ' + mk.name,
+    cannot: (mk) => (lastSet(mk.m, (i) => !!C.score.measures[i].time) === 0 ? 'The first time signature can be changed, not deleted.' : ''),
+    del: (mk) => {
+      const S = C.score, d = lastSet(mk.m, (i) => !!S.measures[i].time); if (d === 0) return;
+      M.setTime(S, d, M.timeAt(S, d - 1)); delete S.measures[d].time; delete S.measures[d].timeSym;
+      return `The time change in bar ${d + 1} was deleted.`;
+    },
+    change: (mk) => changeAt(mk, 'clef'),
+  },
+  tempo: {
+    label: (mk) => 'Tempo ' + mk.name,
+    del: (mk) => { const ms = C.score.measures[mk.m]; if (mk.m === 0) ms.tempo = { ...(ms.tempo || {}), text: '', show: false }; else delete ms.tempo; },
+    change: (mk) => changeAt(mk, 'text'),
+  },
+  rehearsal: { label: (mk) => 'Rehearsal mark ' + mk.name, del: (mk) => { delete C.score.measures[mk.m].rehearsal; } },
+  mmark: { label: (mk) => (mk.name === 'segno' ? 'Segno' : 'Coda'), del: (mk) => { delete C.score.measures[mk.m].mark; } },
+  jump: { label: (mk) => mk.name, del: (mk) => { delete C.score.measures[mk.m].jump; } },
+  barline: { label: (mk) => ({ double: 'Double barline', repeat: 'End repeat', final: 'Final barline' }[mk.name] || 'Barline'), del: (mk) => { delete C.score.measures[mk.m].bar; } },
+  repstart: { label: () => 'Start repeat', del: (mk) => { delete C.score.measures[mk.m].start; } },
+};
+// Names of the markings (a marking tapped on its own shows its name in the bar, with Delete)
+const MARK_NAME = { stacc: 'Staccato', stacciss: 'Staccatissimo', ten: 'Tenuto', acc: 'Accent', marc: 'Marcato', ferm: 'Fermata', fermS: 'Short fermata', fermL: 'Long fermata',
+  down: 'Down bow', up: 'Up bow', harm: 'Harmonic', stopped: 'Stopped', open: 'Open', snap: 'Snap pizzicato', trill: 'Trill', mord: 'Mordent', prall: 'Short trill', turn: 'Turn', turnInv: 'Inverted turn',
+  caes: 'Caesura', breath: 'Breath', slur: 'Slur', hairpin: 'Hairpin', cresc: 'cresc.', dim: 'dim.', rit: 'rit.', accel: 'accel.', '8va': '8va', '15ma': '15ma', '8vb': '8vb', '15mb': '15mb', ped: 'Pedal', gliss: 'Glissando', tr: 'Trill line', volta: 'Ending' };
+function deleteMark(mk) {
+  if (SCORE_MARKS[mk.kind]) {
+    let msg = '';
+    edit(() => { msg = SCORE_MARKS[mk.kind].del(mk) || ''; });
+    C.markSel = null; relayout(); syncSelBar(); drawHover();
+    hint(msg || 'Deleted. Undo brings it back.', 1800);
+    return;
   }
-  if (evs.some((x) => x.ev.grace)) { btn('Grace ▲', () => graceStep(1)); btn('Grace ▼', () => graceStep(-1)); }
-  if (evs.some((x) => !x.ev.rest)) btn('Transpose', openTranspose);
-  btn('Copy', copySel, 'i-copy'); btn('Paste', () => pasteClip(C.clip), 'i-paste');
-  btn(f.ev.rest ? 'Clear' : 'Delete', deleteSel, 'i-trash', 'danger');
-  bar.hidden = false; placeSelBar(bar);
+  edit(() => {
+    if (mk.kind === 'span') { C.score.spans = (C.score.spans || []).filter((q) => q.id !== mk.id); return; }
+    const f = M.findEvent(C.score, mk.id); if (!f) return;
+    if (mk.kind === 'art') f.ev.art = (f.ev.art || []).filter((a) => a !== mk.name);
+    else if (mk.kind === 'dyn') f.ev.dyn = null;
+    else if (mk.kind === 'txt') f.ev.txt = null;
+    else if (mk.kind === 'fing') delete f.ev.fing;
+    else if (mk.kind === 'tie') for (const n of f.ev.notes || []) n.tie = false;
+    else if (mk.kind === 'chord') delete f.ev.chord;
+    else if (mk.kind === 'lyric') delete f.ev.lyric;
+    else if (mk.kind === 'evclef') delete f.ev.clef;
+  });
+  C.markSel = null; relayout(); syncSelBar(); drawHover();
+  hint('Deleted. Undo brings it back.', 1500);
 }
 // the selection bar never covers the palette: it moves to the free space beside it
 function placeSelBar(bar) {
@@ -1101,6 +1418,21 @@ function setHead(head, topOnly) {
 // A clef, key or time from bar m (to bar 'to' only, when given: the score goes back afterwards).
 function applySig(kind, val, st, m, to) {
   const S = C.score, after = to !== null && to !== undefined ? to + 1 : null, hasAfter = after !== null && after < S.measures.length;
+  // a clef for one note in the middle of a bar: the clef changes there, and holds on after it
+  if (kind === 'clef' && !C.selBars && C.sel.size === 1) {
+    const f = selEvents()[0];
+    if (f && f.pos > 0 && f.voice !== 2 && (f.st === st || f.st.id === st.id)) {
+      edit(() => {
+        const before = M.clefAtPos(S, f.st, f.m, f.pos - 1), endOld = M.clefEnd(f.st, f.m);
+        if (val === before) delete f.ev.clef; else f.ev.clef = val;
+        const endNew = M.clefEnd(f.st, f.m), nx = f.m + 1;
+        if (nx < S.measures.length && endNew !== endOld && M.clefAt(f.st, nx) === endOld) {
+          f.st.clefs = { ...(f.st.clefs || {}), [nx]: endNew };
+        }
+      }, { keepSel: true });
+      return;
+    }
+  }
   edit(() => {
     if (kind === 'clef') {
       const old = M.clefAt(st, hasAfter ? after : m);
@@ -1176,8 +1508,8 @@ function renderTab() {
     gt.append(mbtn('', 'Flip stem', false, flipStems, { draw: (gg, W, H) => { gg.save(); gg.translate(W / 2, H / 2); gg.rotate(Math.PI); gg.translate(-W / 2, -H / 2); gC(gg, NOTE_GLYPH[4], W, H, 3.2); gg.restore(); }, small: 'flip stem' }));
     gt.append(mbtn('', 'Delete', false, deleteSel, { svg: 'i-trash' }));
     const g3 = grid('four');
-    g3.append(mbtn('', 'Up a step', false, () => moveNotes(1), { svg: 'i-up', textCls: '' }));
-    g3.append(mbtn('', 'Down a step', false, () => moveNotes(-1), { svg: 'i-down' }));
+    g3.append(mbtn('', 'Up a semitone', false, () => moveSemis(1), { svg: 'i-up', textCls: '' }));
+    g3.append(mbtn('', 'Down a semitone', false, () => moveSemis(-1), { svg: 'i-down' }));
     g3.append(mbtn('', 'Up an octave', false, () => moveNotes(7), { draw: (gg, W, H) => gC(gg, GL.ott['8va'], W, H, 3.4), small: 'octave up' }));
     g3.append(mbtn('', 'Down an octave', false, () => moveNotes(-7), { draw: (gg, W, H) => gC(gg, GL.ott['8vb'], W, H, 3.4), small: 'octave down' }));
     lab('Note heads');
@@ -1294,6 +1626,16 @@ function renderTab() {
     const m = targetBar() ?? 0;
     const tempo = M.tempoAt(C.score, m);
     const cur = evs[0] && evs[0].ev;
+    lab('Fingering on the selected note');
+    {
+      const fr = el('div', 'cp-row cp-fing');
+      for (const d of ['0', '1', '2', '3', '4', '5']) {
+        const b = el('button', 'btn small' + (cur && cur.fing === d ? ' on' : ''), d);
+        b.addEventListener('click', () => { const sel = selEvents().filter((f) => !f.ev.rest); if (!sel.length) { hint('Select a note first, then its finger.'); return; } edit(() => { for (const f of sel) { if (f.ev.fing === d) delete f.ev.fing; else f.ev.fing = d; } }, { keepSel: true }); renderTab(); });
+        fr.append(b);
+      }
+      body.append(fr);
+    }
     lab('Words on the selected note');
     const cg = cards('three');
     const tcard = (title, word, style, font, weight, box) => cg.append(card(title, !!cur && cur.txt === word && (cur.txtStyle || 'expr') === style, () => setTextStyled(word, style), (gg, W, H) => { const w = textWidth(gg, word, 2.2, font, weight); text(gg, word, W / 2 - w / 2, H / 2 + 0.7, 2.2, font, weight); if (box) { gg.lineWidth = 0.12; gg.strokeRect(W / 2 - w / 2 - 0.5, H / 2 - 1.5, w + 1.0, 2.7); } }, { k: 6.4 }));
@@ -1348,7 +1690,7 @@ function renderTab() {
     if (!C.selBars && !sel0) body.append(el('p', 'hint', 'Tap a bar (Select mode) to make the change start there, in the middle of a line.'));
     lab('Clef');
     const cg = cards('three');
-    for (const [c, name] of [['treble', 'Treble'], ['bass', 'Bass'], ['alto', 'Alto'], ['tenor', 'Tenor'], ['treble8', 'Treble 8vb'], ['bass8', 'Bass 8vb']]) {
+    for (const [c, name] of [['treble', 'Treble'], ['bass', 'Bass'], ['alto', 'Alto'], ['tenor', 'Tenor'], ['treble8', 'Treble 8vb'], ['bass8', 'Bass 8vb'], ['treble8va', 'Treble 8va'], ['bass8va', 'Bass 8va'], ['soprano', 'Soprano'], ['mezzo', 'Mezzo'], ['baritoneC', 'Baritone C'], ['baritoneF', 'Baritone F'], ['frenchviolin', 'French violin'], ['perc', 'Percussion']]) {
       if (!M.CLEFS[c]) continue;
       cg.append(card(name, M.clefAt(st, m) === c, () => applySig('clef', c, st, m, C.sigOnly && range ? range[1] : null), (gg, W, H) => { const y = H / 2 - 2; staff5(gg, 1, W - 1, y); drawClef(gg, c, W / 2 - 1.3, y); }, { k: 5.2 }));
     }
@@ -1368,14 +1710,19 @@ function renderTab() {
     // ---- transpose: the selected notes, the selected bars, or the whole score (with its key)
     const scope = selEvents().length ? 'the selected notes' : C.selBars ? `bars ${C.selBars.from + 1}–${C.selBars.to + 1}` : 'the whole score';
     lab('Transpose ' + scope);
-    const dseg = el('div', 'seg full');
-    for (const [v, t] of [[1, 'Up'], [-1, 'Down']]) { const b = el('button', (C.tpDir || 1) === v ? 'on' : '', t); b.addEventListener('click', () => { C.tpDir = v; renderTab(); }); dseg.append(b); }
-    body.append(dseg);
-    const gi = grid('four');
-    for (const [name, st2, se] of [['Semitone', 1, 1], ['Tone', 1, 2], ['Minor 3rd', 2, 3], ['Major 3rd', 2, 4], ['4th', 3, 5], ['Tritone', 3, 6], ['5th', 4, 7], ['Minor 6th', 5, 8], ['Major 6th', 5, 9], ['Minor 7th', 6, 10], ['Major 7th', 6, 11], ['Octave', 7, 12]]) {
-      const d = C.tpDir || 1;
-      gi.append(mbtn(name, `Transpose ${d > 0 ? 'up' : 'down'} ${name === 'Octave' ? 'an' : 'a'} ${name.toLowerCase()}`, false, () => transpose(st2 * d, se * d), { textCls: '' }));
+    // one clear row per interval: its name, then up and down
+    const list = el('div', 'tp-list');
+    for (const [name, sym, st2, se] of [['Semitone', '½', 1, 1], ['Tone', '1', 1, 2], ['Minor third', 'm3', 2, 3], ['Major third', 'M3', 2, 4], ['Perfect fourth', '4', 3, 5], ['Tritone', 'TT', 3, 6], ['Perfect fifth', '5', 4, 7], ['Minor sixth', 'm6', 5, 8], ['Major sixth', 'M6', 5, 9], ['Minor seventh', 'm7', 6, 10], ['Major seventh', 'M7', 6, 11], ['Octave', '8', 7, 12]]) {
+      const row = el('div', 'tp-row');
+      row.append(el('span', 'tp-sym', sym), el('span', 'tp-name', name));
+      for (const [d, arrow] of [[1, '▲'], [-1, '▼']]) {
+        const b = el('button', 'tp-go', arrow); b.title = `Transpose ${d > 0 ? 'up' : 'down'} ${name === 'Octave' ? 'an' : 'a'} ${name.toLowerCase()}`; b.setAttribute('aria-label', b.title);
+        b.addEventListener('click', () => transpose(st2 * d, se * d));
+        row.append(b);
+      }
+      list.append(row);
     }
+    body.append(list);
     const kr = el('div', 'cp-row');
     const ksel = el('select', 'cp-select');
     const KEYN = ['C♭', 'G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
@@ -1454,7 +1801,7 @@ function setMode(mode) {
   $('#compose').classList.toggle('writing', mode === 'write');
   $('#compose').classList.toggle('selecting', mode === 'select');
   C.hover = null; drawHover();
-  if (mode === 'select') hint('Tap a note or a bar. Drag across bars and staves to select more; scroll with two fingers.', 4200);
+  if (mode === 'select') hint('Tap a note or a bar to select it. Swipe to move around; hold your finger still a moment, then drag, to select several bars or notes (the Pencil drags straight away).', 5200);
 }
 let hintT;
 function hint(msg, ms = 3200) { const h = $('#cpHint'); h.textContent = msg; h.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { h.hidden = true; }, ms); }
@@ -1513,7 +1860,44 @@ function showPlayhead(mark) {
 // =====================================================================
 // Keyboard (a hardware keyboard on the iPad)
 // =====================================================================
+// ---------- a MIDI keyboard (USB or Bluetooth), where the system lets the page use it ----------
+// Select a note or rest to start; each key played writes the chosen note value there and moves on.
+// Keys pressed together make a chord.
+const MIDI_IN = { chord: [], t: 0, timer: 0, access: null };
+function midiStep(notes) {
+  if ($('#compose').hidden || !C.score) return;
+  const f = selEvents()[0];
+  if (!f) { hint('Select the note or rest to start from, then play.', 2200); return; }
+  const key = M.keyAt(C.score, f.m);
+  let newId = null;
+  edit(() => {
+    const ev = { id: M.newId(), t: C.tool.dur, dots: C.tool.dots, notes: [...new Set(notes)].sort((a, b) => a - b).map((m) => { const sp = M.spell(m, key); return { s: sp.s, a: sp.a }; }) };
+    for (const k2 of KEEP_MARKS) if (f.ev[k2] !== undefined && f.ev[k2] !== null && !(k2 === 'art' && f.ev.rest)) ev[k2] = M.clone(f.ev[k2]);
+    M.writeEvent(C.score, f.st, f.m, f.pos, ev);
+    // the next place: right after what was just written
+    const g = M.findEvent(C.score, ev.id); if (!g) return;
+    const nx = M.nextEvent(C.score, g.st, g.m, g.i);
+    newId = nx ? nx.ev.id : ev.id;
+  });
+  if (newId) { C.sel.clear(); C.sel.add(newId); relayout(); syncSelBar(); }
+}
+async function wireMidi() {
+  if (!navigator.requestMIDIAccess) return;
+  try {
+    const acc = await navigator.requestMIDIAccess(); MIDI_IN.access = acc;
+    const hook = () => { for (const inp of acc.inputs.values()) inp.onmidimessage = (e) => {
+      const [st, note, vel] = e.data; const cmd = st & 0xf0;
+      if (cmd === 0x90 && vel > 0) {
+        try { unlock(); const f = selEvents()[0]; sampler.preview(f ? soundOf(f.part) : 'piano', note, Math.min(1, vel / 110), 0.5); } catch {}
+        MIDI_IN.chord.push(note); clearTimeout(MIDI_IN.timer);
+        MIDI_IN.timer = setTimeout(() => { const ns = MIDI_IN.chord; MIDI_IN.chord = []; midiStep(ns); }, 70);
+      }
+    }; };
+    hook(); acc.onstatechange = hook;
+  } catch { /* no MIDI here */ }
+}
 function wireKeys() {
+  wireMidi();
   document.addEventListener('keydown', (e) => {
     if ($('#compose').hidden || e.target.matches('input, select, textarea')) return;
     const k = e.key;
@@ -1531,8 +1915,9 @@ function wireKeys() {
       if (e.shiftKey) C.sel.add(nx.ev.id); else { C.sel.clear(); C.sel.add(nx.ev.id); }
       relayout(); syncSelBar(); renderTab(); return;
     }
-    if (k === 'ArrowUp') { e.preventDefault(); moveNotes(e.metaKey || e.ctrlKey ? 7 : 1); return; }
-    if (k === 'ArrowDown') { e.preventDefault(); moveNotes(e.metaKey || e.ctrlKey ? -7 : -1); return; }
+    // arrows: a semitone; with ⌘ an octave; with ⇧ a step of the scale
+    if (k === 'ArrowUp') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(7); else if (e.shiftKey) moveNotes(1); else moveSemis(1); return; }
+    if (k === 'ArrowDown') { e.preventDefault(); if (e.metaKey || e.ctrlKey) moveNotes(-7); else if (e.shiftKey) moveNotes(-1); else moveSemis(-1); return; }
     const durKey = { 1: 64, 2: 32, 3: 16, 4: 8, 5: 4, 6: 2, 7: 1 }[k];   // the Sibelius keypad
     if (durKey && durKey <= 32) { setDuration(durKey); return; }
     if (k === '.') { C.tool.dots = C.tool.dots ? 0 : 1; setDuration(C.tool.dur); return; }
@@ -1564,7 +1949,11 @@ const TIMES = [['4/4', [4, 4]], ['3/4', [3, 4]], ['2/4', [2, 4]], ['2/2', [2, 2]
 function wirePanels() {
   // ---- new score
   const keySel = $('#cnKey'); KEY_NAMES.forEach((n, i) => { const o = el('option', '', n); o.value = i - 7; keySel.append(o); }); keySel.value = 0;
-  const capKey = $('#capKey'); KEY_NAMES.forEach((n, i) => { const o = el('option', '', n.split(' / ')[0]); o.value = i - 7; capKey.append(o); }); capKey.value = 0;
+  // the key of the music read, and the key to put it in: always the major and its relative minor
+  const keyLabel = (i) => KEY_NAMES[i].replace(' / ', ' · ');
+  const capKey = $('#capKey'); KEY_NAMES.forEach((n, i) => { const o = el('option', '', keyLabel(i)); o.value = i - 7; capKey.append(o); }); capKey.value = 0;
+  const capTo = $('#capTo'); KEY_NAMES.forEach((n, i) => { const o = el('option', '', keyLabel(i)); o.value = i - 7; capTo.append(o); }); capTo.value = '';
+  syncCapTo();
   const timeSel = $('#cnTime'); TIMES.forEach(([n]) => { const o = el('option', '', n); o.value = n; timeSel.append(o); });
   const staffSel = $('#cnStaff'); staffSel.append(Object.assign(el('option', '', 'Automatic'), { value: '' }));
   STAFF_SIZES.forEach((s) => { const o = el('option', '', `${s.mm} mm · ${s.use}`); o.value = s.mm; staffSel.append(o); });
@@ -1671,7 +2060,7 @@ function wirePanels() {
     else {
       // an empty score takes the key of the music
       const empty = M.allStaves(C.score).every((x) => x.bars.every((b) => b.every((e) => e.rest)));
-      if (empty && m === 0 && C.score.measures[0].key !== C.capture.key) edit(() => { C.score.measures[0].key = C.capture.key; });
+      if (empty && m === 0 && C.score.measures[0].key !== capOutKey()) edit(() => { C.score.measures[0].key = capOutKey(); });
       pasteClip(clip, { st, m, pos: 0 });
     }
     C.sel.clear(); C.selBars = { st, stId: st.id, from: m, to: Math.min(C.score.measures.length - 1, m + Math.max(0, captureBars() - 1)), staffK: 0 };
@@ -1682,12 +2071,13 @@ function wirePanels() {
     if (!C.captureCanvas) return;
     $('#capInfo').textContent = 'Reading…';
     const res = await D.recognise(C.captureCanvas, { staff: +$('#capStaff').value });
-    if (res && res.notes.length) { C.capture = { ...res, clef: res.clef || 'treble', key: res.key || 0 }; showCaptureSig(); }
+    if (res && res.notes.length) { C.capture = { ...res, clef: res.clef || 'treble', clef0: res.clef || 'treble', key: res.key || 0 }; showCaptureSig(); readTextBoxes(res, C.captureCanvas).then((answers) => { if (C.capture && C.capture.bars === res.bars) { placeCaptureTexts(C.capture, answers); drawCapture(); } }); }
     drawCapture();
   });
   $('#capCopy').addEventListener('click', () => { if (!C.capture) return; C.clip = captureClip(); setSetting('composeClip', C.clip); D.toast('Copied. Select a bar and tap Paste.', 2500); });
   $('#capClef').addEventListener('change', () => { if (C.capture) { C.capture.clef = $('#capClef').value; drawCapture(); } });
-  $('#capKey').addEventListener('change', () => { if (C.capture) { C.capture.key = +$('#capKey').value; drawCapture(); } });
+  $('#capKey').addEventListener('change', () => { syncCapTo(); if (C.capture) { C.capture.key = +$('#capKey').value; drawCapture(); } });
+  $('#capTo').addEventListener('change', () => { if (C.capture) drawCapture(); });
   $('#capTime').addEventListener('change', () => { if (C.capture) { C.capture.time = $('#capTime').value.split('/').map(Number); drawCapture(); } });
 }
 function renderNew() {
@@ -1947,6 +2337,63 @@ async function exportPdf(which, opts) {
 }
 
 // ---------- capture: draw around music, Stand reads it ----------
+// ---- words in the captured music (tempo, expressions), read by the device's own text reader
+const CAP_WORDS = ['Lent', 'Lento', 'Largo', 'Larghetto', 'Grave', 'Adagio', 'Andante', 'Andantino', 'Moderato', 'Allegretto', 'Allegro', 'Vivace', 'Presto', 'Maestoso', 'Animato', 'Calmato', 'Tempo', 'a tempo', 'Tempo I', 'rit.', 'ritard.', 'ritardando', 'rall.', 'rallentando', 'accel.', 'accelerando', 'cresc.', 'crescendo', 'dim.', 'diminuendo', 'decresc.', 'dolce', 'dolcissimo', 'espressivo', 'espress.', 'cantabile', 'cant.', 'legato', 'molto', 'poco', 'più', 'meno', 'sostenuto', 'ten.', 'sempre', 'subito', 'sonore', 'vibrant', 'pizz.', 'arco', 'sul ponticello', 'sul tasto', 'con sord.', 'senza sord.', 'marcato', 'leggiero', 'recitativo', 'ad lib', 'molto legato', 'Moderato', 'Lento', 'rubato', 'morendo', 'smorzando', 'perdendosi', 'con moto', 'agitato', 'tranquillo', 'grazioso', 'scherzando'];
+const TEMPO_RE = /^(lent|lento|largo|larghetto|grave|adagio|andante|andantino|moderato|allegretto|allegro|vivace|presto|maestoso|animato|calmato|tempo|a tempo|tempo i|rubato|con moto|recitativo|molto accel|più mosso|meno mosso)\b/i;
+function readTextBoxes(res, canvas) {
+  const N = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standRecognize;
+  if (!N || !res || !res.texts || !res.texts.length || !canvas) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    const out = res.texts.map(() => null);
+    let left = res.texts.length;
+    const done = () => { window.__capTextDone = null; clearTimeout(t); resolve(out); };
+    const t = setTimeout(done, 5000);
+    window.__capTextDone = (id, text) => { const k = +String(id).slice(4); if (k >= 0 && k < out.length && out[k] === null) { out[k] = text; if (--left <= 0) done(); } };
+    res.texts.forEach((b, k) => {
+      const pad = 6, w = Math.max(4, Math.round(b.x1 - b.x0 + pad * 2)), h = Math.max(4, Math.round(b.y1 - b.y0 + pad * 2));
+      const sc = Math.min(4, Math.max(1, 64 / h));
+      const c = document.createElement('canvas'); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.imageSmoothingQuality = 'high';
+      g.drawImage(canvas, b.x0 - pad, b.y0 - pad, w, h, 0, 0, c.width, c.height);
+      try { N.postMessage({ id: 'cap:' + k, png: c.toDataURL('image/png').split(',')[1], words: CAP_WORDS }); } catch { out[k] = ''; left--; }
+    });
+    if (left <= 0) done();
+  });
+}
+// The words read become tempo marks (above the line, at the start of a bar: Lent, Allegro, ♩ = 78)
+// or expressions under or over the note they stand by (dolce, cresc.)
+function placeCaptureTexts(res, answers) {
+  if (!answers || !answers.length) return;
+  const clean = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+  res.texts.forEach((b, k) => {
+    let txt = clean(answers[k]);
+    if (!txt || txt.length < 2 || !/[A-Za-zÀ-ÿ=]/.test(txt)) return;
+    // the bars of its line, and the note it stands by (the first one from its start)
+    const idx = res.bars.map((_, i) => i).filter((i) => res.barSys[i] === b.sys);
+    let best = null;
+    // (the note nearest the start of the words; one just after it is preferred over one before)
+    for (const i of idx) res.bars[i].forEach((n, j) => { if (n.x === undefined || n.rest) return; const d = n.x - b.x0; const score = d >= 0 ? d : -d * 1.6; if (!best || score < best.score) best = { i, j, score }; });
+    if (!best) return;
+    const bpm = /=\s*(\d{2,3})/.exec(txt);
+    const tempoWord = TEMPO_RE.test(txt);
+    if (b.above && (bpm || tempoWord)) {
+      const word = clean(txt.replace(/[♩♪J]?\s*=\s*\d{2,3}/, ''));
+      res.bars[best.i].tempo = { ...(res.bars[best.i].tempo || {}), ...(bpm ? { bpm: +bpm[1] } : {}), ...(word ? { text: word } : {}) };
+      return;
+    }
+    const n = res.bars[best.i][best.j];
+    if (!b.above) n.txtBelow = true;
+    // a dynamic beside the words (p dolcissimo) is the note's dynamic, not part of the text
+    const toks = txt.split(' ');
+    // (one already read on a note close by is not read twice)
+    const near = res.bars[best.i].concat(res.bars[best.i - 1] || []);
+    while (toks.length > 1 && DYNAMICS.includes(toks[0])) { const d = toks.shift(); if (!n.dyn && !near.some((q) => q.dyn === d)) n.dyn = d; }
+    while (toks.length > 1 && DYNAMICS.includes(toks[toks.length - 1])) toks.pop();
+    txt = toks.join(' ');
+    if (DYNAMICS.includes(txt)) { if (!n.dyn) n.dyn = txt; return; }
+    n.txt = n.txt ? n.txt + ' ' + txt : txt;
+  });
+}
 async function startCapture(src, file) {
   D.hidePanel();
   const region = await D.pickRegion(src, file, { title: 'Choose the lines to write out' });
@@ -1957,8 +2404,10 @@ async function startCapture(src, file) {
     const res = await D.recognise(region.canvas, { lines: 'all' });
     C.captureCanvas = null;
     if (!res || !res.notes.length) { $('#capInfo').textContent = 'No notes found. Try a cleaner part of the page, drawn a little wider than the staff.'; C.capture = null; drawCapture(); return; }
-    C.capture = { ...res, clef: res.clef || 'treble', key: res.key || 0 };
+    C.capture = { ...res, clef: res.clef || 'treble', clef0: res.clef || 'treble', key: res.key || 0 };
     C.captureCanvas = region.canvas;
+    // the words (tempo, expressions), when the device can read text
+    readTextBoxes(res, region.canvas).then((answers) => { if (C.capture && C.capture.bars === res.bars) { placeCaptureTexts(C.capture, answers); drawCapture(); } });
     showCaptureSig();
     const per = res.analysis && res.analysis.systems.length ? Math.max(...res.analysis.systems.map((q) => q.length)) : 1;
     $('#capStaffRow').hidden = per < 2;
@@ -1968,30 +2417,102 @@ async function startCapture(src, file) {
     drawCapture();
   } catch (err) { console.error(err); $('#capInfo').textContent = 'That could not be read.'; }
 }
+// "Transpose to": first "keep it" (in the key the music is in), then every other key
+function syncCapTo() {
+  const k = +$('#capKey').value, to = $('#capTo');
+  const keep = to.querySelector('option[value=""]'); if (keep) keep.textContent = 'Keep it in ' + KEY_NAMES[k + 7].replace(' / ', ' · ');
+  for (const o of to.options) if (o.value !== '') o.hidden = o.disabled = +o.value === k;   // (the iPad's list ignores hidden: disabled too)
+  if (to.value !== '' && +to.value === k) to.value = '';
+}
 function showCaptureSig() {
   const cap = C.capture;
   if (!cap.time) cap.time = [4, 4];
-  $('#capClef').value = cap.clef; $('#capKey').value = cap.key;
+  $('#capClef').value = cap.clef; $('#capKey').value = cap.key; $('#capTo').value = ''; syncCapTo();
   const tv = cap.time.join('/'), sel = $('#capTime');
   if (![...sel.options].some((o) => o.value === tv)) { const o = el('option', '', tv); o.value = tv; sel.append(o); }
   sel.value = tv;
 }
 // The captured bars as events, bar by bar, in the clef and key that were read (or chosen).
+// The key the captured music is written in: the one in the picture, or the one chosen in
+// "Transpose to". With another key, every note moves with it (C major → D major: a C becomes a D).
+function capOutKey() { const v = $('#capTo') ? $('#capTo').value : ''; return v === '' || isNaN(+v) ? C.capture.key : +v; }
+function capInterval() {
+  const from = C.capture.key, to = capOutKey();
+  if (from === to) return null;
+  const tonic = (f) => ({ pc: (((f * 7) % 12) + 12) % 12, st: (((f * 4) % 7) + 7) % 7 });
+  const a = tonic(from), b = tonic(to);
+  let semis = (b.pc - a.pc + 12) % 12, steps = (b.st - a.st + 7) % 7;
+  if (semis > 6 || (semis === 6 && steps > 3)) { semis -= 12; steps -= 7; }
+  return { steps, semis, to };
+}
 function captureBarEvents(inst) {
   const cap = C.capture;
-  const bottom = M.CLEFS[cap.clef].bottom;
+  // each note in the clef in force where it stands (a clef may change along the music); the first
+  // clef is the one chosen in the panel
+  const clef0 = cap.clef0 || cap.clef;
+  const bottomOf = (n) => M.CLEFS[n.clef && n.clef !== clef0 ? n.clef : cap.clef].bottom;
+  const iv = capInterval();
+  const move = (w) => {
+    if (!iv) return w;
+    const midi = M.midiOf(w.s, w.a) + iv.semis;
+    let s2 = w.s + iv.steps, a2 = midi - M.midiOf(s2, 0);
+    if (Math.abs(a2) > 1) { const sp = M.spell(midi, iv.to); s2 = sp.s; a2 = sp.a; }
+    return { ...w, s: s2, a: a2 };
+  };
   const concert = C.score.layout.concert !== false;
   let last = cap.bars.length - 1; while (last > 0 && cap.bars[last].every((n) => n.rest)) last--;
-  return cap.bars.slice(0, last + 1).map((bar) => bar.map((n) => {
-    if (n.rest) return n.full ? { full: true } : { id: M.newId(), rest: true, t: n.t || 4, dots: n.dots || 0 };
+  // the key in force in each bar (a key may change along the music)
+  let keyNow = cap.key;
+  const keys = cap.bars.map((_, i) => { const ch = cap.changes && cap.changes[i]; if (i > 0 && ch && ch.key !== undefined) keyNow = ch.key; return keyNow; });
+  const out = cap.bars.slice(0, last + 1).map((bar, bi) => bar.map((n) => {
+    if (n.rest) return n.full ? { full: true } : { id: M.newId(), rest: true, t: n.t || 4, dots: n.dots || 0, ...(n.tup ? { tup: { n: n.tup.n || 3, m: n.tup.m || 2, base: n.tup.base || n.t || 4 } } : {}) };
+    const bottom = bottomOf(n), keyB = keys[bi];
+    const ecl = n.clef && n.clef !== clef0 ? n.clef : cap.clef;
+    // (under an octave line the notes sound an octave from where they are written: the score keeps
+    // the sounding pitch and draws them under its own octave line)
+    const ott = n.ott ? n.ott * 7 : 0;
     const notes = n.ps.map((p) => {
-      const s = bottom + p;
-      const w = { s, a: n.acc && n.acc[p] !== undefined ? n.acc[p] : M.keyAlter(cap.key, s) };
+      const s = bottom + p + ott;
+      const w = move({ s, a: n.acc && n.acc[p] !== undefined ? n.acc[p] : M.keyAlter(keyB, s) });
+      if (n.ties && n.ties.includes(p)) w.tie = true;
       // what is printed for a transposing instrument is its written pitch
-      return !concert && inst ? M.toConcert(w, inst) : w;
+      return !concert && inst ? { ...M.toConcert(w, inst), ...(w.tie ? { tie: true } : {}) } : w;
     });
-    return { id: M.newId(), t: n.t || 4, dots: n.dots || 0, notes };
+    const ev = { id: M.newId(), t: n.t || 4, dots: n.dots || 0, notes, _ec: ecl };
+    // a grace note before it
+    if (n.grace && n.grace.p !== undefined) {
+      const gs = bottom + n.grace.p, gw = move({ s: gs, a: n.grace.acc !== undefined ? n.grace.acc : M.keyAlter(keyB, gs) });
+      const g2 = !concert && inst ? M.toConcert(gw, inst) : gw;
+      ev.grace = { s: g2.s, a: g2.a, dir: g2.s >= Math.max(...notes.map((q) => q.s)) ? 1 : -1 };
+    }
+    // what the reader saw around the note: triplets, articulations, ornaments, slurs
+    if (n.tup) ev.tup = { n: n.tup.n || 3, m: n.tup.m || 2, base: n.tup.base || n.t || 4, ...(n.tup.base && n.tup.base !== n.t ? {} : { i: n.tup.i }) };
+    const arts = (n.art || []).filter((a) => ['stacc', 'acc', 'ten', 'marc', 'ferm', 'trill', 'mord', 'prall', 'turn', 'up', 'down', 'breath', 'harm'].includes(a));
+    if (arts.length) ev.art = arts;
+    if (n.slurStart) ev._slurA = true;
+    if (n.slurEnd) ev._slurB = true;
+    // dynamics, fingering and hairpins
+    if (n.dyn && DYNAMICS.includes(n.dyn)) ev.dyn = n.dyn;
+    if (n.txt) { ev.txt = n.txt; ev.txtStyle = /^[a-zà-ÿ]/.test(n.txt) ? 'expr' : 'tech'; if (n.txtBelow) ev.txtBelow = true; }
+    if (n.fing) ev.fing = String(n.fing);
+    if (n.hp && n.hp.start) ev._hpA = n.hp.start;
+    if (n.hpEnd) ev._hpB = true;
+    if (n.ott) ev._ott = n.ott;
+    return ev;
   }));
+  // a clef that changes in the middle of a bar goes on the first note in the new clef (the bars
+  // start in the clef read at their start)
+  let run = cap.clef;
+  out.forEach((evs, bi) => {
+    const ch = cap.changes && cap.changes[bi];
+    if (bi > 0 && ch && ch.clef) run = ch.clef !== clef0 ? ch.clef : cap.clef;
+    for (const ev of evs) {
+      if (!ev._ec) continue;
+      if (ev._ec !== run) { ev.clef = ev._ec; run = ev._ec; }
+      delete ev._ec;
+    }
+  });
+  return out;
 }
 // Paste captured music bar for bar. With "clef, key and time" on, those bars take the music's own
 // time signature, key and clef, and the score goes back to what it was after them.
@@ -2004,19 +2525,23 @@ function pasteCapture(st, m) {
   const n = bars.length;
   const concert = S.layout.concert !== false;
   // the key of the music, as the score keeps it (sounding pitch)
-  let keyC = cap.key;
-  if (!concert && inst) for (let f = -7; f <= 7; f++) if (M.writtenKey(f, inst) === cap.key) { keyC = f; break; }
+  const keyOut = capOutKey();
+  let keyC = keyOut;
+  if (!concert && inst) for (let f = -7; f <= 7; f++) if (M.writtenKey(f, inst) === keyOut) { keyC = f; break; }
   const time = cap.time || M.timeAt(S, m);
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
   edit(() => {
     if (S.measures.length < m + n) M.addBars(S, m + n - S.measures.length);
     const after = m + n, hasAfter = after < S.measures.length;
     const oldTime = M.timeAt(S, hasAfter ? after : m), oldKey = M.keyAt(S, hasAfter ? after : m), oldClef = M.clefAt(st, hasAfter ? after : m);
-    // the bars after go back to the score's own time, key and clef
+    // the bars after go back to the score's own time, key and clef (as they are at the end of the
+    // pasted music, after any changes in it)
+    let endTime = time, endKey = keyC, endClef = cap.clef;
+    for (let i = 1; i < n; i++) { const ch = cap.changes && cap.changes[i]; if (!ch) continue; if (ch.time) endTime = ch.time; if (ch.key !== undefined) endKey = null; if (ch.clef) endClef = ch.clef; }
     if (hasAfter) {
-      if (!S.measures[after].time && !same(oldTime, time)) M.setTime(S, after, oldTime);
-      if ((S.measures[after].key === undefined || S.measures[after].key === null) && oldKey !== keyC) S.measures[after].key = oldKey;
-      if (!(st.clefs && st.clefs[after]) && oldClef !== cap.clef) st.clefs = { ...(st.clefs || {}), [after]: oldClef };
+      if (!S.measures[after].time && !same(oldTime, endTime)) M.setTime(S, after, oldTime);
+      if ((S.measures[after].key === undefined || S.measures[after].key === null) && oldKey !== endKey) S.measures[after].key = oldKey;
+      if (!(st.clefs && st.clefs[after]) && oldClef !== endClef) st.clefs = { ...(st.clefs || {}), [after]: oldClef };
     }
     if (!same(M.timeAt(S, m), time)) M.setTime(S, m, time);
     if (M.keyAt(S, m) !== keyC) S.measures[m].key = keyC;
@@ -2024,7 +2549,17 @@ function pasteCapture(st, m) {
       st.clefs = { ...(st.clefs || {}) };
       if (m === 0) { st.clef = cap.clef; delete st.clefs[0]; } else st.clefs[m] = cap.clef;
     }
+    // the changes read along the music: time, key (moved with the transposition) and clef
+    const iv = capInterval(), shiftKey = (k) => { if (!iv) return k; const f = M.fifthsOfInterval(iv.steps, iv.semis); let k2 = k + f; while (k2 > 7) k2 -= 12; while (k2 < -7) k2 += 12; return k2; };
+    for (let i = 1; i < n; i++) {
+      const ch = cap.changes && cap.changes[i]; if (!ch) continue;
+      const mm = m + i;
+      if (ch.time && !same(M.timeAt(S, mm), ch.time)) M.setTime(S, mm, ch.time);
+      if (ch.key !== undefined) { let k = shiftKey(ch.key); if (!concert && inst) for (let f = -7; f <= 7; f++) if (M.writtenKey(f, inst) === k) { k = f; break; } if (M.keyAt(S, mm) !== k) S.measures[mm].key = k; }
+      if (ch.clef && M.clefAt(st, mm) !== ch.clef) st.clefs = { ...(st.clefs || {}), [mm]: ch.clef };
+    }
     // the notes, bar for bar
+    const slurPts = [], hpPts = [], ottPts = [];
     bars.forEach((evs, i) => {
       const mm = m + i, tm = M.timeAt(S, mm), total = M.barTicks(tm);
       st.bars[mm] = M.restBar(tm);
@@ -2036,14 +2571,59 @@ function pasteCapture(st, m) {
         if (ev.full) continue;
         const len = M.evTicks(ev);
         if (pos + len > total + 1) break;
+        if (ev._slurB) slurPts.push({ b: true, m: mm, pos });
+        if (ev._slurA) slurPts.push({ a: true, m: mm, pos });
+        if (ev._hpB) hpPts.push({ b: true, m: mm, pos });
+        if (ev._hpA) hpPts.push({ a: ev._hpA, m: mm, pos });
+        ottPts.push({ o: ev._ott || 0, m: mm, pos, rest: !!ev.rest });
+        delete ev._slurA; delete ev._slurB; delete ev._hpA; delete ev._hpB; delete ev._ott;
         M.writeEvent(S, st, mm, pos, ev);
         pos += len;
       }
     });
+    // a clef changed in the middle of a bar holds in the bars after it (as far as the pasted music
+    // goes; the score's own clef comes back after it, as set above)
+    for (let i = 0; i + 1 < n; i++) {
+      const mm = m + i, end = M.clefEnd(st, mm);
+      if (M.clefAt(st, mm + 1) !== end && !(cap.changes && cap.changes[i + 1] && cap.changes[i + 1].clef)) st.clefs = { ...(st.clefs || {}), [mm + 1]: end };
+    }
+    if (hasAfter) { const end = M.clefEnd(st, m + n - 1); if (!(st.clefs && st.clefs[after] !== undefined) && end !== oldClef) st.clefs = { ...(st.clefs || {}), [after]: oldClef }; }
+    // tempo marks read with the music
+    cap.bars.forEach((b, i) => { if (b.tempo && m + i < S.measures.length) { const t0 = M.tempoAt(S, m + i); S.measures[m + i].tempo = { bpm: b.tempo.bpm || t0.bpm || 96, beat: t0.beat || 4, text: b.tempo.text || '' }; } });
+    // the slurs that were read, as lines over the notes (the old ones in these bars go)
+    S.spans = (S.spans || []).filter((q) => !(q.kind === 'slur' && q.st === st.id && q.a.m >= m && q.b.m <= m + n - 1));
+    let open = null;
+    for (const q of slurPts) {
+      if (q.a) open = q;
+      if (q.b && open && (q.m > open.m || (q.m === open.m && q.pos > open.pos))) { S.spans.push({ id: M.newId(), kind: 'slur', st: st.id, v: 1, a: { m: open.m, pos: open.pos }, b: { m: q.m, pos: q.pos } }); open = null; }
+    }
+    // octave lines, over the notes read under them (rests between them stay under the line)
+    S.spans = S.spans.filter((q) => !(['8va', '8vb'].includes(q.kind) && q.st === st.id && q.a.m >= m && q.b.m <= m + n - 1));
+    let ottRun = null;
+    const ottClose = () => { if (ottRun) S.spans.push({ id: M.newId(), kind: ottRun.o > 0 ? '8va' : '8vb', st: st.id, a: ottRun.a, b: ottRun.b }); ottRun = null; };
+    for (const q of ottPts) {
+      if (q.rest) continue;
+      if (ottRun && q.o !== ottRun.o) ottClose();
+      if (q.o && !ottRun) ottRun = { o: q.o, a: { m: q.m, pos: q.pos }, b: { m: q.m, pos: q.pos } };
+      else if (q.o) ottRun.b = { m: q.m, pos: q.pos };
+    }
+    ottClose();
+    // hairpins, from the note where each opens (or closes) to the note it reaches
+    S.spans = S.spans.filter((q) => !(q.kind === 'hairpin' && q.st === st.id && q.a.m >= m && q.b.m <= m + n - 1));
+    let hpOpen = null;
+    for (const q of hpPts) {
+      if (q.a) hpOpen = q;
+      if (q.b && hpOpen && (q.m > hpOpen.m || (q.m === hpOpen.m && q.pos >= hpOpen.pos))) { S.spans.push({ id: M.newId(), kind: 'hairpin', st: st.id, v: 1, dir: hpOpen.a, a: { m: hpOpen.m, pos: hpOpen.pos }, b: { m: q.m, pos: q.pos } }); hpOpen = null; }
+    }
   });
+  // the bars the reader was unsure of stay marked until they are changed (or another capture)
+  const doubtful = new Map();
+  (cap.doubt || []).forEach((d, i) => { if (d && i < n && m + i < S.measures.length) doubtful.set(m + i, JSON.stringify(st.bars[m + i])); });
+  C.capDoubt = doubtful.size ? { stId: st.id, bars: doubtful } : null;
   C.sel.clear(); C.selBars = { st, stId: st.id, from: m, to: Math.min(S.measures.length - 1, m + n - 1), staffK: 0 };
   relayout(); syncSelBar();
-  D.toast(`${n} ${n === 1 ? 'bar' : 'bars'} pasted in ${time.join('/')}, ${KEY_NAMES[keyC + 7].split(' / ')[0]}.`, 2600);
+  const check = doubtful.size ? ` ${doubtful.size} ${doubtful.size === 1 ? 'bar is' : 'bars are'} marked in orange to check.` : '';
+  D.toast(`${n} ${n === 1 ? 'bar' : 'bars'} pasted in ${time.join('/')}, ${KEY_NAMES[keyC + 7].split(' / ')[0]}.${check}`, check ? 4200 : 2600);
 }
 function nextFreeBar(stId) {
   const st = M.allStaves(C.score).find((x) => x.id === stId) || C.score.parts[0].staves[0];
@@ -2075,7 +2655,7 @@ function drawCapture() {
   if (!C.capture) { c.width = 10; c.height = 10; return; }
   const cap = C.capture, time = cap.time || [4, 4];
   const bars = captureBarEvents(null);
-  const s = M.newScore({ title: '', insts: ['violin'], bars: Math.max(1, bars.length), time, key: cap.key });
+  const s = M.newScore({ title: '', insts: ['violin'], bars: Math.max(1, bars.length), time, key: capOutKey() });
   s.layout = { page: 'A4', landscape: false, staffMm: 13, concert: true };
   const st = s.parts[0].staves[0]; st.clef = cap.clef;
   const total = M.barTicks(time);

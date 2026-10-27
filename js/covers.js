@@ -1,9 +1,10 @@
+// All the cover pictures are original artwork drawn by a program for Stand (covergen.py), so they are free to use.
 // Photo covers for notebooks: each picture has its own way of carrying the title. On records the
 // title runs around the paper label, on torn paper it sits in the tear, on the cassette it is
 // written on the label strip, on lined paper it is handwritten on the lines.
 // Positions are fractions of the cover (x of the width, y of the height; sizes of the width).
 
-export const PHOTO_CATS = [['records', 'Records'], ['flowers', 'Flowers'], ['paint', 'Paint'], ['paper', 'Paper'], ['music', 'Music']];
+export const PHOTO_CATS = [['records', 'Records'], ['flowers', 'Flowers'], ['paint', 'Paint'], ['textures', 'Textures'], ['paper', 'Paper'], ['music', 'Music']];
 
 const SCRIPT = '"Snell Roundhand", "Apple Chancery", "Zapfino", cursive';
 const HAND = '"Bradley Hand", "Noteworthy", "Marker Felt", cursive';
@@ -12,46 +13,56 @@ const DIDOT = '"Didot", "Bodoni 72", "Iowan Old Style", Georgia, serif';
 const SANS = '"Avenir Next", -apple-system, "Helvetica Neue", Arial, sans-serif';
 const MONO = '"American Typewriter", "Courier New", monospace';
 
-// geometry of the record labels (centre x, centre y, radius) measured on the photos
+// geometry of the record labels (centre x, centre y, radius) measured on the pictures
 const REC = {
-  '06': [-0.2016, 0.4601, 0.321], '16': [-0.1848, 0.4607, 0.3057], '17': [-0.0948, 0.461, 0.3098],
-  '18': [-0.1642, 0.4581, 0.3211], '19': [-0.2447, 0.4573, 0.3639], '07': [0.4957, 1.0265, 0.2305],
+  r1: [-0.1025, 0.5458, 0.339], r2: [-0.0933, 0.5458, 0.3368], r3: [-0.1025, 0.5517, 0.3399],
+  r4: [-0.1077, 0.5526, 0.339], r5: [-0.1018, 0.5534, 0.3396], r6: [-0.1018, 0.5538, 0.3386],
 };
+const ring = (color, font = SERIF, spacing = 0.45, size = 0.056) => ({ k: 'ring', font, spacing, color, size, rf: 1.18 });
+const card = (color, y = 0.5) => ({ k: 'card', x: 0.5, y, color, font: SERIF });
+// a band of paper across the whole cover, a little see-through
+const strip = (color, y, bg = 'rgba(246,240,229,.88)') => ({ k: 'strip', y, color, bg, font: DIDOT });
 
 export const COVER_PHOTOS = [
-  { id: '06', cat: 'records', label: 'Plum record', t: { k: 'ring', font: SERIF, spacing: 0.45, color: 'rgba(255,255,255,.92)', size: 0.056, rf: 1.2 } },
-  { id: '16', cat: 'records', label: 'Brown record', t: { k: 'ring', font: SERIF, spacing: 0.45, color: 'rgba(255,248,236,.92)', size: 0.056, rf: 1.2 } },
-  { id: '19', cat: 'records', label: 'Red record', t: { k: 'ring', font: SCRIPT, spacing: 0.15, color: 'rgba(255,255,255,.92)', size: 0.095, rf: 1.17 } },
-  { id: '17', cat: 'records', label: 'Blue record', t: { k: 'ring', font: SCRIPT, spacing: 0.12, color: 'rgba(255,255,255,.92)', size: 0.09, rf: 1.22 } },
-  { id: '18', cat: 'records', label: 'Green record', t: { k: 'ring', font: SCRIPT, spacing: 0.12, color: 'rgba(255,255,255,.92)', size: 0.09, rf: 1.22 } },
-  { id: '07', cat: 'records', label: 'Black record', t: { k: 'ringTop', font: SANS, weight: 700, spacing: 0.5, color: 'rgba(255,255,255,.9)', size: 0.045, rf: 1.17, label: '#f6ead8' } },
-  { id: '20', cat: 'flowers', label: 'Pink petals', t: { k: 'text', x: 0.07, y: 0.585, align: 'left', font: DIDOT, color: '#7d1d2b', size: 0.085, sub: '#9b4a55', maxW: 0.4 } },
-  { id: '27', cat: 'flowers', label: 'Blue petals', t: { k: 'text', x: 0.5, y: 0.975, align: 'center', font: DIDOT, color: '#22396e', size: 0.06, sub: '#4a5f8f', maxW: 0.86, subAbove: true } },
-  { id: '28', cat: 'flowers', label: 'Anthurium', t: { k: 'text', x: 0.07, y: 0.86, align: 'left', font: DIDOT, color: '#2a5560', size: 0.08, sub: '#58808a', maxW: 0.42 } },
-  { id: '29', cat: 'flowers', label: 'Poppies', t: { k: 'text', x: 0.5, y: 0.2, align: 'center', font: DIDOT, color: '#f6efe2', size: 0.085, sub: '#e3ddd2', maxW: 0.72 } },
-  { id: '15', cat: 'flowers', label: 'Night flowers', t: { k: 'card', x: 0.5, y: 0.5, color: '#1f2a3a', font: SERIF } },
-  { id: '25', cat: 'paint', label: 'Green brush', t: { k: 'text', x: 0.08, y: 0.9, align: 'left', font: DIDOT, color: '#f7f2e4', size: 0.08, sub: '#e4ead9', maxW: 0.6, shadow: true } },
-  { id: '26', cat: 'paint', label: 'Red brush', t: { k: 'text', x: 0.08, y: 0.9, align: 'left', font: DIDOT, color: '#fbf3ea', size: 0.08, sub: '#f3dcd6', maxW: 0.6, shadow: true } },
-  { id: '23', cat: 'paint', label: 'Ink wave', t: { k: 'text', x: 0.5, y: 0.2, align: 'center', font: DIDOT, color: '#1d2742', size: 0.085, sub: '#4c5570', maxW: 0.8 } },
-  { id: '12', cat: 'paint', label: 'Navy strokes', t: { k: 'text', x: 0.06, y: 0.08, align: 'left', font: DIDOT, color: '#16264d', size: 0.075, sub: '#3e4c6d', maxW: 0.38 } },
-  { id: '09', cat: 'paint', label: 'Japandi', t: { k: 'text', x: 0.06, y: 0.5, align: 'left', font: SERIF, color: '#15213d', size: 0.07, sub: '#46506a', maxW: 0.4 } },
-  { id: '11', cat: 'paint', label: 'Boho', t: { k: 'text', x: 0.08, y: 0.17, align: 'left', font: DIDOT, color: '#f6efe2', size: 0.08, sub: '#dfe3ec', maxW: 0.7 } },
-  { id: '10', cat: 'paint', label: 'Ribbons', t: { k: 'card', x: 0.5, y: 0.5, color: '#16244a', font: SERIF } },
-  { id: '13', cat: 'paint', label: 'Textured', t: { k: 'card', x: 0.5, y: 0.5, color: '#203352', font: SERIF } },
-  { id: '14', cat: 'paint', label: 'Blue squares', t: { k: 'card', x: 0.5, y: 0.5, color: '#1b2f52', font: SERIF } },
-  { id: '08', cat: 'paint', label: 'Navy', t: { k: 'stack', x: 0.9, y: 0.93, font: SANS, weight: 700, color: '#efe6d3', size: 0.13 } },
-  { id: '02', cat: 'paper', label: 'Torn paper', t: { k: 'tear', x: 0.49, y0: 0.15, y1: 0.98, w: 0.24, font: DIDOT, color: '#2b2b2e' } },
-  { id: '24', cat: 'paper', label: 'Torn burgundy', t: { k: 'band', x: 0.47, y: 0.49, h: 0.12, w: 0.84, font: DIDOT, color: '#f3e9da' } },
-  { id: '01', cat: 'paper', label: 'Lined paper', t: { k: 'lines', x: 0.17, y: 0.165, font: HAND, color: '#22305a', size: 0.075 } },
-  { id: '05', cat: 'music', label: 'Cassette', t: { k: 'cassette', x: 0.175, w: 0.1, band: 0.072, font: HAND, color: '#2a2622', sub: '#7fb0a8' } },
-  { id: '03', cat: 'music', label: 'Guitar picks', t: { k: 'text', x: 0.5, y: 0.1, align: 'center', font: SANS, weight: 700, spacing: 0.12, upper: true, color: '#f2e6c9', size: 0.07, sub: '#b8b2a5', maxW: 0.86 } },
-  { id: '04', cat: 'music', label: 'Painted score', t: { k: 'card', x: 0.5, y: 0.88, color: '#1d1d22', font: SERIF } },
-  { id: '21', cat: 'music', label: 'Cellist', t: { k: 'card', x: 0.5, y: 0.9, color: '#232a52', font: SERIF } },
+  { id: 'r1', cat: 'records', label: 'Black record', t: ring('rgba(255,255,255,.92)') },
+  { id: 'r2', cat: 'records', label: 'Red record', t: ring('rgba(255,246,236,.94)', SCRIPT, 0.14, 0.092) },
+  { id: 'r3', cat: 'records', label: 'Blue record', t: ring('rgba(255,255,255,.92)', SCRIPT, 0.12, 0.09) },
+  { id: 'r4', cat: 'records', label: 'Green record', t: ring('rgba(255,252,240,.92)') },
+  { id: 'r5', cat: 'records', label: 'Brown record', t: ring('rgba(255,246,232,.92)', SCRIPT, 0.12, 0.09) },
+  { id: 'r6', cat: 'records', label: 'Silver record', t: { ...ring('rgba(12,14,20,1)'), weight: 600 } },
+  { id: 'f1', cat: 'flowers', label: 'Blue petals', t: card('#1f3a6b', 0.5) },
+  { id: 'f2', cat: 'flowers', label: 'Red petals', t: card('#7a1f22', 0.88) },
+  { id: 'f3', cat: 'flowers', label: 'Poppies', t: { k: 'text', x: 0.5, y: 0.19, align: 'center', font: DIDOT, color: '#f6efe2', size: 0.085, sub: '#e8e2d6', maxW: 0.66, shadow: true } },
+  { id: 'f4', cat: 'flowers', label: 'Anthurium', t: card('#1f484d', 0.5) },
+  { id: 'f5', cat: 'flowers', label: 'Anemones', t: { k: 'text', x: 0.5, y: 0.085, align: 'center', font: DIDOT, color: '#1c2a4d', size: 0.07, sub: '#4a5677', maxW: 0.86 } },
+  { id: 'p1', cat: 'paint', label: 'Blue ribbons', t: card('#16244a', 0.5) },
+  { id: 'p2', cat: 'paint', label: 'Red brush', t: card('#7a1414', 0.52) },
+  { id: 'p3', cat: 'paint', label: 'Green brush', t: card('#1e4a22', 0.88) },
+  { id: 'p4', cat: 'paint', label: 'Ink wave', t: strip('#16244a', 0.2) },
+  { id: 'p5', cat: 'paint', label: 'Blue marble', t: card('#16244a', 0.5) },
+  { id: 'p6', cat: 'paint', label: 'Mountains', t: { k: 'text', x: 0.5, y: 0.1, align: 'center', font: DIDOT, color: '#1d2b4a', size: 0.08, sub: '#46506a', maxW: 0.8 } },
+  { id: 't1', cat: 'textures', label: 'Red and sage', t: { k: 'text', x: 0.08, y: 0.12, align: 'left', font: DIDOT, color: '#6e1a22', size: 0.085, sub: '#8a4a50', maxW: 0.6 } },
+  { id: 't2', cat: 'textures', label: 'Navy and sand', t: { k: 'text', x: 0.08, y: 0.12, align: 'left', font: DIDOT, color: '#f3ead8', size: 0.085, sub: '#d9d2c3', maxW: 0.62, shadow: true } },
+  { id: 't3', cat: 'textures', label: 'Indigo squares', t: card('#16244a', 0.5) },
+  { id: 't4', cat: 'textures', label: 'Faded squares', t: strip('#1f3354', 0.62) },
+  { id: 't5', cat: 'textures', label: 'Blue cross', t: card('#16244a', 0.5) },
+  { id: 't6', cat: 'textures', label: 'Weathered blue', t: strip('#f4ecdc', 0.36, 'rgba(22,34,58,.82)') },
+  { id: 'a1', cat: 'paper', label: 'Torn paper', t: { k: 'tear', x: 0.49, y0: 0.37, y1: 0.97, w: 0.26, font: DIDOT, color: '#f3e9da' } },
+  { id: 'a2', cat: 'paper', label: 'Torn across', t: { k: 'band', x: 0.5, y: 0.44, h: 0.11, w: 0.82, font: DIDOT, color: '#f3e9da' } },
+  { id: 'a3', cat: 'paper', label: 'Torn diagonal', t: { k: 'diag', x: 0.53, y: 0.555, angle: -21, w: 0.74, h: 0.085, font: DIDOT, color: '#f3e9da' } },
+  { id: 'm1', cat: 'music', label: 'Plectrums', t: strip('#f3ead8', 0.5, 'rgba(18,18,22,.8)') },
+  { id: 'm2', cat: 'music', label: 'Painted score', t: card('#1d1d22', 0.11) },
+  { id: 'm3', cat: 'music', label: 'Cassette', t: { k: 'cassette', x: 0.737, w: 0.095, band: 0.432, font: HAND, color: '#241f1b', sub: '#3a2c24' } },
 ];
-export const photoById = (id) => COVER_PHOTOS.find((p) => p.id === id);
+// covers chosen with the earlier pictures open with the nearest new one
+const OLD = { '06': 'r2', '16': 'r5', '17': 'r3', '18': 'r4', '19': 'r2', '07': 'r1', '20': 'f2', '27': 'f1', '28': 'f4', '29': 'f3', '15': 'f5',
+  '25': 'p3', '26': 'p2', '23': 'p4', '12': 'p1', '10': 'p1', '08': 'p6', '09': 't2', '11': 't1', '13': 't6', '14': 't3',
+  '02': 'a1', '24': 'a2', '01': 'a3', '05': 'm3', '03': 'm1', '04': 'm2', '21': 'm2' };
+export const photoById = (id) => COVER_PHOTOS.find((p) => p.id === (OLD[id] || id));
 
 const cache = new Map();
 export function loadCoverPhoto(id, thumb) {
+  id = OLD[id] || id;
   const key = (thumb ? 't/' : '') + id;
   if (!cache.has(key)) {
     cache.set(key, new Promise((res, rej) => {
@@ -166,6 +177,8 @@ export function drawPhotoCover(ctx, file, W, H, img) {
     const lh = s * 1.08, up = t.y > 0.6;
     // near the top the lines go down from y; near the bottom they end at y
     let y0 = up ? py(t.y) - (lines.length - 1) * lh : py(t.y);
+    // never past the top edge (a long title has more lines)
+    y0 = Math.max(y0, s * 0.92 + px(0.035));
     if (up && sub && !t.subAbove) y0 -= s * 0.62 - s * 0.5;
     if (sub && t.subAbove) {
       ctx.font = `italic 400 ${s * 0.42}px ${t.font}`; ctx.fillStyle = t.sub; ctx.textAlign = t.align; ctx.fillText(sub, px(t.x), y0 - s * 1.05);
@@ -214,6 +227,34 @@ export function drawPhotoCover(ctx, file, W, H, img) {
       if (sub) { ctx.font = `italic ${s * 0.32}px ${t.font}`; ctx.textAlign = 'center'; ctx.fillText(sub, 0, s * 0.62); }
       ctx.restore();
     }
+  } else if (t.k === 'strip') {
+    const { size: s, lines } = wrap(ctx, title.toUpperCase(), t.font, px(0.06) * ts, px(0.84), 2, 500, 0.12);
+    const lh = s * 1.18, bh = px(0.07) + lines.length * lh + (sub ? px(0.045) : 0);
+    const y = Math.min(H - bh - px(0.03), Math.max(px(0.03), py(t.y) - bh / 2));
+    ctx.fillStyle = t.bg; ctx.fillRect(0, y, W, bh);
+    ctx.fillStyle = t.color; ctx.strokeStyle = t.color; ctx.globalAlpha = 0.5; ctx.lineWidth = px(0.002);
+    ctx.beginPath(); ctx.moveTo(px(0.06), y + px(0.018)); ctx.lineTo(W - px(0.06), y + px(0.018)); ctx.moveTo(px(0.06), y + bh - px(0.018)); ctx.lineTo(W - px(0.06), y + bh - px(0.018)); ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.font = `500 ${s}px ${t.font}`;
+    lines.forEach((l, i) => spaced(ctx, l, W / 2, y + px(0.035) + s * 0.85 + i * lh, 0.12, s, 'center'));
+    if (sub) { ctx.font = `italic ${Math.max(px(0.026), s * 0.45)}px ${t.font}`; ctx.textAlign = 'center'; ctx.globalAlpha = 0.85; ctx.fillText(sub, W / 2, y + px(0.035) + s * 0.85 + (lines.length - 1) * lh + px(0.05)); ctx.globalAlpha = 1; }
+  } else if (t.k === 'diag') {
+    // along the tear, on the slant of the paper: one line, or two when the title is long
+    ctx.save(); ctx.translate(px(t.x), py(t.y)); ctx.rotate((t.angle * Math.PI) / 180);
+    ctx.fillStyle = t.color; ctx.textAlign = 'center'; shadow(true, 'rgba(0,0,0,.4)');
+    const L = px(t.w), Hh = px(t.h);
+    const one = fit(ctx, title, t.font, Hh * ts, L, 600, 0.04);
+    if (one >= Hh * 0.62 * ts || !title.includes(' ')) {
+      ctx.font = `600 ${one}px ${t.font}`;
+      spaced(ctx, title, 0, one * 0.32 - (sub ? one * 0.18 : 0), 0.04, one, 'center');
+      if (sub) { shadow(false); ctx.font = `italic ${Math.max(px(0.026), one * 0.32)}px ${t.font}`; ctx.globalAlpha = 0.9; ctx.fillText(sub, 0, one * 0.32 + one * 0.55); ctx.globalAlpha = 1; }
+    } else {
+      const ls = halves(title); const s2 = Math.min(Hh * 0.72 * ts, ...ls.map((l) => fit(ctx, l, t.font, Hh * 0.72 * ts, L * 0.92, 600, 0.04)));
+      ctx.font = `600 ${s2}px ${t.font}`;
+      const y0 = -s2 * 0.55 - (sub ? s2 * 0.25 : 0);
+      spaced(ctx, ls[0], 0, y0 + s2 * 0.35, 0.04, s2, 'center'); spaced(ctx, ls[1], 0, y0 + s2 * 1.45, 0.04, s2, 'center');
+      if (sub) { shadow(false); ctx.font = `italic ${Math.max(px(0.026), s2 * 0.4)}px ${t.font}`; ctx.globalAlpha = 0.9; ctx.fillText(sub, 0, y0 + s2 * 2.15); ctx.globalAlpha = 1; }
+    }
+    ctx.restore();
   } else if (t.k === 'band') {
     ctx.fillStyle = t.color; shadow(true, 'rgba(0,0,0,.35)');
     const one = fit(ctx, title, t.font, px(t.h) * 0.9 * ts, px(t.w), 600, 0.03);

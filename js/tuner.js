@@ -1,6 +1,6 @@
 // Chromatic tuner (McLeod pitch method via FFT autocorrelation), overtone analysis,
 // harmonic-series playback and an intonation drone.
-import { getCtx, master, acquireMic, releaseMic, ensureRunning } from './audio.js';
+import { getCtx, master, acquireMic, releaseMic, ensureRunning, wantAudio, freshSound } from './audio.js';
 import { NOTE_NAMES, centsOffset } from './temperament.js';
 import { playNote, holdNote, pluckTanpura } from './synth.js';
 export { NOTE_NAMES };
@@ -117,19 +117,19 @@ export function harmonicProfile(buf, sr, f0, n = 12) {
 // hysteresis on clarity, median smoothing, protection against octave jumps, and a short hold
 // after the sound stops so the display does not flicker.
 export class PitchTracker {
-  constructor() { this.floor = 0.002; this.reset(); }
+  constructor() { this.floor = 0.0008; this.reset(); }
   reset() { this.cur = 0; this.hist = []; this.cand = null; this.lastHeard = 0; }
   feed(r, rms, now) {
     // the noise floor follows the quiet moments quickly and loud noise only slowly (and never far),
     // so talking, a fan or a page turn cannot make the tuner deaf to the next note
-    const gate = Math.min(0.012, Math.max(0.0022, this.floor * 2.2));
+    const gate = Math.min(0.008, Math.max(0.0007, this.floor * 1.8));
     // real strings carry bow and breath noise: a clear note keeps being followed at a lower clarity;
     // a clearly pitched sound counts even when it is not much louder than the noise around it
     // and while a note sounds, a reading near it is believed even through noise (continuity)
     const near = r && this.cur && Math.abs(1200 * Math.log2(r.freq / this.cur)) < 50;
-    const valid = r && ((r.clarity >= (this.cur ? 0.6 : 0.7) && (r.rms > gate || r.clarity >= 0.86)) || (near && r.clarity >= 0.4));
+    const valid = r && ((r.clarity >= (this.cur ? 0.6 : 0.7) && (r.rms > gate || r.clarity >= 0.8)) || (near && r.clarity >= 0.4));
     if (!valid) {
-      const x = Math.max(0.0008, Math.min(0.05, rms));
+      const x = Math.max(0.0003, Math.min(0.05, rms));
       this.floor = x < this.floor ? 0.85 * this.floor + 0.15 * x : 0.996 * this.floor + 0.004 * x;
       if (this.cur && now - this.lastHeard < 1100) return { f: this.cur, held: true, clarity: 0 };
       if (this.cur) this.reset();
@@ -230,28 +230,43 @@ export class Tuner {
     const cents = n.cents - off;
     return { ...n, cents, target: noteFreq(n.midi, this.ref) * Math.pow(2, off / 1200), offset: off };
   }
+  // A metronome click in what the microphone just heard (its window, and the way out and back in):
+  // the reading is held over it, so the clicks never show as notes or move the needle.
+  _inClick(ctx) {
+    const c = globalThis.__clicks; if (!c || !c.length) return false;
+    // (clicks very close together would leave almost nothing to hear: then they are not left out)
+    if (c.length > 1 && c[c.length - 1].t - c[c.length - 2].t < 0.28) return false;
+    const now = ctx.currentTime, lat = Math.min(0.25, (ctx.outputLatency || 0) + (ctx.baseLatency || 0)) + 0.02;
+    const win = this.buf.length / ctx.sampleRate;
+    for (const k of c) if (k.ctx === ctx && now >= k.t && now - win - lat <= k.t + Math.min(k.d, 0.06)) return true;
+    return false;
+  }
   _analyse(sr) {
     this.analyser.getFloatTimeDomainData(this.buf);
+    if (this.ignoreClicks !== false && this._inClick(this.analyser.context)) return;
     let ms = 0; for (let i = 0; i < this.buf.length; i++) ms += this.buf[i] * this.buf[i];
     const rms = Math.sqrt(ms / this.buf.length);
     // Kept alive: a sound system that was interrupted is woken up, and a microphone that went
     // silent for good (a call, another app took it) is opened again.
+    // (Only a running sound system with a silent microphone is rebuilt, and not more than once in
+    // a few seconds: reopening the microphone over and over upset the metronome.)
     if (rms === 0) {
       this._zero = (this._zero || 0) + 1;
       const ctx = getCtx();
-      if (ctx.state !== 'running' && this._zero % 30 === 0) ensureRunning().catch(() => {});
-      if (this._zero > 150) { this._zero = 0; this.restart(); return; }
+      if (ctx.state !== 'running') { if (this._zero % 30 === 0) ensureRunning().catch(() => {}); }
+      else if (this._zero > 150 && performance.now() - (this._restartAt || -1e9) > 6000) { this._zero = 0; this._restartAt = performance.now(); this.restart(); return; }
     } else this._zero = 0;
     // the loudest note of the last seconds (falls slowly). Only notes count: a knock, talking or
     // any noise without a pitch never raises it, so noise cannot hide your playing.
-    this.peak *= 0.99;
+    this.peak *= 0.985;
     // much quieter than you just played (more than 18 dB): another player, not you. A sudden
     // piano of your own still shows within a moment, as the level of the last loud note fades.
-    const quietOther = this.focus && this.peak > 0.01 && rms < this.peak * 0.12;
-    let r = rms > 0.0009 && !quietOther ? detectPitch(this.buf, sr) : null;
+    // (soft playing must always be heard: only much quieter sounds, -28 dB, count as someone else)
+    const quietOther = this.focus && this.peak > 0.02 && rms < this.peak * 0.04;
+    let r = rms > 0.00035 && !quietOther ? detectPitch(this.buf, sr, 0.00035) : null;
     if (r && r.clarity >= 0.8) this.peak = Math.max(this.peak, rms);
     // a low note the short window cannot hold: look again with the long one
-    if (!r && !quietOther && !this.long && rms > 0.0009) { if (!this.big) this.big = new Float32Array(4096); this.analyser.getFloatTimeDomainData(this.big); r = detectPitch(this.big, sr); }
+    if (!r && !quietOther && !this.long && rms > 0.00035) { if (!this.big) this.big = new Float32Array(4096); this.analyser.getFloatTimeDomainData(this.big); r = detectPitch(this.big, sr, 0.00035); }
     // outside what the instrument can play: someone else (or an octave slip of the detector)
     if (r && this.range) {
       const [lo, hi] = this.range;
@@ -270,10 +285,22 @@ export class Tuner {
     }
     this.onReading && this.onReading({ freq: out.f, held: out.held, ...t });
   }
+  // Rebuild the listening (a new sound system, a lost microphone) without closing the microphone
+  // in between when it is still good: closing and opening it disturbs the sound on iOS.
   async restart() {
-    if (!this.running) return;
-    this.stop(); this._cancel = false; this.peak = 0;
-    try { await this.start(); } catch {}
+    if (!this.running || this._restarting) return;
+    this._restarting = true;
+    let held = false;
+    try {
+      try { await acquireMic(); held = true; } catch {}
+      this.stop(); this._cancel = false; this.peak = 0;
+      await this.start();
+    } catch {} finally {
+      if (held) releaseMic();
+      this._restarting = false;
+      // (the buttons show whether it listens again: it may not, the microphone being taken)
+      window.dispatchEvent(new Event('stand-tuner-state'));
+    }
   }
   harmonics(n = 10) { return this.lastBuf ? harmonicProfile(this.lastBuf, this.lastSr, this.lastF0, n) : null; }
   stop() {
@@ -323,10 +350,13 @@ export function stopHarmonics() {
   hsVoices = [];
 }
 // mode: 'one' (single partial h), 'series' (partials enter one by one and stay), 'chord'
-export function playHarmonics(f0, { mode = 'series', h = 1, count = 8, volume = 0.5 } = {}) {
+export function playHarmonics(f0, opts = {}) {
+  const { mode = 'series', h = 1, count = 8, volume = 0.5 } = opts;
+  // (the microphone just closed: a sound system it spoilt is replaced first)
+  freshSound();
   const ctx = getCtx();
   stopHarmonics();
-  if (!hsOut) { hsOut = ctx.createGain(); hsOut.connect(master()); }
+  if (!hsOut || hsOut.context !== ctx) { hsOut = ctx.createGain(); hsOut.connect(master()); }   // (a new sound system: a new way out)
   hsOut.gain.value = volume;
   const now = ctx.currentTime + 0.03;
   const list = mode === 'one' ? [h] : Array.from({ length: count }, (_, i) => i + 1);
@@ -346,18 +376,67 @@ export function playHarmonics(f0, { mode = 'series', h = 1, count = 8, volume = 
     o.start(start); o.stop(now + total + 0.5);
     hsVoices.push({ o, g, k, start });
   });
+  // a sound system that does not wake (after the microphone, a call…) is woken or replaced, and
+  // the harmonics played again in the new one
+  if (ctx.state !== 'running' && !opts.again) ensureRunning(400, { force: true }).then((c) => { if (c !== ctx && hsVoices.length) playHarmonics(f0, { ...opts, again: true }); });
   return { start: now, step: stepT, total };
 }
 
 // ---------------- Drone ----------------
-export const DRONE_VOICES = { pure: 'Soft', flute: 'Flute', organ: 'Organ' };
+export const DRONE_VOICES = { organ: 'Organ', pure: 'Soft', bow: 'Bow', horn: 'Horn' };
 export const DRONE_CHORDS = {
   root: { label: 'Root', r: [1] }, fifth: { label: '+ Fifth', r: [1, 3 / 2] }, octave: { label: '+ Octave', r: [1, 2] },
   open: { label: 'Fifth + octave', r: [1, 3 / 2, 2] }, major: { label: 'Major', r: [1, 5 / 4, 3 / 2] }, minor: { label: 'Minor', r: [1, 6 / 5, 3 / 2] },
 };
 const TANPURA = { slow: 5.2, medium: 4, fast: 2.8 };
-// how loud the drone is at full volume (it sits under your playing, so it needs to be clearly heard)
-const DRONE_LEVEL = 1.4;
+// how loud the drone is at full volume: it sits under your playing, so it needs to be clearly
+// heard (the limiter on the way out keeps it clean at the top)
+const DRONE_LEVEL = 2.0;
+// The drone's own way out, made to carry on a small speaker: the lowest rumble the iPad cannot play
+// is taken away, the sound is kept dense (a slow compressor lifts the quiet parts of the wave)
+// and gently warmed (a soft saturation adds the overtones the ear uses to hear a low note), so
+// it sounds big and full without being any harsher. The limiter on the way out keeps it clean.
+// The volume comes after all this, so the slider still goes from a whisper to full.
+function droneBus(ctx, vol) {
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 55; hp.Q.value = 0.6;
+  const drive = ctx.createGain(); drive.gain.value = 2.0;
+  const sh = ctx.createWaveShaper(); const n = 2048, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(1.4 * x) / Math.tanh(1.4); }
+  sh.curve = curve; sh.oversample = '2x';
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -28; comp.knee.value = 14; comp.ratio.value = 4; comp.attack.value = 0.03; comp.release.value = 0.4;
+  const pres = ctx.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 1100; pres.Q.value = 0.7; pres.gain.value = 2.5;
+  const makeup = ctx.createGain(); makeup.gain.value = 2.5;
+  // the topmost overtones are softened: they add no weight, only sharpness in headphones
+  const air = ctx.createBiquadFilter(); air.type = 'highshelf'; air.frequency.value = 4000; air.gain.value = -5;
+  // and the level is set for the note (droneTrim): full for the low notes, safe for the high ones
+  const trim = ctx.createGain(); trim.gain.value = 0.5;
+  hp.connect(drive).connect(sh).connect(comp).connect(pres).connect(air).connect(makeup).connect(trim).connect(vol).connect(master());
+  return { input: hp, trim, drive };
+}
+// How loud a drone may be, by its pitch and its sound. The ear is far more sensitive to high notes
+// (most of all from 1 to 5 kHz) than to low ones, and each sound carries a different share of
+// its energy where the ear hears best, so the same level is a whisper for a low soft drone and
+// painful for a high bright one in headphones. Each sound was measured note by note (how loud it
+// sounds at the same level, A-weighted, dB) and is brought to one loudness: about that of ordinary
+// music in an app at full volume, a little more for low notes (they need it on a small speaker),
+// never more than a little under full scale.
+const DRONE_SENS = {
+  pure: [-21.2, -13.6, -8.2, -3.8, 0.3, 0.3],
+  organ: [-14.0, -7.7, -4.7, -2.3, -1.2, -2.7],
+  bow: [-12.7, -6.6, -4.6, -2.1, 0.5, -0.1],
+  horn: [-13.0, -7.1, -4.0, -1.9, -0.7, -2.0],
+  tanpura: [-9.4, -4.2, -2.5, -2.4, -3.0, -3.6],
+};
+function droneTrim(f, sound = 'organ') {
+  const t = DRONE_SENS[sound] || DRONE_SENS.organ;
+  const x = Math.max(0, Math.min(5, Math.log2(Math.max(20, f) / 55)));   // 55, 110 … 1760 Hz
+  const k = Math.min(4, Math.floor(x)), sens = t[k] + (t[k + 1] - t[k]) * (x - k);
+  const lf = Math.log2(Math.max(20, f));
+  const allowed = f >= 330 ? -16 : f <= 110 ? -12 : -12 - 4 * (lf - Math.log2(110)) / (Math.log2(330) - Math.log2(110));
+  return Math.pow(10, Math.min(-4, allowed - sens) / 20);
+}
+const volCurve = (v) => Math.pow(Math.max(0, Math.min(1, v)), 0.6);
 export class Drone {
   constructor() {
     this.ref = 442; this.pc = 9; this.octave = 2; this.sound = 'pure'; this.chord = 'fifth';
@@ -367,21 +446,37 @@ export class Drone {
   get midi() { return 12 * (this.octave + 1) + this.pc; }
   label() { return NOTE_NAMES[this.pc] + this.octave + (this.sound === 'tanpura' ? ' tanpura' : this.chord === 'root' ? '' : ' ' + DRONE_CHORDS[this.chord].label.replace('+ ', '+')); }
   ratios() { const r = (DRONE_CHORDS[this.chord] || DRONE_CHORDS.root).r; return this.lowOct ? [0.5, ...r] : r; }
-  _out() {
+  _out(f0) {
     const ctx = getCtx();
     if (this.out && this.out.context !== ctx) this.out = null;   // a new sound system
-    if (!this.out) { this.out = ctx.createGain(); this.out.connect(master()); }
-    this.out.gain.setTargetAtTime(this.volume * DRONE_LEVEL, ctx.currentTime, 0.05);
+    if (!this.out) { this.vol = ctx.createGain(); this.vol.gain.value = volCurve(this.volume); this.out = ctx.createGain(); this.bus = droneBus(ctx, this.vol); this.out.connect(this.bus.input); }
+    this.out.gain.setTargetAtTime(DRONE_LEVEL, ctx.currentTime, 0.05);
+    // the level for this note (see droneTrim); high notes are also driven less, so they stay clean
+    if (f0) {
+      this.bus.trim.gain.setTargetAtTime(globalThis.__trimOne ? 1 : droneTrim(f0, this.sound), ctx.currentTime, 0.04);
+      this.bus.drive.gain.setTargetAtTime(f0 > 330 ? 1 : f0 > 200 ? 1.5 : 2, ctx.currentTime, 0.04);
+    }
+    this.vol.gain.setTargetAtTime(volCurve(this.volume), ctx.currentTime, 0.05);
     return this.out;
   }
   start() {
     // when iOS replaces the sound system, the drone starts again in the new one
-    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) { this.voices = []; this.out = null; this.start(); } }); }
-    if (this.running) this._stopVoices();
-    const f0 = noteFreq(this.midi, this.ref), out = this._out();
+    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) { for (const v of this.voices) { try { v.stop(0, 0.01); } catch {} } this.voices = []; this.out = null; this.start(); } }); }
+    const again = this.running && this.voices.length;
+    if (this.running) this._stopVoices(again);
+    else freshSound();   // a sound system spoilt by a Bluetooth change or the microphone is replaced first
+    const f0 = noteFreq(this.midi, this.ref), out = this._out(f0);
+    wantAudio(true, 'drone');
     if (this.sound === 'tanpura') this._tanpura(f0, out);
-    else this.voices = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62));
+    else this.voices = again ? this._voicesAt(f0, out, getCtx().currentTime + 0.07, 0.05) : this._voicesAt(f0, out);
     this.running = true;
+    // a sound system that does not wake at once (the iPhone after a call, Bluetooth, the
+    // microphone…) is woken, or replaced; the drone then starts again in the new one by itself
+    const c0 = getCtx(), me = this._startId = (this._startId || 0) + 1;
+    if (c0.state !== 'running') {
+      c0.resume().catch(() => {});
+      setTimeout(() => { if (this.running && this._startId === me && getCtx() === c0 && c0.state !== 'running') ensureRunning(400, { force: true }); }, 250);
+    }
   }
   _tanpura(sa, out) {
     const ctx = getCtx();
@@ -403,19 +498,27 @@ export class Drone {
     const timer = setInterval(tick, 60);
     this.voices = [{ stop: () => clearInterval(timer) }];
   }
-  _stopVoices() { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now); this.voices = []; }
+  // the notes of the chord; a low drone also sounds softly an octave up, so a small speaker (which
+  // cannot play the low note itself) still gives it its full weight
+  _voicesAt(f0, out, at, attack) {
+    const vs = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62, at, attack));
+    if (f0 < 190 && this.sound !== 'pure') vs.push(holdNote(out, f0 * 2, this.sound, 0.34, at, attack));
+    return vs;
+  }
+  _stopVoices(fast) { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now, fast ? 0.018 : 0.12); this.voices = []; }
   // move to another note while sounding: the new note fades in as the old one fades out
   change(pc) {
     this.pc = pc;
     if (!this.running || this.sound === 'tanpura') { this.refresh(); return; }
     const ctx = getCtx(), now = ctx.currentTime, old = this.voices;
-    const f0 = noteFreq(this.midi, this.ref), out = this._out();
-    this.voices = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62, now + 0.05));
-    for (const v of old) v.stop(now + 0.25);
+    const f0 = noteFreq(this.midi, this.ref), out = this._out(f0);
+    // a clean change: the old note goes away quickly, then the new one comes in (never both at once)
+    for (const v of old) v.stop(now, 0.018);
+    this.voices = this._voicesAt(f0, out, now + 0.07, 0.05);
   }
   stop() {
     if (!this.running) return;
-    this._stopVoices(); this.running = false;
+    this._stopVoices(); this.running = false; wantAudio(false, 'drone');
     if (this.sound === 'tanpura' && this.out) {
       // let the ringing strings fade instead of cutting them
       const g = this.out, ctx = getCtx(); g.gain.setTargetAtTime(0, ctx.currentTime, 0.35);
@@ -423,7 +526,7 @@ export class Drone {
     }
   }
   refresh() { if (this.running) this.start(); }
-  setVolume(v) { this.volume = v; if (this.out) this.out.gain.setTargetAtTime(v * DRONE_LEVEL, getCtx().currentTime, 0.05); }
+  setVolume(v) { this.volume = v; if (this.vol) this.vol.gain.setTargetAtTime(volCurve(v), getCtx().currentTime, 0.05); }
 }
 
 // One soft reference tone (for tapping a string in the tuner).

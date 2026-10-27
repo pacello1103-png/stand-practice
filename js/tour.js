@@ -6,9 +6,13 @@ const DESK_STEPS = [
   { title: 'Your music', text: 'Import a PDF or photo, or scan a page with the camera. Stand finds the page, straightens it and makes the paper white.', at: '.head-actions' },
   { title: 'Find any piece', text: 'Search the free IMSLP library by composer and title, and pick the best edition for your instrument.', at: '#homeTabs' },
   { title: 'Practice tools', text: 'Tuner, drone, metronome, scales, recording and more, one tap away. Choose which ones show in Settings.', at: '.tiles' },
+  { title: 'Sets', text: 'A set is a programme: pieces, or just some pages of them, one after another, for a lesson or a concert.', at: '#homeTabs' },
+  { title: 'Folders', text: 'Hold a score to select it (and more), then move them into a folder. Import several PDFs at once: Stand reads each title and composer.', at: null },
+  { title: 'Compose', text: 'Write music on real staff paper, for one instrument or many, hear it, and export it. A photo or PDF of printed music can be read in, too.', at: '.tile[data-tile="compose"]' },
   { title: 'Notebooks', text: 'Engraved staff paper with a cover of your own, to write with the Apple Pencil.', at: '#newNotebookBtn' },
   { title: 'On a score', text: 'Tap the right edge for the next page (or swipe, use a pedal, wink, or let Stand listen and turn for you). The Pencil writes at once. Perform hides everything but the music.', at: null, icon: 'score' },
-  { title: 'Keep it safe', text: 'Settings › Backup to iCloud Drive keeps everything, even if the app is deleted.', at: '[data-panel="app"]' },
+  { title: 'Your iPhone too', text: 'Stand on the iPhone shows your practice from the iPad, has the tools in your pocket, and can film you for the iPad.', at: null },
+  { title: 'Keep it safe', text: 'Settings › Backup puts everything in iCloud Drive as tidy folders: your scores as PDFs, your recordings, and the rest for Stand to bring back.', at: '[data-panel="app"]' },
 ];
 
 // on the iPhone, where there are no scores
@@ -27,7 +31,9 @@ export function startTour({ onDone, phone, steps } = {}) {
   const card = document.createElement('div'); card.className = 'tour-card';
   const skip = document.createElement('button'); skip.className = 'tour-skip'; skip.textContent = 'Skip';
   back.append(hole, card, skip); document.body.append(back);
-  const end = () => { back.remove(); window.removeEventListener('resize', show); onDone && onDone(); };
+  // while the tour is on, the bars it points at stay on the screen
+  document.body.classList.add('touring');
+  const end = () => { back.remove(); document.body.classList.remove('touring'); window.removeEventListener('resize', show); onDone && onDone(); };
   skip.addEventListener('click', (e) => { e.stopPropagation(); end(); });
   back.addEventListener('click', () => { i++; if (i >= STEPS.length) end(); else show(); });
   function show() {

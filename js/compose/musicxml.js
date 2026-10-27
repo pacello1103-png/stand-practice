@@ -2,13 +2,13 @@
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
 import { hasVoice2, voiceView,
-  WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
+  WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
 } from './model.js';
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const TYPE = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
 const TYPE_BACK = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, +k]));
-const CLEF_XML = { treble: ['G', 2, 0], bass: ['F', 4, 0], alto: ['C', 3, 0], tenor: ['C', 4, 0], treble8: ['G', 2, -1], bass8: ['F', 4, -1], perc: ['percussion', 0, 0] };
+const CLEF_XML = { treble: ['G', 2, 0], bass: ['F', 4, 0], alto: ['C', 3, 0], tenor: ['C', 4, 0], treble8: ['G', 2, -1], bass8: ['F', 4, -1], perc: ['percussion', 0, 0], treble8va: ['G', 2, 1], bass8va: ['F', 4, 1], soprano: ['C', 1, 0], mezzo: ['C', 2, 0], baritoneC: ['C', 5, 0], baritoneF: ['F', 3, 0], frenchviolin: ['G', 1, 0] };
 const ART_XML = { stacc: 'staccato', stacciss: 'staccatissimo', ten: 'tenuto', acc: 'accent', marc: 'strong-accent', breath: 'breath-mark', caes: 'caesura' };
 const ORN_XML = { trill: 'trill-mark', mord: 'mordent', prall: 'inverted-mordent', turn: 'turn', turnInv: 'inverted-turn' };
 const OTT = { '8va': 1, '8vb': 1, '15ma': 1, '15mb': 1 };
@@ -51,7 +51,7 @@ export function toMusicXML(score0) {
       if (m === 0 && p.staves.length > 1) attrs.push(`<staves>${p.staves.length}</staves>`);
       p.staves.forEach((st, si) => {
         const clef = clefAt(st, m);
-        if (m === 0 || (st.clefs && st.clefs[m])) {
+        if (m === 0 || (st.clefs && st.clefs[m] && clef !== clefEnd(st, m - 1))) {
           const [sign, line, oct] = CLEF_XML[clef] || CLEF_XML.treble;
           attrs.push(`<clef${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><sign>${sign}</sign>${line ? `<line>${line}</line>` : ''}${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef>`);
         }
@@ -113,6 +113,8 @@ export function toMusicXML(score0) {
             continue;
           }
           if (ev.chord) w(harmonyXml(ev.chord, staffTag));
+          // a clef change in the middle of the bar, before this note
+          if (ev.clef && voice % 4 === 1) { const [sign, line, oct] = CLEF_XML[ev.clef] || CLEF_XML.treble; w(`<attributes><clef${p.staves.length > 1 ? ` number="${si + 1}"` : ''}><sign>${sign}</sign>${line ? `<line>${line}</line>` : ''}${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef></attributes>`); }
           if (ev.grace && !inst.unpitched) {
             const gn = toWritten({ s: ev.grace.s, a: ev.grace.a || 0 }, inst);
             const sc = ((gn.s % 7) + 7) % 7, oct = Math.floor(gn.s / 7);
@@ -201,6 +203,7 @@ function notations(ev, n, first, tieIn, extra) {
     if ((ev.art || []).includes('up')) tech.push('<up-bow/>');
     if ((ev.art || []).includes('down')) tech.push('<down-bow/>');
     if ((ev.art || []).includes('harm')) tech.push('<harmonic/>');
+    if (ev.fing) for (const d of String(ev.fing).split(/[\s,]+/).filter(Boolean)) tech.push(`<fingering>${esc(d)}</fingering>`);
     if (tech.length) parts.push(`<technical>${tech.join('')}</technical>`);
     const orn = (ev.art || []).filter((a) => ORN_XML[a]).map((a) => `<${ORN_XML[a]}/>`);
     const tr = (ev.art || []).find((a) => a === 'trem' || a === 'trem2' || a === 'trem3');
@@ -374,8 +377,10 @@ export function fromMusicXML(xmlText) {
           for (const c of el.querySelectorAll('clef')) {
             const k = (+c.getAttribute('number') || 1) - 1; if (!part.staves[k]) continue;
             const sign = txt(c, 'sign'), line = +txt(c, 'line'), oct = +txt(c, 'clef-octave-change') || 0;
-            const clef = sign === 'G' ? (oct < 0 ? 'treble8' : 'treble') : sign === 'F' ? (oct < 0 ? 'bass8' : 'bass') : sign === 'C' ? (line === 4 ? 'tenor' : 'alto') : sign === 'percussion' ? 'perc' : 'treble';
-            if (m === 0) part.staves[k].clef = clef; else { part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m] = clef; }
+            const clef = sign === 'G' ? (line === 1 ? 'frenchviolin' : oct < 0 ? 'treble8' : oct > 0 ? 'treble8va' : 'treble') : sign === 'F' ? (line === 3 ? 'baritoneF' : oct < 0 ? 'bass8' : oct > 0 ? 'bass8va' : 'bass') : sign === 'C' ? ({ 1: 'soprano', 2: 'mezzo', 4: 'tenor', 5: 'baritoneC' }[line] || 'alto') : sign === 'percussion' ? 'perc' : 'treble';
+            // (in the middle of the bar: on the next note, and in force from the next bar on)
+            if (pos > 0) { pend[k].clef = clef; part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m + 1] = clef; }
+            else if (m === 0) part.staves[k].clef = clef; else { part.staves[k].clefs = part.staves[k].clefs || {}; part.staves[k].clefs[m] = clef; }
           }
           if (q(el, 'transpose')) tr = { steps: +txt(el, 'transpose diatonic') || 0, semis: +txt(el, 'transpose chromatic') || 0 };
         } else if (tag === 'backup') pos -= Math.round((+txt(el, 'duration') * 480) / divisions);
@@ -482,7 +487,10 @@ export function fromMusicXML(xmlText) {
             if (gl && gl.getAttribute('type') === 'start') openSpans.push({ id: newId(), kind: 'gliss', st: part.staves[k].id, k, a: { m, pos: start }, b: null, g: 1 });
             if (gl && gl.getAttribute('type') === 'stop') { const sp = openSpans.find((x) => x.kind === 'gliss' && x.k === k && !x.b); if (sp) { sp.b = { m, pos: start }; delete sp.k; delete sp.g; score.spans.push(sp); openSpans.splice(openSpans.indexOf(sp), 1); } }
             if (arts.length) ev.art = [...new Set(arts)];
-            const sl = q(el, 'slur'); if (sl) ev.slur = sl.getAttribute('type') === 'stop' ? 'end' : 'start';
+            const fgs = [...el.querySelectorAll('technical fingering')].map((x) => x.textContent.trim()).filter(Boolean); if (fgs.length) ev.fing = fgs.join(' ');
+            // a note can end one slur and start the next
+            const slT = [...el.querySelectorAll('slur')].map((x) => x.getAttribute('type'));
+            if (slT.includes('start')) { ev.slur = 'start'; if (slT.includes('stop')) ev.slurEnd2 = true; } else if (slT.includes('stop')) ev.slur = 'end';
           } else delete ev.notes;
           if (isChord && !ev.rest) {
             const host = perStaff[k].find((x) => x.pos === start && x.ev.notes);
@@ -491,7 +499,7 @@ export function fromMusicXML(xmlText) {
           // marks that were waiting for this note
           const P = pend[k];
           if (!isChord && !inV2) {
-            for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord']) if (P[key]) { ev[key] = P[key]; delete P[key]; }
+            for (const key of ['dyn', 'hp', 'txt', 'txtStyle', 'chord', 'clef']) if (P[key]) { ev[key] = P[key]; delete P[key]; }
             if (P.grace) { if (!ev.rest && ev.notes) ev.grace = { ...P.grace, dir: P.grace.s > ev.notes[0].s ? 1 : -1 }; delete P.grace; }
             const ly = q(el, 'lyric'); if (ly && !ev.rest) { const sy = txt(ly, 'syllabic'); ev.lyric = txt(ly, 'text') + (sy === 'begin' || sy === 'middle' ? '-' : ''); }
             for (const sp of openSpans) if (sp.k === k && !sp.a) sp.a = { m, pos: start };

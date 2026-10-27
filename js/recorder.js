@@ -1,5 +1,5 @@
 // Recorder (raw PCM, no processing) and a player with pitch-preserving slow-down and reverb.
-import { getCtx, master, acquireMic, releaseMic } from './audio.js';
+import { getCtx, master, acquireMic, releaseMic, holdSound, wantAudio } from './audio.js';
 
 // ---------------- capture ----------------
 const CAPTURE_SRC = `
@@ -30,21 +30,58 @@ class Capture extends AudioWorkletProcessor {
 }
 registerProcessor('stand-capture', Capture);`;
 
-let workletReady = null;
+// (the capture is added to each sound system it is used in: after iOS replaced the sound system,
+// the one added to the old one did not exist in the new, and recording failed until Stand closed)
+const workletReady = new WeakMap();
 function loadWorklet(ctx) {
-  if (!workletReady) {
+  if (!workletReady.has(ctx)) {
     const url = URL.createObjectURL(new Blob([CAPTURE_SRC], { type: 'application/javascript' }));
-    workletReady = ctx.audioWorklet.addModule(url);
+    const p = ctx.audioWorklet.addModule(url); p.catch(() => workletReady.delete(ctx));
+    workletReady.set(ctx, p);
   }
-  return workletReady;
+  return workletReady.get(ctx);
 }
 
 export class Recorder {
-  constructor() { this.recording = false; this.onLevel = null; }
+  constructor() {
+    this.recording = false; this.onLevel = null; this.onGap = null;
+    // the microphone lost while recording (headphones put on or taken off, a call): it is opened
+    // again and the take goes on, with a moment of silence where nothing could be heard
+    window.addEventListener('stand-mic-lost', () => this._reconnect());
+    window.addEventListener('stand-audio-new', () => this._reconnect());
+  }
+  async _reconnect() {
+    if (!this.recording || this._stopping || this._recon || !this.node) return;
+    this._recon = true;
+    const lostAt = performance.now();
+    try {
+      try { this.src.disconnect(this.node); this.node.disconnect(); this.sink.disconnect(); } catch {}
+      const src = await acquireMic(); releaseMic();   // (still held once, from the start)
+      if (!this.recording || this._stopping) return;
+      const gap = (performance.now() - lostAt) / 1000;
+      this._flushTo(this.sr);
+      this.parts.push({ silence: Math.round(gap * this.sr) });
+      await this._wire(src);
+      if (this.node.port) this.node.port.postMessage({ cmd: 'start', at: 0 });
+      this.onGap && this.onGap(gap);
+    } catch (e) { console.warn(e); this.onGap && this.onGap(-1); } finally { this._recon = false; }
+  }
+  // what was captured so far, at the take's own rate (the microphone may come back at another)
+  _flushTo(sr) {
+    if (!this.chunks || !this.chunks.length) return;
+    this.parts.push({ chunks: this.chunks, sr: this.wireSr || sr });
+    this.chunks = [];
+  }
   async prepare() {
-    const ctx = getCtx();
     const src = await acquireMic();
-    this.src = src;
+    const ctx = src.context || getCtx();
+    this.sr = ctx.sampleRate; this.parts = [];
+    await this._wire(src);
+  }
+  async _wire(src) {
+    // the microphone's own sound system (it may have just been made anew)
+    const ctx = src.context || getCtx();
+    this.src = src; this.ctx = ctx; this.wireSr = ctx.sampleRate;
     if (ctx.audioWorklet) {
       await loadWorklet(ctx);
       this.node = new AudioWorkletNode(ctx, 'stand-capture', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit' });
@@ -72,24 +109,41 @@ export class Recorder {
     }
   }
   start(at = 0) {
-    this.chunks = [];
+    this.chunks = []; this.parts = []; this._stopping = false;
+    if (!this.recording) holdSound(true);
     this.recording = true;
     this._at = at;
     if (this.node.port) this.node.port.postMessage({ cmd: 'start', at });
   }
   async stop() {
-    const ctx = getCtx();
+    const ctx = this.ctx || getCtx();
+    this._stopping = true;
+    // (a microphone being opened again: waited for, so nothing is left connected)
+    for (let k = 0; k < 40 && this._recon; k++) await new Promise((r) => setTimeout(r, 50));
+    if (this.recording) holdSound(false);
     if (this.node.port) {
       await new Promise((res) => { this._resolveStop = res; this.node.port.postMessage({ cmd: 'stop' }); setTimeout(res, 500); });
     }
     this.recording = false;
     try { this.src.disconnect(this.node); this.node.disconnect(); this.sink.disconnect(); } catch {}
     releaseMic();
-    let len = 0; for (const c of this.chunks) len += c.length;
+    const sr = this.sr || ctx.sampleRate;
+    this._flushTo(sr);
+    // the parts one after another (silence where the microphone was lost; another rate brought to
+    // the take's own)
+    const pieces = [];
+    for (const p of this.parts || []) {
+      if (p.silence) { pieces.push(new Float32Array(p.silence)); continue; }
+      let len = 0; for (const c of p.chunks) len += c.length;
+      let d = new Float32Array(len); let o = 0; for (const c of p.chunks) { d.set(c, o); o += c.length; }
+      if (p.sr && p.sr !== sr) { const k = p.sr / sr, n = Math.floor(len / k), r = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * k, j = Math.floor(x), f = x - j; r[i] = (d[j] || 0) * (1 - f) + (d[j + 1] || 0) * f; } d = r; }
+      pieces.push(d);
+    }
+    let len = 0; for (const d of pieces) len += d.length;
     const data = new Float32Array(len);
-    let o = 0; for (const c of this.chunks) { data.set(c, o); o += c.length; }
-    this.chunks = [];
-    return { data, sr: ctx.sampleRate };
+    let o = 0; for (const d of pieces) { data.set(d, o); o += d.length; }
+    this.chunks = []; this.parts = [];
+    return { data, sr };
   }
   cancel() { if (this.node) { this.stop(); } }
 }
@@ -198,10 +252,14 @@ export class Player {
     this.loop = false; this.a = 0; this.b = 0; this.pos = 0;
     this.playing = false; this.cache = new Map(); this.irCache = new Map();
     this.onState = null; this.onBusy = null;
+    // iOS replaced the sound system while a take was playing: it goes on from where it was
+    if (typeof window !== 'undefined') window.addEventListener('stand-audio-new', () => { if (this.playing && this.take) { const at = this.currentPos(); this._stopSource(); this.playing = false; this.pos = at; this.play(); } });
   }
   _graph() {
     const ctx = getCtx();
-    if (this.out) return;
+    // (a new sound system since: a new graph, or the take would play into the old one, silent)
+    if (this.out && this.out.context === ctx) return;
+    // (the prepared sound itself can be played in any sound system: it is kept)
     this.out = ctx.createGain();
     this.dry = ctx.createGain();
     this.conv = ctx.createConvolver(); this.conv.normalize = false;
@@ -244,23 +302,31 @@ export class Player {
   async _buffer(rate) {
     const key = rate.toFixed(3);
     if (this.cache.has(key)) return this.cache.get(key);
-    const ctx = getCtx();
-    let data = this.take.data;
-    if (Math.abs(rate - 1) > 1e-3) {
-      this.onBusy && this.onBusy(true);
-      data = await stretchAsync(this.take.data, this.take.sr, rate);
-      this.onBusy && this.onBusy(false);
-    }
-    const buf = ctx.createBuffer(1, Math.max(1, data.length), this.take.sr);
-    buf.copyToChannel(data, 0);
-    this.cache.set(key, buf);
+    // (the same slowing down asked twice: done once; for this recording only)
+    const take = this.take;
+    if (this._making && this._making.take === take && this._making.key === key) return this._making.p;
+    const p = (async () => {
+      let data = take.data;
+      if (Math.abs(rate - 1) > 1e-3) {
+        this.onBusy && this.onBusy(true);
+        try { data = await stretchAsync(take.data, take.sr, rate); } finally { this.onBusy && this.onBusy(false); }
+      }
+      if (take !== this.take) return null;   // (another recording loaded meanwhile)
+      const buf = getCtx().createBuffer(1, Math.max(1, data.length), take.sr);
+      buf.copyToChannel(data, 0);
+      this.cache.set(key, buf);
+      return buf;
+    })();
+    this._making = { take, key, p };
+    let buf; try { buf = await p; } finally { if (this._making && this._making.p === p) this._making = null; }
     return buf;
   }
 
   currentPos() {
     if (!this.playing) return this.pos;
     const ctx = getCtx();
-    let t = this.startOffset + (ctx.currentTime - this.startTime) * 1; // stretched seconds
+    // (the sound system replaced while playing: the time goes by the clock on the wall)
+    let t = this.startOffset + (ctx === this.ctxPlaying ? ctx.currentTime - this.startTime : (performance.now() - this.startPerf) / 1000); // stretched seconds
     let orig = t * this.rate;
     if (this.loop && this.b > this.a) {
       const span = this.b - this.a;
@@ -271,12 +337,14 @@ export class Player {
 
   async play() {
     if (!this.take) return;
+    // (paused or stopped while the sound was being prepared: it does not start after all)
+    const me = this._playTok = (this._playTok || 0) + 1;
+    const rate = this.rate;
+    const buf = await this._buffer(rate);
+    if (rate !== this.rate || me !== this._playTok || !buf) return; // speed changed, or stopped, while preparing
     const ctx = getCtx();
     this._graph();
     this.out.gain.value = this.levelGain();
-    const rate = this.rate;
-    const buf = await this._buffer(rate);
-    if (rate !== this.rate) return; // speed changed while preparing
     this._stopSource();
     let from = this.pos;
     if (this.loop && this.b > this.a && (from < this.a || from >= this.b - 0.05)) from = this.a;
@@ -287,20 +355,32 @@ export class Player {
     if (this.loop && this.b > this.a) {
       src.loop = true; src.loopStart = this.a / rate; src.loopEnd = this.b / rate;
     }
+    // the picture must be ready to move with the sound: wait a moment for it (a video that is
+    // still loading used to stay still while the sound played)
+    if (this.video && this.video.readyState < 2) {
+      const v = this.video;
+      await new Promise((r) => { const done = () => { v.removeEventListener('canplay', done); v.removeEventListener('loadeddata', done); clearTimeout(t); r(); }; const t = setTimeout(done, 1500); v.addEventListener('canplay', done); v.addEventListener('loadeddata', done); try { v.load && v.readyState === 0 && v.load(); } catch {} });
+      if (rate !== this.rate || this.src || me !== this._playTok) return;
+    }
     const when = ctx.currentTime + 0.02;
     src.start(when, from / rate);
     if (this.video) {
       const v = this.video;
-      try { v.muted = true; v.playbackRate = rate; v.currentTime = from; const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); } catch {}
+      try {
+        v.muted = true; v.playbackRate = rate; v.currentTime = from;
+        const pr = v.play();
+        // not allowed (yet): try once more a moment later; syncVideo keeps trying while playing
+        if (pr && pr.catch) pr.catch(() => setTimeout(() => { if (this.playing && v.paused) v.play().catch(() => {}); }, 250));
+      } catch {}
     }
-    this.src = src; this.startTime = when; this.startOffset = from / rate;
-    this.playing = true;
-    src.onended = () => { if (this.src === src) { this.playing = false; this.pos = this.loop ? this.a : 0; this._videoTo(this.pos, true); this._emit(); } };
+    this.src = src; this.startTime = when; this.startOffset = from / rate; this.startPerf = performance.now() + 20; this.ctxPlaying = ctx;
+    this.playing = true; wantAudio(true, 'player');
+    src.onended = () => { if (this.src === src) { this.playing = false; wantAudio(false, 'player'); this.pos = this.loop ? this.a : 0; this._videoTo(this.pos, true); this._emit(); } };
     this._emit();
   }
   _stopSource() { if (this.src) { const s = this.src; this.src = null; try { s.onended = null; s.stop(); } catch {} } }
-  pause() { if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; this._videoTo(this.pos, true); this._emit(); }
-  stop() { this._stopSource(); this.playing = false; if (this.video) try { this.video.pause(); } catch {} this._emit(); }
+  pause() { this._playTok = (this._playTok || 0) + 1; if (!this.playing) return; this.pos = this.currentPos(); this._stopSource(); this.playing = false; wantAudio(false, 'player'); this._videoTo(this.pos, true); this._emit(); }
+  stop() { this._playTok = (this._playTok || 0) + 1; this._stopSource(); this.playing = false; wantAudio(false, 'player'); if (this.video) try { this.video.pause(); } catch {} this._emit(); }
   async seek(t) { const was = this.playing; this.pause(); this.pos = Math.max(0, Math.min(this.duration, t)); this._videoTo(this.pos, true); if (was) await this.play(); else this._emit(); }
   attachVideo(el) { this.video = el; }
   _videoTo(t, pause) { const v = this.video; if (!v) return; try { if (pause) v.pause(); if (Math.abs(v.currentTime - t) > 0.02) v.currentTime = t; } catch {} }

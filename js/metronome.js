@@ -1,5 +1,5 @@
 // Sample-accurate metronome: Web Audio lookahead scheduler with a smooth or stepped tempo ramp.
-import { getCtx, master, ensureRunning, wantAudio } from './audio.js';
+import { getCtx, master, ensureRunning, wantAudio, freshSound } from './audio.js';
 
 const LOOKAHEAD = 0.12;      // seconds scheduled ahead
 const TICK_MS = 25;          // scheduler wake-up
@@ -121,9 +121,13 @@ export class Metronome {
     const g = ctx.createGain(); g.gain.value = GAINS[level];
     src.connect(g).connect(this._out());
     src.start(time);
+    // (when each click sounds, so the tuner can leave it out: the microphone hears it too)
+    const c = globalThis.__clicks || (globalThis.__clicks = []);
+    c.push({ ctx, t: time, d: src.buffer.duration }); if (c.length > 8) c.shift();
   }
 
   start(opts = {}) {
+    if (!this.running) freshSound();
     const ctx = getCtx();
     if (ctx.state !== 'running') ctx.resume().catch(() => {});
     if (this.running) this.stop(true);
@@ -140,13 +144,13 @@ export class Metronome {
     // a context that is still waking up (first start) needs a little more time before the first beat
     this._next = opts.at && opts.at > ctx.currentTime + 0.02 ? opts.at : ctx.currentTime + (ctx.state === 'running' ? 0.08 : 0.35);
     this._queue = [];
-    wantAudio(true);
+    wantAudio(true, 'metro');
     this._tick();
     this._timer = setInterval(() => this._tick(), TICK_MS);
     // if the sound system has not woken within a moment, wake it (or replace it) and start again
     // from the next beat, so the first start always plays
     const ctx0 = ctx, myStart = this._startId = (this._startId || 0) + 1;
-    if (ctx0.state !== 'running') ensureRunning().then((c) => {
+    if (ctx0.state !== 'running') ensureRunning(500, { force: true }).then((c) => {
       if (!this.running || this._startId !== myStart) return;
       if (c !== ctx0 || this._next < c.currentTime) {
         this._ensureBuffers(); this._out();
@@ -161,7 +165,7 @@ export class Metronome {
 
   stop(silent) {
     clearInterval(this._timer); this._timer = null;
-    this.running = false; wantAudio(false);
+    this.running = false; wantAudio(false, 'metro');
     this._queue = [];
     if (!silent && this.onStop) this.onStop();
   }
@@ -210,7 +214,7 @@ export class Metronome {
           if (this._countIn === 0) {
             const t = this._next;
             this._queue.push({ time: t, countInDone: true });
-            if (this._stopAfterCountIn) { this.running = false; clearInterval(this._timer); }
+            if (this._stopAfterCountIn) { this.running = false; clearInterval(this._timer); this._timer = null; wantAudio(false, 'metro'); }   // (the sound is no longer asked for)
           }
         } else {
           this._beatCount++;

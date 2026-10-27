@@ -151,7 +151,7 @@ async function publicAddress() {
 // any network (no account needed).
 export const LS = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 export function myPairKey() { let k = LS.get('standPairKey'); if (!k) { k = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 8); LS.set('standPairKey', k); } return k; }
-function knownPairs() { try { return JSON.parse(LS.get('standPairs') || '[]'); } catch { return []; } }
+export function knownPairs() { try { return JSON.parse(LS.get('standPairs') || '[]'); } catch { return []; } }
 export async function roomName() {
   if (roomCache) return roomCache;
   const ip = await publicAddress();
@@ -251,9 +251,15 @@ export class CameraHost {
     box.open();
     this._unw = directWatch((n) => { if (!n && this.direct && this.state === 'linked') { this.direct = false; this._set('lost'); } });
     this._unf = directOnFile((meta, path, err) => {
-      if (meta.kind !== 'camvideo' || !this._file) return;
-      if (err || !path) { this._file(null, err || 'failed'); return; }
-      fetch(path).then((r) => r.blob()).then((b) => this._file && this._file({ blob: new Blob([b], { type: meta.mime || b.type || 'video/mp4' }), mirror: !!meta.mirror })).catch((e) => this._file && this._file(null, e.message));
+      if (meta.kind !== 'camvideo') return;
+      // a transfer that failed is sent again by the iPhone: wait for it a while before giving up
+      if (err || !path) { if (this._file && !this._fileErrT) this._fileErrT = setTimeout(() => { this._fileErrT = 0; if (this._file) this._file(null, err || 'failed'); }, 75000); return; }
+      fetch(path).then((r) => r.blob()).then((b) => {
+        const res = { blob: new Blob([b], { type: meta.mime || b.type || 'video/mp4' }), mirror: !!meta.mirror };
+        clearTimeout(this._fileErrT); this._fileErrT = 0;
+        // waiting for it (just stopped), or a video sent again later: both are kept
+        if (this._file) this._file(res); else if (this.onLateFile) this.onLateFile(res);
+      }).catch((e) => this._file && this._file(null, e.message));
     });
     this._unp = directOnProgress((id, f, dir) => { if (dir === 'in' && this.direct) this.onProgress && this.onProgress(f); });
   }
@@ -290,7 +296,7 @@ export class CameraHost {
   _handle(m) {
     if (m.t === 'hello') { this.info = m; this._set('linked', m); }
     else if (m.t === 'state') { this.info = { ...this.info, ...m }; this.onInfo && this.onInfo(this.info); }
-    else if (m.t === 'error') { this._file && this._file(null, m.msg); }
+    else if (m.t === 'error') { clearTimeout(this._fileErrT); this._fileErrT = 0; this._file && this._file(null, m.msg); }
     else if (m.t === 'bye') { this.direct = false; this._set('lost'); }
   }
   _channel(ch) {
@@ -313,6 +319,12 @@ export class CameraHost {
   }
   send(m) { if (this.direct && this.box && this.peer) { this.box.send(this.peer, 'D', m); return; } if (this.ch && this.ch.readyState === 'open') this.ch.send(JSON.stringify(m)); }
   setCamera(facing) { this.send({ t: 'set', facing }); }
+  // the practice log goes to the iPhone with the camera link (in parts, so a long log fits)
+  sendPractice(d) {
+    if (this.state !== 'linked' || !d) return;
+    const json = JSON.stringify(d), n = Math.ceil(json.length / 15000), id = Date.now().toString(36);
+    for (let k = 0; k < n; k++) this.send({ t: 'pp', id, k, n, s: json.slice(k * 15000, (k + 1) * 15000) });
+  }
   set(settings) { this.info = { ...this.info, ...settings }; this.send({ t: 'set', ...settings }); }
   record() { this.send({ t: 'record' }); }
   // stop: the iPhone finishes the file and sends it over
@@ -579,6 +591,11 @@ export class CameraPhone {
     else if (m.t === 'record') this.record();
     else if (m.t === 'stop') this.stopAndSend();
     else if (m.t === 'bye') this._lost();
+    else if (m.t === 'pp') {
+      if (!this._pp || this._pp.id !== m.id) this._pp = { id: m.id, parts: [] };
+      this._pp.parts[m.k] = m.s;
+      if (this._pp.parts.filter((x) => x !== undefined).length === m.n) { try { const d = JSON.parse(this._pp.parts.join('')); this.onPractice && this.onPractice(d); } catch {} this._pp = null; }
+    }
   }
   record() {
     if (this.recording) return true;
@@ -628,24 +645,47 @@ export class CameraPhone {
     this.chunks = [];
     this.lastBlob = blob;
     this.onState && this.onState('sending', 0);
-    if (this.direct) {
-      // over the direct link the app sends the file itself (faster, and it survives a slow moment)
-      try { await directSendFile(blob, { kind: 'camvideo', mirror: this.s.facing === 'user' }, (f) => this.onState && this.onState('sending', f)); this.onState && this.onState('linked'); }
-      catch (e) { this.send({ t: 'error', msg: 'The video could not be sent: ' + e.message }); this.onState && this.onState('linked', 'The video could not be sent. It is kept on this iPhone; try again.'); }
-      return;
-    }
+    if (this.direct) { await this.sendDirect(blob); return; }
     this.send({ t: 'file-start', size: blob.size, mime: blob.type, mirror: this.s.facing === 'user' });
     const buf = await blob.arrayBuffer();
     for (let o = 0; o < buf.byteLength; o += CHUNK) {
       // wait while the channel is full
       while (this.ch && this.ch.bufferedAmount > 4 * 1024 * 1024) await new Promise((r) => setTimeout(r, 20));
-      if (!this.ch) { this.onState && this.onState('lost'); return; }
+      if (!this.ch) { this.onState && this.onState('lost'); if (this.onUnsent) this.onUnsent(blob, this.s.facing === 'user'); return; }
       this.ch.send(buf.slice(o, o + CHUNK));
       if ((o / CHUNK) % 32 === 0) this.onState && this.onState('sending', o / buf.byteLength);
     }
     this.send({ t: 'file-end' });
     this.onState && this.onState('linked');
   }
+  // Over the direct link the app sends the file itself (faster, and it survives a slow moment).
+  // If it does not arrive, it is sent again when the iPad is back (a few times); if it still
+  // cannot be sent, it stays on this iPhone (onUnsent) and can be sent again later.
+  async sendDirect(blob) {
+    const mirror = this.s.facing === 'user';
+    this.unsent = blob;
+    let err = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt) {
+        this.onState && this.onState('sending', 0);
+        // wait for the iPad to be there again (up to 20 s)
+        const t0 = Date.now();
+        while (directPeers() === 0 && Date.now() - t0 < 20000 && !this.left) await new Promise((r) => setTimeout(r, 400));
+        if (this.left) break;
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
+      try {
+        await directSendFile(blob, { kind: 'camvideo', mirror }, (f) => this.onState && this.onState('sending', f));
+        this.unsent = null; this.onState && this.onState('linked');
+        return true;
+      } catch (e) { err = e; }
+    }
+    this.send({ t: 'error', msg: 'The video could not be sent' + (err ? ': ' + err.message : '') });
+    this.onState && this.onState(this.state === 'sending' ? 'linked' : this.state, 'The video could not reach the iPad. It is kept on this iPhone, in Recordings.');
+    if (this.onUnsent) this.onUnsent(blob, mirror);
+    return false;
+  }
+  async resend() { if (this.unsent && this.direct) return this.sendDirect(this.unsent); return false; }
   leave() {
     this.left = true; this.searching = false;
     clearTimeout(this.retry);

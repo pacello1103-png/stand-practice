@@ -3,9 +3,13 @@
 import * as pdfjsLib from '../vendor/pdf.min.mjs';
 import { loadMusicFont } from './ink.js';
 import { paintCover } from './covers.js';
+import { pixGet, pixPut, pixHas } from './pixcache.js';
+import { db } from './db.js';
 import { drawNotebookPage, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
+// drawn pages kept as pictures: up to this size, and only those slower than this to draw (ms)
+const PIX_MAX = 7e6, PIX_SLOW = 120;
 const PDF_OPTS = {
   cMapUrl: new URL('../vendor/cmaps/', import.meta.url).href,
   cMapPacked: true,
@@ -106,13 +110,66 @@ function drawPaper(ctx, tpl, pageIndex, w, h) {
 }
 
 // ---------- documents ----------
-export async function openDocument(file) {
+// What identifies a file's pages, so their sizes can be kept and opening needn't measure every page.
+export function sizesKey(file) {
+  if (!file) return '';
+  if (file.rot && Object.keys(file.rot).length) return sizesKey({ ...file, rot: null });   // (the sizes kept are those before turning)
+  if (file.more && file.more.length) return sizesKey({ ...file, more: null }) + '+' + file.more.join(',');
+  if (file.kind === 'pdf') return 'pdf:' + (file.data ? file.data.byteLength : 0);
+  if (Array.isArray(file.data)) return 'img:' + file.data.length + ':' + file.data.map((b) => b && b.size).join(',');
+  return '';
+}
+// A score with pages added from other files (file.more: the ids of those files, kept apart so the
+// score's own file is never written again): one document, its own pages first.
+export async function openDocument(file, known) {
+  const d = await openJoined(file, known);
+  return file && file.rot && Object.keys(file.rot).length ? rotateDoc(d, file.rot) : d;
+}
+// Pages turned a quarter (or half) round: rot = { page: 90 | 180 | 270 } (clockwise)
+export function rotateDoc(doc, rot) {
+  const deg = (i) => ((+rot[i] || 0) % 360 + 360) % 360;
+  return {
+    ...doc,
+    rawSizes: doc.sizes,
+    sizes: doc.sizes.map((s, i) => (deg(i) % 180 ? [s[1], s[0]] : s)),
+    render: async (i, canvas, w, h, opts) => {
+      const a = deg(i); if (!a) return doc.render(i, canvas, w, h, opts);
+      const tmp = document.createElement('canvas'), side = a % 180;
+      await doc.render(i, tmp, side ? h : w, side ? w : h, opts);
+      canvas.width = Math.round(w); canvas.height = Math.round(h);
+      const g = canvas.getContext('2d');
+      g.translate(canvas.width / 2, canvas.height / 2); g.rotate((a * Math.PI) / 180);
+      g.drawImage(tmp, -tmp.width / 2, -tmp.height / 2);
+      tmp.width = tmp.height = 0;
+    },
+    pixHas: (i, w, h) => (deg(i) || !doc.pixHas ? Promise.resolve(true) : doc.pixHas(i, w, h)),
+    destroy: () => doc.destroy(),
+  };
+}
+async function openJoined(file, known) {
+  if (file && file.more && file.more.length) {
+    const own = await openDocumentOne({ ...file, more: null }, known && known.v && known.k === sizesKey(file) ? { k: sizesKey({ ...file, more: null }), v: known.v, prefix: true } : null);
+    const parts = [own], kinds = [file.kind];
+    for (const id of file.more) { const f = await db.get('files', id).catch(() => null); if (f) { try { parts.push(await openDocumentOne(f)); kinds.push(f.kind); } catch (e) { console.warn(e); } } }
+    const at = []; parts.forEach((d, k) => { for (let i = 0; i < d.pages; i++) at.push([k, i]); });
+    return {
+      kindOf: (i) => kinds[at[i][0]] || file.kind,
+      pages: at.length, sizes: parts.flatMap((d) => d.sizes), pdf: own.pdf, ownPages: own.pages,
+      render(i, canvas, w, h, opts) { const [k, j] = at[i]; return parts[k].render(j, canvas, w, h, opts); },
+      pixHas: (i, w, h) => { const [k, j] = at[i]; return parts[k].pixHas ? parts[k].pixHas(j, w, h) : Promise.resolve(true); },
+      destroy() { for (const d of parts) try { d.destroy(); } catch {} },
+    };
+  }
+  return openDocumentOne(file, known);
+}
+async function openDocumentOne(file, known) {
+  const useKnown = (n) => (known && known.k && known.k === sizesKey(file) && Array.isArray(known.v) && (known.v.length === n || (known.prefix && known.v.length > n)) ? known.v.slice(0, n).map((x) => [x[0], x[1]]) : null);
   if (file.kind === 'paper') {
     await loadMusicFont();
     const cover = file.cover ? 1 : 0;
     const pages = (file.pages || 1) + cover;
     return {
-      pages, sizes: Array.from({ length: pages }, () => [NB_W, NB_H]), paper: true, cover: !!cover,
+      pages, sizes: Array.from({ length: pages }, (_, i) => (file.pagesLand && file.pagesLand[i - cover] ? [NB_H, NB_W] : [NB_W, NB_H])), paper: true, cover: !!cover,
       async render(i, canvas, w, h) {
         canvas.width = Math.round(w); canvas.height = Math.round(h);
         const g = canvas.getContext('2d');
@@ -123,29 +180,66 @@ export async function openDocument(file) {
     };
   }
   if (file.kind === 'pdf') {
+    const fid = file.id ? `${file.id}:${file.data.byteLength}` : null;
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(file.data.slice(0)), ...PDF_OPTS }).promise;
-    const sizes = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const p = await pdf.getPage(i);
-      const vp = p.getViewport({ scale: 1 });
-      sizes.push([vp.width, vp.height]);
-    }
+    // all pages are asked for at once (one after another took a long time on long scores)
+    const sizes = useKnown(pdf.numPages) || await Promise.all(Array.from({ length: pdf.numPages }, (_, k) => pdf.getPage(k + 1).then((p) => { const vp = p.getViewport({ scale: 1 }); return [vp.width, vp.height]; })));
+    // PDF.js keeps everything it read for a page (its pictures above all: a scanned page holds
+    // tens of MB) until told to let go. Only the last few pages drawn keep theirs; the others
+    // are cleaned up, or a long score (the Pages panel draws every page) runs the iPhone out
+    // of memory and Stand is closed by iOS.
+    const live = [], drawing = new Map();
+    const done = (i, page) => {
+      drawing.set(i, (drawing.get(i) || 1) - 1);
+      const at = live.indexOf(i); if (at >= 0) live.splice(at, 1); live.push(i);
+      while (live.length > 4) {
+        const old = live.shift();
+        if (drawing.get(old) > 0) { live.push(old); break; }
+        pdf.getPage(old + 1).then((pg) => { if (!(drawing.get(old) > 0)) pg.cleanup(); }).catch(() => {});
+      }
+    };
     return {
       pages: pdf.numPages, sizes, pdf,
-      async render(i, canvas, w, h) {
-        const page = await pdf.getPage(i + 1);
+      async render(i, canvas, w, h, opts = {}) {
+        const W = Math.round(w), H = Math.round(h);
+        // a page drawn slowly before is shown from its picture at once
+        const key = fid && W * H <= PIX_MAX ? `${fid}|${i}|${W}x${H}` : null;
+        if (key) {
+          const b = await pixGet(key);
+          if (b) {
+            try {
+              const bmp = await createImageBitmap(b);
+              canvas.width = W; canvas.height = H;
+              const g = canvas.getContext('2d', { alpha: false });
+              g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
+              return;
+            } catch { /* drawn again below */ }
+          }
+        }
+        const t0 = performance.now();
+        drawing.set(i, (drawing.get(i) || 0) + 1);
+        let page = null;
+        try {
+        page = await pdf.getPage(i + 1);
         const vp1 = page.getViewport({ scale: 1 });
         const vp = page.getViewport({ scale: w / vp1.width });
-        canvas.width = Math.round(w); canvas.height = Math.round(h);
-        await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp, background: 'rgb(255,255,255)' }).promise;
+        canvas.width = W; canvas.height = H;
+        const task = page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: vp, background: 'rgb(255,255,255)' });
+        // a drawing no longer wanted (the page was turned past) stops at once
+        if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
+        await task.promise;
+        // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
+        if (key && (opts.keep || performance.now() - t0 > PIX_SLOW)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
+        } finally { done(i, page); }
       },
+      pixHas: (i, w, h) => { const W = Math.round(w), H = Math.round(h); return fid && W * H <= PIX_MAX ? pixHas(`${fid}|${i}|${W}x${H}`) : Promise.resolve(true); },
       destroy() { pdf.destroy(); },
     };
   }
   // Photos and scans: decode only the pages being shown (a few at a time), so a long scan
   // never holds every full-size photo in memory.
-  const sizes = [];
-  for (const blob of file.data) { const b = await createImageBitmap(blob); sizes.push([b.width, b.height]); if (b.close) b.close(); }
+  let sizes = useKnown(file.data.length);
+  if (!sizes) { sizes = []; for (const blob of file.data) { const b = await createImageBitmap(blob); sizes.push([b.width, b.height]); if (b.close) b.close(); } }
   // A few decoded pages are kept; one is only closed when no drawing is still using it (closing
   // a picture in use left pages or thumbnails blank now and then).
   const lru = new Map();
@@ -190,6 +284,11 @@ export async function makeThumb(doc) {
 // ---------- reading title and composer ----------
 const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const JUNK = /(©|copyright|imslp|public domain|edition|verlag|publish|printed|all rights|\bpage\b|^\d+$|www\.|http|plate|stich|lith)/i;
+// lines that are never the title: tempo marks, an instrument on its own, editors and arrangers
+const TEMPO = /^\(?\s*(tempo|allegr\w*|andant\w*|adagi\w*|moderato|presto|prestissimo|largo|larghetto|lento|vivace|vivo|grave|maestoso|sostenuto|cantabile|con moto|tranquillo|animato|risoluto|scherzando|rubato|a tempo)\b[^]{0,40}$/i;
+const NOT_TITLE = /^(((solo\s+)?(violoncello|cello|violino|violin|viola|contrabass\w*|double bass|kontrabass|flute|flauto|fl[oö]te|oboe|clarinet\w*|klarinette|fagott\w*|bassoon|horn|corno|trumpet|tromba|trombone|piano|pianoforte|klavier|organ|orgel|soprano|alto|tenor|bass|basso|voice|guitar|gitarre|harp|arpa)(\s+(i{1,3}|\d|solo|principale|and piano|e pianoforte|und klavier|et piano))?\s*\.?)|(edited|edition|ed\.|herausgegeben|hrsg|revised|revidiert|arr\.?|arranged|arrangement|bearbeitet|bearb\.|transcri\w+|fingered|fingering|fingersatz|doigt\w*)\b.*)$/i;
+const looksLikeName = (s) => /^(\p{Lu}[\p{L}'’.-]*\s+){0,3}\p{Lu}[\p{L}'’-]+$/u.test(s) && !/\d/.test(s) && s.length < 36;
+const GENERIC = /^(sonat[ae]n?|sonatin[ae]|suite|concert[oe]?|konzert|etude|étude|studie|study|caprice|capriccio|fantasi[ae]|fantaisie|nocturne|prelude|prélude|präludium|romance|romanze|serenade|sérénade|variations?|variationen|partita|trio|quartet|quartett|duo|rondo|scherzo|menuet|minuet|waltz|valse|walzer|march|marsch|marche|élégie|elegie|elegy|air|aria|lied|song|dance|danse|tanz)$/i;
 const tidy = (s) => s.replace(/\s+/g, ' ').replace(/^[\s.,:;-]+|[\s.,:;-]+$/g, '').trim();
 const titleCase = (s) => (s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()) : s);
 
@@ -229,16 +328,27 @@ export async function readScoreInfo(doc, fileName, composers) {
         for (const p of l.parts) { text += (text && p.x - lastX > p.size * 0.25 ? ' ' : '') + p.s; lastX = p.x + p.s.length * p.size * 0.5; }
         return { text: tidy(text), y: l.y, size: l.size, x: l.parts[0].x, right: l.parts[l.parts.length - 1].x, H: vp.height, W: vp.width };
       }).filter((l) => l.text.length > 1);
-      const topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && /\p{L}{2}/u.test(l.text));
+      let topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
+      // a tempo mark is not the title, unless it is clearly the biggest words on the page ("Allegro appassionato")
+      { const mx = Math.max(0, ...topLines.map((l) => l.size)); topLines = topLines.filter((l) => !TEMPO.test(l.text) || l.size >= mx * 0.98 && topLines.filter((o) => o.size >= mx * 0.8).length === 1); }
+      // the biggest line is sometimes the composer's name: that is the composer, and the title is the next
+      const nameOnly = (l) => { const c = findComposer(l.text, composers); return c && l.text.length < 40 && fold(l.text).split(' ').length <= 4 ? c : null; };
       if (topLines.length) {
         const sizes = topLines.map((l) => l.size).sort((a, b) => a - b);
         const median = sizes[sizes.length >> 1];
-        const big = [...topLines].sort((a, b) => b.size - a.size)[0];
-        if (big.size >= median * 1.15 || topLines.length <= 3) {
+        const bySize = [...topLines].sort((a, b) => b.size - a.size || a.y - b.y);
+        let big = bySize[0];
+        const nc = nameOnly(big);
+        if (nc) { out.composer = nc.n; topLines = topLines.filter((l) => l !== big); big = bySize.find((l) => topLines.includes(l) && !nameOnly(l)); }
+        if (big && (big.size >= median * 1.15 || topLines.length <= 3 || nc)) {
           out.title = titleCase(big.text);
-          const next = topLines.find((l) => l !== big && l.y > big.y && l.y - big.y < big.size * 3 && l.size >= big.size * 0.45 &&
-            /(op\.?|no\.?|bwv|k\.|in [a-g]|for |pour |für |sonat|concert|suite|\d)/i.test(l.text) && l.text.length < 60);
-          if (next) out.title += ', ' + titleCase(next.text);
+          // "Sonata" alone: the line under it says which ("No. 2 in G minor, Op. 5")
+          const nearBelow = (l) => l !== big && l.y > big.y && l.y - big.y < big.size * 3 && l.size >= big.size * 0.45 && l.text.length < 60 && !nameOnly(l);
+          const next = topLines.find((l) => nearBelow(l) && (GENERIC.test(big.text.trim()) || /(op\.?\s*\d|no\.?\s*\d|nr\.?\s*\d|bwv|hob|k\.\s*\d|kv|d\.\s*\d|in [a-h](\s|$|-|♭|♯)|in [a-h] (major|minor|dur|moll)|en [a-z]+ (majeur|mineur)|for |pour |für |per )/i.test(l.text)));
+          if (next) out.title += (GENERIC.test(big.text.trim()) && !/^[,(]/.test(next.text) ? ' ' : ', ') + titleCase(next.text);
+          // a word above it that belongs to the title ("Six Suites" / "for Cello Solo" are fine; "Sonata" over "No. 1" too)
+          const above = topLines.find((l) => l !== big && l.y < big.y && big.y - l.y < big.size * 2 && l.size >= big.size * 0.7 && GENERIC.test(l.text.trim()));
+          if (above && !out.title.toLowerCase().includes(above.text.toLowerCase())) out.title = titleCase(above.text) + ' ' + out.title;
         }
       }
       const pdfTitle = meta && meta.info && meta.info.Title;
@@ -247,12 +357,19 @@ export async function readScoreInfo(doc, fileName, composers) {
       const c = findComposer(allTop, composers) || findComposer((meta && meta.info && meta.info.Author) || '', composers);
       if (c) out.composer = c.n;
       else {
-        const right = lines.find((l) => l.y < l.H * 0.42 && l.x > l.W * 0.5 && /\p{Lu}\p{Ll}+/u.test(l.text) && !JUNK.test(l.text) && l.text !== out.title && l.text.length < 40);
-        if (right) out.composer = tidy(right.text.replace(/\(.*?\)|\d{4}\s*[-–]\s*\d{4}|^(music by|composed by|von|by|de)\s+/gi, ''));
+        // a name on the right above the music ("Carl Davidoff (1838-1889)"), but only if it looks like a name
+        if (!out.composer) for (const l of lines) {
+          if (!(l.y < l.H * 0.42 && l.x > l.W * 0.45) || JUNK.test(l.text) || NOT_TITLE.test(l.text) || TEMPO.test(l.text) || out.title.includes(l.text)) continue;
+          const nm = tidy(l.text.replace(/\(.*?\)|\d{4}\s*[-–]\s*\d{0,4}|^(music by|composed by|komponiert von|von|by|de|par|di)\s+/gi, ''));
+          if (looksLikeName(nm)) { out.composer = titleCase(nm); break; }
+        }
       }
     } catch (e) { console.warn('read info', e); }
   }
   if (!out.composer) { const c = findComposer(fileName.replace(/[_-]+/g, ' '), composers); if (c) out.composer = c.n; }
+  // a title that is only a composer's name, a number or a generic word is no title
+  if (out.title && (findComposer(out.title, composers) && fold(out.title).split(' ').length <= 3 || !/\p{L}{3}/u.test(out.title))) out.title = '';
+  if (out.title.length > 80) out.title = out.title.slice(0, 80).replace(/\s+\S*$/, '') + '…';
   return out;
 }
 
@@ -324,9 +441,9 @@ export function mapDoc(doc, map, cuts, glue) {
     ...doc,
     pages: pieces.length,
     sizes: pieces.map(sizeOf),
-    render: async (i, canvas, w, h) => {
+    render: async (i, canvas, w, h, opts) => {
       const p = pieces[i];
-      if (!p.parts) return doc.render(p.o, canvas, w, h);
+      if (!p.parts) return doc.render(p.o, canvas, w, h, opts);
       // draw each part one under the other at the width of the page
       canvas.width = Math.round(w); canvas.height = Math.round(h);
       const g = canvas.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
@@ -344,6 +461,7 @@ export function mapDoc(doc, map, cuts, glue) {
       }
       void H0; void k;
     },
+    pixHas: (i, w, h) => (pieces[i].parts || !doc.pixHas ? Promise.resolve(true) : doc.pixHas(pieces[i].o, w, h)),
     orig: (i) => pieces[i].o,
     piece: (i) => pieces[i].box,
     composite: (i) => !!pieces[i].parts,

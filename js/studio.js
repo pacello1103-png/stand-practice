@@ -7,12 +7,12 @@
 import { db, uid } from './db.js';
 import { getCtx } from './audio.js';
 import { detectPitch } from './tuner.js';
-import { analyse } from './omr.js';
+import { analyse, staffEvents } from './omr.js';
 import { makeImpulse, ROOMS, computePeaks, peakOf, encodeWav } from './recorder.js';
 import { videoThumb } from './video.js';
 import { CLEFS, keyAlter, midiOf } from './compose/model.js';
 import { onsetsOf, template, cosine } from './listen.js';
-import { Grader, LOOKS, lookParams, isNeutral } from './grade.js';
+import { Grader, LOOKS, lookParams, isNeutral, autoLook } from './grade.js';
 const grader = new Grader();
 
 const $ = (s) => document.querySelector(s);
@@ -65,6 +65,8 @@ export async function openStudio(takeId) {
   $('#stTitle').textContent = take.name || 'Studio';
   ST.sel = ST.P.overlays.find((o) => o.kind === 'score') ? { id: ST.P.overlays.find((o) => o.kind === 'score').id } : null;
   ST.media.currentTime = ST.P.trim.a;
+  // (a picture of the first frame to show, and to draw the looks with)
+  if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
   sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
   ST.media.addEventListener('seeked', () => frame());
   ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); });
@@ -118,8 +120,24 @@ function stripLayout(A, W, H) {
   const sp = A.sp;
   const segs = [], bars = [], notes = [], events = [];
   let sx = 0;
+  // every note of a staff as sounding pitch classes, with the clef and key as they change along the
+  // line and the accidentals carried through the bar (as the score follower reads them)
+  const pcsOf = (st, k, n) => {
+    const clef0 = CLEFS[st.clef] ? st.clef : k > 0 && n === 2 ? 'bass' : 'treble';
+    const bars = staffEvents(st); let key = st.key || 0; const out = [];
+    bars.forEach((b, bi) => {
+      if (bars.meta && bars.meta[bi] && bars.meta[bi].key !== undefined) key = bars.meta[bi].key;
+      for (const it of b) {
+        if (it.rest) continue;
+        const bottom = (CLEFS[it.clef] || CLEFS[clef0]).bottom;
+        out.push({ x: it.x, pcs: it.ps.map((q) => { const s2 = bottom + q; const a = it.acc && it.acc[q] !== undefined ? it.acc[q] : keyAlter(key, s2); return ((midiOf(s2, a) % 12) + 12) % 12; }) });
+      }
+    });
+    return out;
+  };
   A.systems.forEach((sys, si) => {
     const sts = sys.map((i) => A.staves[i]);
+    const evAll = sts.map((st, k) => pcsOf(st, k, sts.length));
     const top = clamp(Math.min(...sts.map((s) => s.top)) - sp * 3.6, 0, H), bot = clamp(Math.max(...sts.map((s) => s.bottom)) + sp * 3.6, 0, H);
     const s0 = sts[0];
     const firstHead = s0.heads.length ? Math.min(...s0.heads.map((h) => h.x)) : s0.x0 + sp * 4;
@@ -142,12 +160,10 @@ function stripLayout(A, W, H) {
       for (const g of groups) notes.push({ bar: bi, x: sx + (g.x - x0), ps: g.ps });
       // every staff of the line together, as sounding pitch classes (for chords and the piano)
       const here = [];
-      sts.forEach((st, k) => {
-        const bottom = (CLEFS[st.clef] || CLEFS[k > 0 && sts.length === 2 ? 'bass' : 'treble']).bottom, key = st.key || 0;
-        for (const h of st.heads) if (h.x >= a && h.x < b) {
-          const st2 = bottom + h.p; const pc = ((midiOf(st2, h.acc !== undefined ? h.acc : keyAlter(key, st2)) % 12) + 12) % 12;
-          const g = here.find((q) => Math.abs(q.x - h.x) < sp * 0.7);
-          if (g) { if (!g.pcs.includes(pc)) g.pcs.push(pc); } else here.push({ x: h.x, pcs: [pc] });
+      evAll.forEach((evs) => {
+        for (const e of evs) if (e.x >= a && e.x < b) {
+          const g = here.find((q) => Math.abs(q.x - e.x) < sp * 0.7);
+          if (g) { for (const pc of e.pcs) if (!g.pcs.includes(pc)) g.pcs.push(pc); } else here.push({ x: e.x, pcs: [...e.pcs] });
         }
       });
       here.sort((p2, q) => p2.x - q.x);
@@ -567,7 +583,9 @@ function drawScore(g, W, H, o, t) {
     const per = Math.max(1, o.perView);
     const vw = Math.min(L.width, avg * per);
     const pos = posAt(o, t), smooth = viewAt(o, t);
-    if (o.band) { vx0 = smooth - vw * 0.22; }   // the score slides under a still line, like a film
+    // the score slides under a still line, like a film; at the very start and end the music stays
+    // put and the line moves instead, so there is never paper without music (or an empty band)
+    if (o.band) vx0 = clamp(smooth - vw * 0.22, 0, Math.max(0, L.width - vw));
     else vx0 = clamp(smooth - vw * 0.32, 0, Math.max(0, L.width - vw));
     vx1 = vx0 + vw;
     if (b >= 0 && b < n) cursor = pos;
@@ -605,7 +623,15 @@ function drawScore(g, W, H, o, t) {
     // a soft shadow keeps white lines readable on bright video
     const shade = o.shade !== false;   // the soft shade behind the lines can be switched off
     g.save(); g.shadowColor = ink === '#ffffff' ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.6)'; g.shadowBlur = shade ? Math.max(2, boxW * 0.006) : 0;
-    if (band && shade) { g.save(); g.shadowBlur = 0; g.fillStyle = ink === '#ffffff' ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.3)'; g.fillRect(0, y - pad, W, boxH + pad * 2); g.restore(); }
+    if (band && shade) {
+      // a soft band behind the music, fading out above and below (no hard dark strip)
+      g.save(); g.shadowBlur = 0;
+      const col = ink === '#ffffff' ? '0,0,0' : '255,255,255', a = ink === '#ffffff' ? 0.32 : 0.34, f = boxH * 0.22;
+      const gr = g.createLinearGradient(0, y - pad - f, 0, y + boxH + pad + f);
+      const H2 = boxH + pad * 2 + f * 2, e = f / H2;
+      gr.addColorStop(0, `rgba(${col},0)`); gr.addColorStop(e, `rgba(${col},${a})`); gr.addColorStop(1 - e, `rgba(${col},${a})`); gr.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = gr; g.fillRect(0, y - pad - f, W, H2); g.restore();
+    }
     blit(mk); g.restore();
     if (o.highlight && b >= 0 && b < n && o.mode !== 'scroll' && bars[b].x0 >= vx0 - 1 && bars[b].x1 <= vx1 + 1) {
       const hx0 = x + (bars[b].x0 - vx0) * scale, hx1 = x + (bars[b].x1 - vx0) * scale;
@@ -806,6 +832,8 @@ function slider(label, value, min, max, step, fmtv, on) {
   row.append(i, v); return row;
 }
 function renderSide() {
+  // on a phone a swipe up or down scrolls the Studio, except over something chosen to move
+  try { $('#stCanvas').style.touchAction = matchMedia('(max-width: 600px), (max-height: 500px)').matches && !ST.sel ? 'pan-y' : 'none'; } catch {}
   const side = $('#stSide'); side.textContent = '';
   const o = selected();
   $('#stEmpty').hidden = !!ST.P.overlays.find((x) => x.kind === 'score');
@@ -871,13 +899,30 @@ function renderLook(side) {
   const reset = el('button', 'btn small ghost', 'Reset'); reset.hidden = !ST.P.look || isNeutral(ST.P.look);
   reset.addEventListener('click', () => { ST.P.look = null; saveSoon(); frame(); renderSide(); });
   head.append(reset); card.append(head);
+  // Auto: the video looked at, and set for its light, colour, noise and detail
+  const autoRow = el('div', 'st-auto');
+  const autoB = el('button', 'btn small ' + (ST.P.look && ST.P.look.auto && ST.P.look.autoOn !== false ? 'on-auto' : 'primary'));
+  autoB.append(el('span', '', ST.P.look && ST.P.look.auto && ST.P.look.autoOn !== false ? 'Auto is on' : 'Auto: make it look its best'));
+  autoB.addEventListener('click', async () => {
+    const lk = ST.P.look || (ST.P.look = { preset: 'natural', adj: {} });
+    if (lk.auto && lk.autoOn !== false) { lk.autoOn = false; saveSoon(); frame(); renderSide(); return; }
+    autoB.disabled = true; autoB.querySelector('span').textContent = 'Looking at the video…';
+    try { lk.auto = autoLook(await grabFrames(6)); lk.autoOn = true; if (lk.autoAmt === undefined) lk.autoAmt = 1; } catch (e) { console.warn(e); }
+    saveSoon(); frame(); renderSide();
+  });
+  autoRow.append(autoB);
+  card.append(autoRow);
+  if (ST.P.look && ST.P.look.auto && ST.P.look.autoOn !== false) {
+    card.append(slider('Auto amount', Math.round((ST.P.look.autoAmt ?? 1) * 100), 0, 150, 1, (x) => x + '%', (v) => { ST.P.look.autoAmt = v / 100; saveSoon(); frame(); }));
+    card.append(el('p', 'hint', 'Light, white balance, contrast, noise and sharpness set for this video. A look and the sliders go on top.'));
+  }
   const cur = (ST.P.look && ST.P.look.preset) || 'natural';
   const strip = el('div', 'st-look-strip');
   for (const [k, v] of Object.entries(LOOKS)) {
     const b = el('button', k === cur ? 'on' : ''); const c = el('canvas'); c.width = 96; c.height = 120;
     b.append(c, el('span', '', v.label));
     lookThumb(c, { preset: k });
-    b.addEventListener('click', () => { ST.P.look = { preset: k, adj: {} }; saveSoon(); frame(); renderSide(); });
+    b.addEventListener('click', () => { const keep = ST.P.look || {}; ST.P.look = { preset: k, adj: {}, ...(keep.auto ? { auto: keep.auto, autoOn: keep.autoOn, autoAmt: keep.autoAmt } : {}) }; saveSoon(); frame(); renderSide(); });
     strip.append(b);
   }
   card.append(strip);
@@ -885,9 +930,23 @@ function renderLook(side) {
   const ctl = (key, label, lo = -100, hi = 100) => slider(label, Math.round(((ST.P.look && ST.P.look.adj && ST.P.look.adj[key]) || 0) * 100), lo, hi, 1, (x) => (x > 0 ? '+' : '') + x, (v) => { adj()[key] = v / 100; reset.hidden = isNeutral(ST.P.look); saveSoon(); frame(); });
   card.append(ctl('light', 'Light'), ctl('contrast', 'Contrast'), ctl('warmth', 'Warmth'), ctl('colour', 'Colour'));
   const more = el('details', 'st-look-more'); more.append(el('summary', '', 'More'));
-  more.append(ctl('sharp', 'Sharpness'), ctl('shadows', 'Shadows'), ctl('highlights', 'Highlights'), ctl('vignette', 'Vignette', 0, 100));
+  more.append(ctl('clarity', 'Clarity'), ctl('sharp', 'Sharpness'), ctl('denoise', 'Less noise', 0, 100), ctl('shadows', 'Shadows'), ctl('highlights', 'Highlights'), ctl('tint', 'Tint'), ctl('vignette', 'Vignette', 0, 100));
   card.append(more);
   side.append(card);
+}
+// a few frames from across the video (for Auto), the playing place put back after
+async function grabFrames(n) {
+  const m = ST.media, back = m.currentTime, out = [];
+  if (!m.videoWidth) return out;
+  const a = ST.P.trim ? ST.P.trim.a : 0, b = ST.P.trim ? ST.P.trim.b : ST.dur;
+  for (let i = 0; i < n; i++) {
+    const t = a + ((b - a) * (i + 0.5)) / n;
+    await new Promise((res) => { const done = () => { m.removeEventListener('seeked', done); res(); }; m.addEventListener('seeked', done); m.currentTime = t; setTimeout(done, 1500); });
+    const c = document.createElement('canvas'); const k = 160 / Math.max(m.videoWidth, m.videoHeight); c.width = Math.round(m.videoWidth * k); c.height = Math.round(m.videoHeight * k);
+    c.getContext('2d').drawImage(m, 0, 0, c.width, c.height); out.push(c);
+  }
+  m.currentTime = back;
+  return out;
 }
 function renderFormat(side) {
   side.append(el('h3', '', 'Picture'));
@@ -1048,3 +1107,14 @@ function wire() {
 export const _studio = ST;
 export const _posAt = (o, t) => posAt(o, t);
 export const _alignChords = (e, o) => alignChords(e, o);
+// (for the tests: a score put on the video without the picker)
+export async function _addScoreFrom(canvas) {
+  const A = await analyse(canvas);
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+  const o = { id: uid(), kind: 'score', title: 'Score', src: {}, img: blob, look: 'paper', ink: '#ffffff', mode: 'scroll', band: true, perView: 2, size: 0.96, pos: { x: 0.5, y: 0.78 }, opacity: 1, highlight: true, layout: stripLayout(A, canvas.width, canvas.height), times: null, synced: 'even' };
+  o.times = evenTimes(o.layout.bars.length);
+  ST.P.overlays = ST.P.overlays.filter((x) => x.kind !== 'score'); ST.P.overlays.unshift(o);
+  await prepareOverlay(o); ST.sel = { id: o.id }; renderSide(); renderTimeline(); frame();
+  return o;
+}
+export const _frame = () => frame();

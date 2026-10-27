@@ -5,7 +5,7 @@
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
 import { voiceView, hasVoice2,
-  WHOLE, barTicks, timeAt, keyAt, tempoAt, clefAt, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
+  WHOLE, barTicks, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
 } from './model.js';
 
 // ---------- glyphs (SMuFL code points) ----------
@@ -24,7 +24,7 @@ export const GL = {
   art: {
     stacc: ['', ''], stacciss: ['', ''], ten: ['', ''], acc: ['', ''], marc: ['', ''],
     ferm: ['', ''], down: ['', ''], up: ['', ''], harm: ['', ''], trill: ['', ''],
-    trem: ['', ''], breath: ['', ''],
+    trem: ['', ''], breath: ['', ''],
   },
   tuplet: (n) => String(n).split('').map((d) => String.fromCharCode(0xE880 + +d)).join(''), quarterUp: '', eighthUp: '', halfUp: '',
   repeatDot: '', segno: '', coda: '',
@@ -67,9 +67,15 @@ function keyPositions(fifths, clef) {
   if (!fifths || clef === 'perc') return [];
   const sharpT = [8, 5, 9, 6, 3, 7, 4], flatT = [4, 7, 3, 6, 2, 5, 1];
   const tenorS = [2, 6, 3, 7, 4, 8, 5];
-  const off = { treble: 0, treble8: 0, bass: -2, bass8: -2, alto: -1, tenor: 1 }[clef] ?? 0;
-  if (fifths > 0) return (clef === 'tenor' ? tenorS : sharpT.map((p) => p + off)).slice(0, fifths).map((p) => ({ p, g: GL.acc[1] }));
-  return flatT.map((p) => p + off).slice(0, -fifths).map((p) => ({ p, g: GL.acc[-1] }));
+  // any clef: the treble clef's pattern moved by how far its bottom line is from the treble clef's
+  const bottom = (CLEFS[clef] || CLEFS.treble).bottom;
+  let off = (((30 - bottom) % 7) + 7) % 7; if (off > 3) off -= 7;
+  const fit = (p) => { while (p < 0) p += 7; while (p > 10) p -= 7; return p; };
+  if (fifths > 0) {
+    const pat = clef === 'tenor' ? tenorS : clef === 'soprano' ? tenorS.map((p) => p + 1) : sharpT.map((p) => fit(p + off));
+    return pat.slice(0, fifths).map((p) => ({ p, g: GL.acc[1] }));
+  }
+  return flatT.map((p) => fit(p + off)).slice(0, -fifths).map((p) => ({ p, g: GL.acc[-1] }));
 }
 const keyWidth = (fifths) => (fifths ? Math.abs(fifths) * 1.0 + 0.6 : 0);
 const timeWidth = (time) => (time ? Math.max(String(time[0]).length, String(time[1]).length) * 1.8 + 1.0 : 0);
@@ -113,6 +119,7 @@ export function layoutScore(score, opts = {}) {
         const len = ticksOf(ev, time);
         const o = onsets.get(p) || { acc: 0, dots: 0, full: false, grace: 0 };
         if (ev.grace && ev.notes) o.grace = 1;
+        if (ev.clef) o.clef = 1;
         if (ev.full) o.full = true;
         if (ev.dots) o.dots = Math.max(o.dots, ev.dots);
         if (ev.notes && ev.notes.some((n) => n.a)) { o.acc = 1; hasAcc = true; }
@@ -126,7 +133,7 @@ export function layoutScore(score, opts = {}) {
     const segs = times.map((t, i) => {
       const next = i + 1 < times.length ? times[i + 1] : total;
       const o = onsets.get(t);
-      return { t, w: space(next - t) + (o.dots ? 0.45 * o.dots : 0), pre: (o.acc ? 1.1 * o.acc : 0) + (o.grace ? 2.3 : 0) };
+      return { t, w: space(next - t) + (o.dots ? 0.45 * o.dots : 0), pre: (o.acc ? 1.1 * o.acc : 0) + (o.grace ? 2.3 : 0) + (o.clef ? 2.8 : 0) };
     });
     const allFull = times.length === 1 && onsets.get(0).full;
     let ideal = 1.3 + segs.reduce((a, s) => a + s.w + s.pre, 0);
@@ -136,7 +143,7 @@ export function layoutScore(score, opts = {}) {
     const prevKey = m ? keyAt(score, m - 1) : null;
     const keyChange = m > 0 && ms.key !== undefined && ms.key !== null && ms.key !== prevKey;
     const timeChange = m > 0 && !!ms.time;
-    const clefChange = m > 0 && info.some((s) => clefAt(s.st, m) !== clefAt(s.st, m - 1));
+    const clefChange = m > 0 && info.some((s) => clefAt(s.st, m) !== clefEnd(s.st, m - 1));
     cols.push({ m, time, total, segs, ideal, allFull, keyChange, timeChange, clefChange, hasAcc, ms });
   }
   // ---- multi-bar rests (parts): runs of empty bars with nothing else going on
@@ -228,8 +235,10 @@ export function layoutScore(score, opts = {}) {
       if (i === 0) { tops.push(0); return; }
       const prev = shown[i - 1];
       const base = prev.pi === s.pi ? staffGapSame : staffGapOther;
-      const need = Math.max(0, ext[i - 1].below - 1.5) + Math.max(0, ext[i].above - 1.5);
-      sh = tops[i - 1] + 4 + Math.max(base, need + 2.6);
+      // what hangs below one staff and what reaches above the next never touch: low notes of a
+      // cello and high notes of the piano, dynamics, slurs and words each keep their room
+      const need = ext[i - 1].below + ext[i].above + 0.6;
+      sh = tops[i - 1] + 4 + Math.max(base, need);
       tops.push(sh);
     });
     const height = tops[tops.length - 1] + 4;
@@ -267,12 +276,12 @@ function titleHeight(score, spMm, opts) {
 function staffExtent(score, s, sy, concert) {
   let above = 0, below = 0, notesBelow = 0, hasLyr = false, hasDyn = false;
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
-    const clef = clefAt(s.st, m);
+    const clef0 = clefAt(s.st, m);
     const time = timeAt(score, m), all = [];
-    for (const bar of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let pos = 0; for (const ev of bar) { all.push([ev, pos]); pos += ticksOf(ev, time); } }
-    for (const [ev, pos] of all) {
+    for (const bar of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let pos = 0, c = clef0; for (const ev of bar) { if (ev.clef) c = ev.clef; all.push([ev, pos, c]); pos += ticksOf(ev, time); } }
+    for (const [ev, pos, clef] of all) {
       const ott = ottavaAt(score, s.st.id, m, pos);
-      if (ev.dyn || ev.hp) { below = Math.max(below, 3.2); hasDyn = true; }
+      if (ev.dyn || ev.hp || (ev.txt && ev.txtBelow)) { below = Math.max(below, 3.2); hasDyn = true; }
       if (ev.txt) above = Math.max(above, 2.8);
       if (ev.chord) above = Math.max(above, ev.txt ? 5.2 : 3.4);
       if (ev.lyric) hasLyr = true;
@@ -303,8 +312,9 @@ function staffExtent(score, s, sy, concert) {
     if (sp.st !== s.st.id) continue;
     if (['trill', '8va', '15ma', 'rit', 'accel'].includes(sp.kind)) above += 2.6;
     if (['8vb', '15mb', 'ped', 'cresc', 'dim'].includes(sp.kind)) below += 2.8;
+    if (['8vb', '15mb'].includes(sp.kind)) below += 1.2;
     if (sp.kind === 'hairpin') { below = Math.max(below, 3.2); hasDyn = true; }
-    if (sp.kind === 'slur') { above = Math.max(above, 1.4); below = Math.max(below, 1.2); }
+    if (sp.kind === 'slur') { above = Math.max(above + 1.0, 1.4); below = Math.max(below + 0.8, 1.2); }
   }
   for (let m = mA; m <= mB; m++) { const ms = score.measures[m]; if (ms && (ms.mark || ms.jump)) above = Math.max(above, 3.2); }
   // lyrics run on one line for the whole system, under the lowest note (and the dynamics)
@@ -324,7 +334,7 @@ export function drawPage(ctx, lay, pageIndex, opts = {}) {
   const page = lay.pages[pageIndex];
   const score = lay.score;
   const ink = opts.ink || '#16181d';
-  const hit = { staves: [], events: [] };
+  const hit = { staves: [], events: [], spans: [], marks: [] }; CUR_HIT = hit;
   ctx.save();
   ctx.fillStyle = opts.paper || '#ffffff'; ctx.fillRect(0, 0, lay.W, lay.H);
   ctx.fillStyle = ink; ctx.strokeStyle = ink;
@@ -347,7 +357,11 @@ function drawTitle(ctx, lay) {
   if (lay.partIndex !== undefined) text(ctx, s.parts[lay.partIndex].name, lay.margin.l, y, 4.2 / sp, TEXT_FONT, '600', 'left');
 }
 
-export const glyph = (ctx, g, x, y, size = 4) => { ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100); ctx.font = `100px ${MUSIC_FONT}`; ctx.textAlign = 'left'; ctx.fillText(g, 0, 0); ctx.restore(); };
+// while a marking (articulation, ornament, dynamic) is drawn, where it lands is kept, so it can be tapped
+let CUR_MARK = null;
+// a box that can be tapped to choose what is drawn there (a clef, a time signature, a tempo...)
+const hitBox = (o, x0, x1, y0, y1) => { if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ ...o, x0, x1, y0, y1 }); };
+export const glyph = (ctx, g, x, y, size = 4) => { if (CUR_MARK && CUR_HIT && CUR_HIT.marks) { const m = gm(g), k = size / 4; CUR_HIT.marks.push({ ...CUR_MARK, x0: x + m.l * k, x1: x + m.r * k, y0: y - m.a * k, y1: y + m.d * k }); } ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100); ctx.font = `100px ${MUSIC_FONT}`; ctx.textAlign = 'left'; ctx.fillText(g, 0, 0); ctx.restore(); };
 // Text in sp units: font is a CSS font without size, e.g. 'italic 600' + family
 export function text(ctx, str, x, y, size, font = TEXT_FONT, style = '', align = 'left') {
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100);
@@ -389,10 +403,14 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   const maxKW = Math.max(0, ...staves.map((q) => keyWidth(lay.concert ? key0 : writtenKey(key0, q.inst))));
   for (const s of staves) {
     const clef = clefAt(s.st, m0);
-    drawClef(ctx, clef, x0 + 1, s.y);
+    CUR_MARK = { id: s.st.id + '@' + m0, kind: 'clef', name: clef, m: m0, st: s.st.id };
+    drawClef(ctx, clef, x0 + 1, s.y); if (clef === 'perc') hitBox(CUR_MARK, x0 + 0.6, x0 + 2.2, s.y + 0.6, s.y + 3.4);
     const k = lay.concert ? key0 : writtenKey(key0, s.inst);
+    CUR_MARK = k ? { id: 'key' + m0, kind: 'key', name: String(key0), m: m0 } : null;
     drawKey(ctx, k, clef, x0 + 4.4, s.y);
+    CUR_MARK = showTime ? { id: 'time' + m0, kind: 'time', name: time0.join('/'), m: m0 } : null;
     if (showTime) drawTime(ctx, time0, x0 + 4.4 + maxKW + 0.2, s.y, score.measures[m0].timeSym);
+    CUR_MARK = null;
   }
   const hitStaves = staves.map((s) => ({ k: s.k, st: s.st, part: s.part, inst: s.inst, y: s.y, x0, x1, measures: [] }));
   hit.staves.push(...hitStaves);
@@ -403,7 +421,11 @@ function drawSystem(ctx, lay, sys, hit, opts) {
   // one level for the dynamics and hairpins of each staff on this line
   for (const [i, hs] of hitStaves.entries()) {
     let low = 0; for (const hm of hs.measures) low = Math.max(low, hm.dynLow || 0);
-    hs.dynLine = Math.max(3.0, low + 2.9);
+    // (a slur under the notes here, where every stem is up: the dynamics go under it, not through it)
+    const mA = sys.measures[0].m, mB = sys.measures[sys.measures.length - 1].end ?? sys.measures[sys.measures.length - 1].m;
+    const evAll = hs.measures.flatMap((hm) => (hm.events || []).map((q) => ({ ...q, m: hm.m })));
+    const slurUnder = (score.spans || []).some((q) => q.kind === 'slur' && q.st === hs.st.id && !(q.b.m < mA || q.a.m > mB) && (() => { const ev = evAll.filter((e) => (e.m > q.a.m || (e.m === q.a.m && e.pos >= q.a.pos)) && (e.m < q.b.m || (e.m === q.b.m && e.pos <= q.b.pos)) && e.notes && e.notes.length); return ev.length && ev.every((e) => e.up); })());
+    hs.dynLine = Math.max(3.0, low + 2.9 + (slurUnder ? 2.0 : 0));
     // the upper staff of a piano (or harp, organ…): dynamics go in the middle, between the two staves
     const next = hitStaves[i + 1];
     if (next && next.part === hs.part) {
@@ -415,7 +437,8 @@ function drawSystem(ctx, lay, sys, hit, opts) {
     }
     for (const hm of hs.measures) for (const d of hm.dyns || []) {
       if (d.c) { ctx.save(); ctx.fillStyle = d.c; }
-      glyph(ctx, DYN_LETTERS(d.dyn), d.x, hs.y + 4 + hs.dynLine);
+      if (d.txt) { CUR_MARK = d.id ? { id: d.id, kind: 'txt', name: d.txt } : null; text(ctx, d.txt, d.x, hs.y + 4 + hs.dynLine, 1.7, TEXT_FONT, d.it ? 'italic' : ''); CUR_MARK = null; if (d.c) ctx.restore(); continue; }
+      CUR_MARK = d.id ? { id: d.id, kind: 'dyn', name: d.dyn } : null; glyph(ctx, DYN_LETTERS(d.dyn), d.x, hs.y + 4 + hs.dynLine); CUR_MARK = null;
       if (d.c) ctx.restore();
     }
   }
@@ -440,6 +463,7 @@ function spanX(hs, at, end) {
   return end ? hm.x1 - 0.6 : hm.cx0;
 }
 function dashed(ctx, x0, x1, y, dash = 0.7, gapL = 0.6, w = 0.13) { ctx.save(); ctx.lineWidth = w; ctx.setLineDash([dash, gapL]); ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.restore(); }
+const spanHit = (sp, x0, x1, y0, y1) => { if (CUR_HIT) CUR_HIT.spans.push({ id: sp.id, kind: sp.kind, x0: Math.min(x0, x1), x1: Math.max(x0, x1), y0: Math.min(y0, y1), y1: Math.max(y0, y1) }); };
 function drawSpans(ctx, lay, sys, hitStaves) {
   const score = lay.score;
   const spans = score.spans || []; if (!spans.length) return;
@@ -460,7 +484,10 @@ function drawSpans(ctx, lay, sys, hitStaves) {
     let top = hs.y - 1.6, bot = hs.y + 5.6;
     for (const q of evs) for (const n of q.notes) { top = Math.min(top, n.y - (q.up ? STEM_LEN + 0.6 : 1.4)); bot = Math.max(bot, n.y + (q.up ? 1.4 : STEM_LEN + 0.6)); }
     // above words and ornaments of those notes
-    for (const q of evs) { const f = findEv(score, q.id); if (!f) continue; if (f.txt) top = Math.min(top, hs.y - 3.6); if (f.art && f.art.some((a) => ['mord', 'prall', 'turn', 'turnInv', 'stopped', 'open', 'snap', 'ferm', 'fermS', 'fermL', 'trill', 'up', 'down', 'harm'].includes(a))) top = Math.min(top, hs.y - 3.4); if (f.dyn || f.hp) bot = Math.max(bot, hs.y + 7.6); }
+    let dynUnder = false;
+    for (const q of evs) { const f = findEv(score, q.id); if (!f) continue; if (f.txt) top = Math.min(top, hs.y - 3.6); if (f.art && f.art.some((a) => ['mord', 'prall', 'turn', 'turnInv', 'stopped', 'open', 'snap', 'ferm', 'fermS', 'fermL', 'trill', 'up', 'down', 'harm'].includes(a))) top = Math.min(top, hs.y - 3.4); if (f.dyn || f.hp) { bot = Math.max(bot, hs.y + 7.6); dynUnder = true; } }
+    // (a hairpin of its own under these notes counts as a dynamic too)
+    if (!dynUnder) dynUnder = spans.some((q) => q.kind === 'hairpin' && q.st === sp.st && !(q.b.m < sp.a.m || q.a.m > sp.b.m));
     const k = sp.kind;
     if (k === 'slur' || k === 'hairpin') { drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX); continue; }
     if (k === 'trill') {
@@ -469,14 +496,17 @@ function drawSpans(ctx, lay, sys, hitStaves) {
       const w = gm(GL.orn.wiggle).r || 0.9; let x = x0 + 2.1;
       if (!startsHere) x = x0;
       while (x + w < x1) { glyph(ctx, GL.orn.wiggle, x, y); x += w; }
+      spanHit(sp, x0, x1, y - 1.6, y + 0.9);
     } else if (OTT_SHIFT[k]) {
       const above = OTT_SHIFT[k] > 0;
-      const y = above ? Math.min(top, hs.y - 2.2) - 0.3 : Math.max(bot, hs.y + 6.2) + 2.0;
+      // (an octave line below goes under the dynamics there, clear of their tails)
+      const y = above ? Math.min(top, hs.y - 2.2) - 0.3 : Math.max(bot, hs.y + 6.2) + 2.0 + (dynUnder ? 1.2 : 0);
       const g = GL.ott[k]; const m = gm(g);
       if (startsHere) glyph(ctx, g, x0, y + (above ? 0 : 0), 3.4);
       const tx = startsHere ? x0 + (m.r || 2) * 0.85 + 0.4 : x0;
       dashed(ctx, tx, x1, above ? y - 0.9 : y - 1.3, 0.55, 0.55);
       if (endsHere) { ctx.save(); ctx.lineWidth = 0.13; ctx.beginPath(); ctx.moveTo(x1, above ? y - 0.9 : y - 1.3); ctx.lineTo(x1, above ? y + 0.3 : y - 2.5); ctx.stroke(); ctx.restore(); }
+      spanHit(sp, x0, x1, y - 2.4, y + 0.6);
     } else if (k === 'ped') {
       const y = Math.max(bot, hs.y + 6.4) + 1.9;
       if (startsHere) glyph(ctx, GL.ped, x0, y, 3.6);
@@ -485,6 +515,7 @@ function drawSpans(ctx, lay, sys, hitStaves) {
         const lx = startsHere ? x0 + 3.6 : x0;
         ctx.save(); ctx.lineWidth = 0.14; ctx.beginPath(); ctx.moveTo(lx, y); ctx.lineTo(x1, y); if (endsHere) ctx.lineTo(x1, y - 1.2); ctx.stroke(); ctx.restore();
       }
+      spanHit(sp, x0, x1, y - 2.2, y + 0.6);
     } else if (k === 'rit' || k === 'accel' || k === 'cresc' || k === 'dim') {
       const word = { rit: 'rit.', accel: 'accel.', cresc: 'cresc.', dim: 'dim.' }[k];
       const below = k === 'cresc' || k === 'dim';
@@ -493,6 +524,7 @@ function drawSpans(ctx, lay, sys, hitStaves) {
       let x = x0;
       if (startsHere) { text(ctx, word, x0, y, 1.9, TEXT_FONT, style); x = x0 + textWidth(ctx, word, 1.9, TEXT_FONT, style) + 0.6; }
       if (x1 - x > 1.5) dashed(ctx, x, x1, y - 0.5, 0.5, 1.0);
+      spanHit(sp, x0, Math.max(x1, x0 + 2.5), y - 1.8, y + 0.5);
     } else if (k === 'gliss') {
       const a = evs[0], b = evs[evs.length - 1];
       if (!a || !b || a === b) continue;
@@ -502,6 +534,7 @@ function drawSpans(ctx, lay, sys, hitStaves) {
       const ang = Math.atan2(yb - ya, xb - xa); ctx.translate((xa + xb) / 2, (ya + yb) / 2 - 0.35); ctx.rotate(ang);
       const w = textWidth(ctx, 'gliss.', 1.3, TEXT_FONT, 'italic'); if (w < Math.hypot(xb - xa, yb - ya) - 0.6) text(ctx, 'gliss.', -w / 2, 0, 1.3, TEXT_FONT, 'italic');
       ctx.restore();
+      spanHit(sp, xa, xb, Math.min(ya, yb) - 0.8, Math.max(ya, yb) + 0.5);
     } else if (k === 'volta') {
       const hsTop = hitStaves[0];
       const ma = hsTop.measures.find((q) => q.m === Math.max(sp.a.m, mA)), mb = hsTop.measures.find((q) => q.m === Math.min(sp.b.m, mB));
@@ -516,6 +549,7 @@ function drawSpans(ctx, lay, sys, hitStaves) {
       ctx.lineTo(vx1, y); if (endsHere && sp.closed !== false) ctx.lineTo(vx1, y + 2);
       ctx.stroke(); ctx.restore();
       if (startsHere) text(ctx, (sp.n || 1) + '.', vx0 + 0.5, y + 1.6, 1.6, TEXT_FONT, '');
+      spanHit(sp, vx0, vx1, y - 0.5, y + 2.2);
     }
   }
 }
@@ -528,6 +562,7 @@ function evAt(hs, at, v) {
 }
 // how far a note reaches below the staff (with a tuplet number under its stem)
 const lowestOf = (q) => { let h = 0; for (const n of q.notes) h = Math.max(h, -n.p / 2 + (!q.up ? STEM_LEN + (q.tup ? 2.3 : 0) : 0.5)); return h; };
+let CUR_HIT = null;   // the hit map of the page being drawn (slurs and hairpins can be dragged)
 // A slur or a hairpin over any number of notes, across bars and from one line to the next.
 function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX) {
   const v = sp.v || 1;
@@ -539,7 +574,7 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
     let dyn = hs.dynLine || 3.0;
     for (const q of evs) if (q.notes.length) dyn = Math.max(dyn, lowestOf(q) + 2.9);
     if (hs.dynMax) dyn = Math.min(dyn, hs.dynMax);   // never into the staff below (piano)
-    const yy = hs.y + 4 + dyn - 0.55;
+    const yy = hs.y + 4 + dyn - 0.55 + (sp.off || 0);
     const f = a ? findEv(lay.score, a.id) : null;
     let xa = a ? a.x + (f && f.dyn ? 3.6 : 0) : contentX - 0.4;
     // it ends just before the next dynamic, or at the end of its last note
@@ -559,6 +594,8 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
         xb = b.x + HEAD_W + 0.15;
       }
     }
+    if (startsHere) xa += sp.ax || 0;
+    if (endsHere) xb += sp.bx || 0;
     if (!startsHere && xb - xa < 2.2) return;   // only a stub left before the dynamic that ends it
     if (xb - xa < 1.2) xb = xa + 1.2;
     const open = 0.75;
@@ -567,6 +604,7 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
     const o1 = sp.dir === '<' ? (endsHere ? open : open * 0.55) : (endsHere ? 0 : open * 0.45);
     ctx.save(); ctx.lineWidth = 0.14; ctx.lineCap = 'round'; ctx.beginPath();
     ctx.moveTo(xa, yy - o0); ctx.lineTo(xb, yy - o1); ctx.moveTo(xa, yy + o0); ctx.lineTo(xb, yy + o1); ctx.stroke(); ctx.restore();
+    if (CUR_HIT) CUR_HIT.spans.push({ id: sp.id, kind: 'hairpin', x0: xa, x1: xb, y0: yy - open - 0.4, y1: yy + open + 0.4 });
     return;
   }
   // slur: below when every stem points up, otherwise above (a second voice: always on its side)
@@ -595,7 +633,10 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
       // a short slur starting at a stem-up note sits just right of the stem tip; ending, just left
       return { x: isStart ? sx + 0.15 : sx - 0.15, y: q.stemTip + dir * 0.55 };
     }
-    const y = above ? topY(q) - 0.75 : botY(q) + 0.75;
+    // (clear of the staccato, tenuto or accent on that side: the slur goes round them)
+    const f = findEv(lay.score, q.id), arts = (f && f.art) || [];
+    const near = arts.filter((x) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(x)).length;
+    const y = (above ? topY(q) - 0.75 : botY(q) + 0.75) + dir * (near ? near * 1.3 + 0.55 : 0);
     return { x: q.x + HEAD_W / 2 + (isStart ? 0.1 : -0.1), y };
   };
   const inner0 = withNotes.filter((q) => q !== a && q !== b);
@@ -614,7 +655,7 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
     if ((B.y - A.y) * dir > 0) A.y += dir * fix; else B.y += dir * fix;
   }
   // height grows with length, like Sibelius' default slurs
-  let h = Math.min(3.2, 0.55 + 0.32 * Math.sqrt(len));
+  let h = Math.min(2.0, 0.45 + 0.2 * Math.sqrt(len));
   // clear every note in between: first by lifting the curve, then by moving the whole slur out
   let shift = 0;
   for (const q of inner0) {
@@ -626,12 +667,22 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
     if (need + 0.35 > lift) {
       const more = need + 0.35 - lift;
       // up to a point the curve gets taller; beyond that the ends move out too
-      const dh = Math.min(more / Math.max(0.3, bez), Math.max(0, 4.2 - h));
+      const dh = Math.min(more / Math.max(0.3, bez), Math.max(0, 3.2 - h));
       h += dh; const rest = more - dh * bez; if (rest > 0) shift = Math.max(shift, rest);
     }
   }
   A.y += dir * shift; B.y += dir * shift;
+  // moved by hand (dragged up or down; each end; the height of the curve)
+  if (sp.off) { A.y += sp.off; B.y += sp.off; }
+  if (startsHere) { A.x += sp.ax || 0; A.y += sp.ay || 0; }
+  if (endsHere) { B.x += sp.bx || 0; B.y += sp.by || 0; }
+  if (B.x - A.x < 1) B.x = A.x + 1;
+  if (sp.hd) h = Math.max(0.25, h + sp.hd);
+  // the tips never sit on a staff line (they would seem to touch it): just off it, outwards
+  const offLine = (y) => { const r = y - hs.y; if (r < -0.3 || r > 4.3) return y; const k = Math.round(r); return Math.abs(r - k) < 0.22 ? hs.y + k + dir * 0.25 : y; };
+  A.y = offLine(A.y); B.y = offLine(B.y);
   drawSlur(ctx, A.x, A.y, B.x, B.y, above, h);
+  if (CUR_HIT) CUR_HIT.spans.push({ id: sp.id, kind: 'slur', above, x0: A.x, x1: B.x, y0: Math.min(A.y, B.y) - (above ? h : 0) - 0.4, y1: Math.max(A.y, B.y) + (above ? 0 : h) + 0.4 });
   // remembered, so endings (voltas) above go over the slur instead of through it
   if (above) (hs.slurTops = hs.slurTops || []).push({ x0: Math.min(A.x, B.x), x1: Math.max(A.x, B.x), y: Math.min(A.y, B.y) - h - 0.2 });
 }
@@ -643,12 +694,12 @@ function drawMarks(ctx, lay, sys, hitStaves) {
     const ms = score.measures[mm.m]; if (!ms) continue;
     let top = hs.y - 2.4;
     for (const q of mm.events || []) for (const n of q.notes) top = Math.min(top, n.y - (q.up ? STEM_LEN + 1.0 : 2.0));
-    if (ms.mark === 'segno' || ms.mark === 'coda') glyph(ctx, ms.mark === 'segno' ? GL.segno : GL.coda, mm.x0 + 0.4, top - 0.4, 3.2);
+    if (ms.mark === 'segno' || ms.mark === 'coda') { CUR_MARK = { id: 'mk' + mm.m, kind: 'mmark', name: ms.mark, m: mm.m }; glyph(ctx, ms.mark === 'segno' ? GL.segno : GL.coda, mm.x0 + 0.4, top - 0.4, 3.2); CUR_MARK = null; }
     if (ms.jump) {
       const t = JUMP_TEXT[ms.jump] || ms.jump;
       const w = textWidth(ctx, t, 1.9, TEXT_FONT, 'italic');
       const x = mm.x1 - w - 0.4;
-      text(ctx, t, x, top - 0.3, 1.9, TEXT_FONT, 'italic');
+      text(ctx, t, x, top - 0.3, 1.9, TEXT_FONT, 'italic'); hitBox({ id: 'jp' + mm.m, kind: 'jump', name: ms.jump, m: mm.m }, x - 0.3, x + w + 0.3, top - 2.2, top + 0.4);
       if (ms.jump === 'tocoda') { const cm = gm(GL.coda); glyph(ctx, GL.coda, x - (cm.r || 2) * 0.65 - 0.6, top - 0.15, 2.6); }
     }
   }
@@ -719,29 +770,32 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
   if (isFirst) cx = sys.x0 + sys.head - 0.4; else {
     // a change of clef: a smaller clef before the key and time
     let clefMoved = false;
-    for (const s of sys.staves) { const c2 = clefAt(s.st, m); if (m > 0 && c2 !== clefAt(s.st, m - 1)) { drawClef(ctx, c2, cx + 0.5, s.y, 3); clefMoved = true; } }
+    for (const s of sys.staves) { const c2 = clefAt(s.st, m); if (m > 0 && c2 !== clefEnd(s.st, m - 1)) { CUR_MARK = { id: s.st.id + '@' + m, kind: 'clef', name: c2, m, st: s.st.id }; drawClef(ctx, c2, cx + 0.5, s.y, 3); CUR_MARK = null; clefMoved = true; } }
     if (clefMoved) cx += 2.8;
     const key = keyAt(score, m), prevKey = keyAt(score, m - 1);
     if (ms.key !== undefined && ms.key !== null && key !== prevKey && m > 0) {
+      CUR_MARK = { id: 'key' + m, kind: 'key', name: String(key), m };
       for (const s of sys.staves) {
         const clef = clefAt(s.st, m);
         // cancel the old key with naturals when going to C
         if (key === 0) keyPositions(lay.concert ? prevKey : writtenKey(prevKey, s.inst), clef).forEach((kp, i) => glyph(ctx, GL.acc[0], cx + 0.6 + i * 1.0, yOf(s.y, kp.p)));
         else drawKey(ctx, lay.concert ? key : writtenKey(key, s.inst), clef, cx + 0.6, s.y);
       }
+      CUR_MARK = null;
       cx += keyWidth(key || prevKey) + 1;
     }
-    if (ms.time) { for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); cx += timeWidth(ms.time); }
+    if (ms.time) { CUR_MARK = { id: 'time' + m, kind: 'time', name: ms.time.join('/'), m }; for (const s of sys.staves) drawTime(ctx, ms.time, cx + 0.5, s.y, ms.timeSym); CUR_MARK = null; cx += timeWidth(ms.time); }
   }
   const contentX0 = cx + 1.3 + (ms.start === 'repeat' ? 2 : 0);
   // ---- barline at the end of the bar
   const top = sys.staves[0].y, bot = sys.staves[sys.staves.length - 1].y + 4;
   const bx = mm.x1;
   drawBarline(ctx, ms.bar || (lastInSys && mm.end === score.measures.length - 1 ? 'final' : 'single'), bx, sys.staves, lay);
-  if (ms.start === 'repeat') drawRepeatStart(ctx, isFirst ? sys.x0 + sys.head - 1.2 : mm.x0, sys.staves);
+  if (ms.bar && ms.bar !== 'single' && !(ms.bar === 'final' && m === score.measures.length - 1)) hitBox({ id: 'bar' + m, kind: 'barline', name: ms.bar, m }, bx - 2.4, bx + 0.25, top, bot);
+  if (ms.start === 'repeat') { const rx = isFirst ? sys.x0 + sys.head - 1.2 : mm.x0; drawRepeatStart(ctx, rx, sys.staves); hitBox({ id: 'rs' + m, kind: 'repstart', name: 'repeat', m }, rx - 0.2, rx + 2.4, top, bot); }
   // ---- above the bar: tempo, rehearsal marks, text
-  if (ms.tempo && (ms.tempo.text || ms.tempo.bpm)) drawTempo(ctx, ms.tempo, isFirst ? sys.x0 + sys.head : contentX0 - 0.8, top - Math.max(3.2, sys.above - 0.6));
-  if (ms.rehearsal) { const tx = mm.x0 + 0.2, ty = top - Math.max(3.5, sys.above - 0.6); const w = textWidth(ctx, ms.rehearsal, 2.1, TEXT_FONT, '700'); ctx.lineWidth = 0.15; ctx.strokeRect(tx - 0.4, ty - 2, w + 0.8, 2.5); text(ctx, ms.rehearsal, tx, ty, 2.1, TEXT_FONT, '700'); }
+  if (ms.tempo && (ms.tempo.text || (ms.tempo.bpm && ms.tempo.show !== false))) { const tx = isFirst ? sys.x0 + sys.head : contentX0 - 0.8, ty = top - Math.max(3.2, sys.above - 0.6); const tw = drawTempo(ctx, ms.tempo, tx, ty); hitBox({ id: 'tempo' + m, kind: 'tempo', name: ms.tempo.text || String(ms.tempo.bpm), m }, tx - 0.2, tx + Math.max(2, tw || 6), ty - 2.2, ty + 0.6); }
+  if (ms.rehearsal) { const tx = mm.x0 + 0.2, ty = top - Math.max(3.5, sys.above - 0.6); const w = textWidth(ctx, ms.rehearsal, 2.1, TEXT_FONT, '700'); ctx.lineWidth = 0.15; ctx.strokeRect(tx - 0.4, ty - 2, w + 0.8, 2.5); text(ctx, ms.rehearsal, tx, ty, 2.1, TEXT_FONT, '700'); hitBox({ id: 'reh' + m, kind: 'rehearsal', name: ms.rehearsal, m }, tx - 0.5, tx + w + 0.5, ty - 2.1, ty + 0.6); }
 
   // ---- multi-bar rest
   if (mm.multi) {
@@ -818,7 +872,9 @@ function drawTempo(ctx, tempo, x, y) {
     glyph(ctx, g, xx, y - 0.1, 3); xx += 1.4;
     if (tempo.dotted) { glyph(ctx, GL.dot, xx - 0.2, y - 0.3, 3); xx += 0.6; }
     text(ctx, ' = ' + tempo.bpm + (tempo.text ? ')' : ''), xx, y, 2.0);
+    xx += textWidth(ctx, ' = ' + tempo.bpm + (tempo.text ? ')' : ''), 2.0);
   }
+  return xx - x;
 }
 
 // ---------------------------------------------------------------------
@@ -828,10 +884,16 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   const score = lay.score;
   const bar = s.st.bars[m] || [];
   const clef = clefAt(s.st, m);
-  const bottom = CLEFS[clef].bottom;
+  let bottom = CLEFS[clef].bottom;
+  // (a clef change in the middle of the bar, before an event: from there on, in the voice that has it)
+  let curClef = clef;
   const key = lay.concert ? keyAt(score, m) : writtenKey(keyAt(score, m), s.inst);
   const sel = opts.selection || new Set();
   const selBars = opts.selBars;
+  // a captured bar to check
+  if (!opts.voice2 && opts.doubt && opts.doubt.stId === (s.st.base || s.st).id && opts.doubt.bars.has(m)) {
+    ctx.save(); ctx.fillStyle = 'rgba(232,140,20,0.2)'; ctx.fillRect(mm.x0 + 0.1, s.y - 1.5, mm.x1 - mm.x0 - 0.2, 7); ctx.restore();
+  }
   // the bar selection box
   if (!opts.voice2 && selBars && (selBars.sts ? selBars.sts.some((q) => (q.base || q) === (s.st.base || s.st)) : (selBars.st.base || selBars.st) === (s.st.base || s.st)) && m >= selBars.from && m <= selBars.to) {
     ctx.save(); ctx.fillStyle = opts.selColor || 'rgba(43,111,214,0.13)'; ctx.fillRect(mm.x0 + 0.1, s.y - 1, mm.x1 - mm.x0 - 0.2, 6); ctx.restore();
@@ -853,6 +915,11 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     const ott = ottavaAt(score, s.st.id, m, p);
     const x = ev.full ? (hm.cx0 + mm.x1) / 2 - 0.9 : xs.get(p) ?? hm.cx0;
     const e = { ev, pos: p, len, x, notes: [] };
+    if (ev.clef && ev.clef !== curClef && CLEFS[ev.clef]) {
+      curClef = ev.clef; bottom = CLEFS[ev.clef].bottom;
+      const accW = ev.notes && ev.notes.some((n) => n.a) ? 1.1 : 0;
+      CUR_MARK = { id: ev.id, kind: 'evclef', name: ev.clef, m, st: s.st.id }; drawClef(ctx, ev.clef, x - accW - 2.9, s.y, 3); CUR_MARK = null;
+    }
     if (ev.notes) {
       const ns = ev.notes.map((n0) => {
         const n = lay.concert ? n0 : toWritten(n0, s.inst);
@@ -917,6 +984,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   for (const g of groups) drawBeam(ctx, g, s.y, sel, opts);
   // flags and stems for unbeamed notes
   for (const e of evs) if (e.notes.length && !e.beamed) drawStemFlag(ctx, e, s.y, color(e));
+  for (const e of evs) if (e.notes.length && e.ev.art) drawTrem(ctx, e, s.y);
   // where each stem ends (slurs on the stem side attach there)
   for (const e of evs) if (e.hitRef && e.stemTip !== undefined) { e.hitRef.stemTip = e.stemTip; e.hitRef.stemX = e.stemX; }
   // tuplet brackets
@@ -931,6 +999,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
       const x0 = e.x + HEAD_W + 0.15, y0 = yOf(s.y, n.p) + (below ? 0.45 : -0.45);
       const x1 = nx ? nx.x - 0.15 : mm.x1 - 0.4;
       drawTie(ctx, x0, x1, y0, below);
+      hitBox({ id: ev0Id(e), kind: 'tie', name: 'tie', m }, x0, x1, y0 + (below ? 0 : -1.0), y0 + (below ? 1.0 : 0));
     }
   }
   // a tie arriving at the start of the line from the previous system
@@ -942,31 +1011,51 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   let dynLine = 3.0;
   const hpSpans = (score.spans || []).filter((q) => q.kind === 'hairpin' && q.st === (s.st.base || s.st).id && (q.v || 1) === (opts.voice2 ? 2 : 1) && q.a.m <= m && q.b.m >= m);
   const underHp = (e) => hpSpans.some((q) => (q.a.m < m || q.a.pos <= e.pos) && (q.b.m > m || q.b.pos >= e.pos));
-  for (const e of evs) if (e.ev.dyn || e.ev.hp || underHp(e)) dynLine = Math.max(dynLine, lowestBelow(e, s.y) + 2.9);
+  for (const e of evs) if (e.ev.dyn || e.ev.hp || underHp(e) || (e.ev.txt && e.ev.txtBelow)) dynLine = Math.max(dynLine, lowestBelow(e, s.y) + 2.9);
   for (const e of evs) if (e.ev.dyn || underHp(e)) hm.dynLow = Math.max(hm.dynLow || 0, lowestBelow(e, s.y));
   for (let i = 0; i < evs.length; i++) {
     const e = evs[i];
     const ev = e.ev;
-    if (ev.art && ev.art.length && e.notes.length) drawArts(ctx, e, s.y);
+    if (ev.art && ev.art.length && e.notes.length) { try { drawArts(ctx, e, s.y); } finally { CUR_MARK = null; } }
     if (ev.art && ev.art.includes('ferm') && ev.rest) glyph(ctx, GL.art.ferm[0], e.x, s.y - 1);
     // dynamics are drawn once the whole line is known, all on one level with the hairpins
-    if (ev.dyn) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3, dyn: ev.dyn, c: color(e) });
-    if (ev.txt) {
-      const ty = s.y - Math.max(1.6, highestAbove(e, s.y) + 1.2);
+    if (ev.dyn) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3, dyn: ev.dyn, c: color(e), id: ev.id });
+    // words under the staff (dolce, cresc.), on the line of the dynamics, after one if there is one
+    if (ev.txt && ev.txtBelow) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3 + (ev.dyn ? 0.9 + 1.1 * ev.dyn.length : 0), txt: ev.txt, it: ev.txtStyle !== 'tech' && ev.txtStyle !== 'plain', c: color(e), id: ev.id });
+    if (ev.fing && e.notes.length) {
+      // fingering: small upright numbers over the note (several, one over the other, for a chord)
+      const parts = String(ev.fing).split(/[\s,]+/).filter(Boolean);
+      // above the articulations and ornaments that are over the note (never on top of them)
+      const arts = ev.art || [];
+      const nearUp = !e.up && arts.some((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a));
+      const far = arts.filter((a) => ['ferm', 'fermS', 'fermL', 'trill', 'mord', 'prall', 'turn', 'turnInv', 'up', 'down', 'harm', 'stopped', 'open', 'snap'].includes(a)).length;
+      const topNote = (e.notes[e.notes.length - 1].p - 8) / 2;
+      const cxF = e.x + HEAD_W / 2, base = s.y - Math.max(1.0, highestAbove(e, s.y) + 0.6, nearUp ? topNote + 2.6 : 0) - far * 2.9;
+      parts.forEach((d, k) => {
+        const fy = base - k * 1.45, fw = textWidth(ctx, d, 1.45, TEXT_FONT, '600');
+        text(ctx, d, cxF - fw / 2, fy, 1.45, TEXT_FONT, '600');
+      });
+      if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ id: ev.id, kind: 'fing', name: String(ev.fing), x0: cxF - 0.7, x1: cxF + 0.7, y0: base - parts.length * 1.45 - 0.1, y1: base + 0.3 });
+    }
+    if (ev.txt && !ev.txtBelow) {
+      const ty = s.y - Math.max(1.6, highestAbove(e, s.y) + 1.2) - (ev.fing ? 1.5 * String(ev.fing).split(/[\s,]+/).filter(Boolean).length : 0);
       const st2 = ev.txtStyle === 'plain' || ev.txtStyle === 'tech' || ev.txtStyle === 'box' ? '' : 'italic';
       text(ctx, ev.txt, e.x, ty, 1.7, TEXT_FONT, st2);
+      if (CUR_HIT && CUR_HIT.marks) CUR_HIT.marks.push({ id: ev.id, kind: 'txt', name: ev.txt, x0: e.x - 0.2, x1: e.x + Math.max(1.5, String(ev.txt).length * 0.8), y0: ty - 1.5, y1: ty + 0.5 });
       if (ev.txtStyle === 'box') { const w = textWidth(ctx, ev.txt, 1.7, TEXT_FONT, st2); ctx.lineWidth = 0.13; ctx.strokeRect(e.x - 0.45, ty - 1.65, w + 0.9, 2.2); }
     }
     if (ev.chord) {
       // a chord symbol above the staff
       const cy = s.y - Math.max(2.6, highestAbove(e, s.y) + (ev.txt ? 3.4 : 1.6));
       text(ctx, prettyChord(ev.chord), e.x, cy, 2.0, '"Helvetica Neue", Arial, sans-serif', '600');
+      hitBox({ id: ev.id, kind: 'chord', name: ev.chord, m }, e.x - 0.3, e.x + textWidth(ctx, prettyChord(ev.chord), 2.0, '"Helvetica Neue", Arial, sans-serif', '600') + 0.3, cy - 2.0, cy + 0.5);
     }
     if (ev.lyric) {
       // a syllable under the note, centred; a hyphen joins it to the next one
       const ly = s.y + 4 + Math.max(s.lyr || 4.2, dynLine + (evs.some((q) => q.ev.dyn || q.ev.hp) ? 2.6 : 0));
       const w = textWidth(ctx, ev.lyric.replace(/-$/, ''), 1.8);
       text(ctx, ev.lyric.replace(/-$/, ''), e.x + HEAD_W / 2 - w / 2, ly, 1.8);
+      hitBox({ id: ev.id, kind: 'lyric', name: ev.lyric, m }, e.x + HEAD_W / 2 - w / 2 - 0.3, e.x + HEAD_W / 2 + w / 2 + 0.3, ly - 1.7, ly + 0.5);
       if (/-$/.test(ev.lyric)) {
         const nx = evs.slice(i + 1).find((q) => q.ev.lyric);
         const x0 = e.x + HEAD_W / 2 + w / 2 + 0.3, x1 = nx ? nx.x + HEAD_W / 2 - textWidth(ctx, nx.ev.lyric.replace(/-$/, ''), 1.8) / 2 - 0.3 : mm.x1 - 0.4;
@@ -997,7 +1086,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
 }
 // "C#m7/Bb" with real sharp and flat signs
 export const prettyChord = (c) => c.replace(/([A-G])#/g, '$1♯').replace(/([A-G])b/g, '$1♭').replace(/maj/i, 'maj').replace(/\bo\b/, '°');
-const highestAbove = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, (n.p - 8) / 2 + (e.up ? STEM_LEN : 0.5)); return h; };
+const highestAbove = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, (n.p - 8) / 2 + (e.up ? STEM_LEN : 0.5)); if (e.up && e.stemTip !== undefined) h = Math.max(h, sy - e.stemTip + 0.2); return h; };
 const lowestBelow = (e, sy) => { let h = 0; for (const n of e.notes) h = Math.max(h, -n.p / 2 + (!e.up ? STEM_LEN + (e.ev.tup ? 2.3 : 0) : 0.5)); const near = (e.ev.art || []).filter((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)).length; if (near && e.up) h += near * 1.0; return h; };
 function slurY(e, sy, above) {
   const ns = e.notes; if (!ns.length) return sy;
@@ -1098,7 +1187,24 @@ function drawStemFlag(ctx, e, sy) {
     const fg = (e.up ? GL.flagUp : GL.flagDown)[Math.min(64, e.ev.t)];
     glyph(ctx, fg, st.x - STEM_T / 2, st.y1);
   }
-  if (e.ev.art) { const tg = e.ev.art.includes('trem3') ? GL.orn.trem3 : e.ev.art.includes('trem2') ? GL.orn.trem2 : e.ev.art.includes('trem') ? GL.art.trem[0] : null; if (tg) glyph(ctx, tg, st.x - 0.6, (st.y0 + st.y1) / 2 + 0.6); }
+}
+// Tremolo strokes: across the stem (also on beamed notes), or over a whole note
+function drawTrem(ctx, e, sy) {
+  const a = e.ev.art; if (!a) return;
+  const tg = a.includes('trem3') ? GL.orn.trem3 : a.includes('trem2') ? GL.orn.trem2 : a.includes('trem') ? GL.art.trem[0] : null;
+  if (!tg) return;
+  const m = gm(tg), w = (m.r - m.l) || 1.2;
+  if (e.ev.t <= 1) {
+    const lo = e.notes[0].p, hi = e.notes[e.notes.length - 1].p;
+    const mid = e.up === false ? yOf(sy, lo) + 2.2 : yOf(sy, hi) - 2.2;
+    glyph(ctx, tg, e.x + HEAD_W / 2 - w / 2 - m.l, mid + (m.a - m.d) / 2);
+    return;
+  }
+  const st = stemEnds(e, sy);
+  const tip = e.stemTip !== undefined ? e.stemTip : st.y1;
+  // between the note head and the end of the stem (or the beam)
+  const mid = st.y0 + (tip - st.y0) * 0.55;
+  glyph(ctx, tg, st.x - w / 2 - m.l, mid + (m.a - m.d) / 2);
 }
 function drawBeam(ctx, g, sy, sel, opts) {
   const ends = g.map((e) => ({ e, ...stemEnds(e, sy) }));
@@ -1165,6 +1271,7 @@ function drawRest(ctx, e, sy, time) {
   glyph(ctx, g, e.x, yOf(sy, p));
   for (let d = 0; d < (ev.dots || 0); d++) glyph(ctx, GL.dot, e.x + gm(g).w + 0.4 + d * 0.55, yOf(sy, 5));
 }
+const ev0Id = (e) => (e.ev && e.ev.id) || '';
 function drawTie(ctx, x0, x1, y, below) {
   if (x1 - x0 < 0.4) x1 = x0 + 0.8;
   const h = Math.min(1.1, 0.35 + (x1 - x0) * 0.08) * (below ? 1 : -1);
@@ -1177,13 +1284,13 @@ function drawTie(ctx, x0, x1, y, below) {
 function drawSlur(ctx, xa, ya, xb, yb, above, height) {
   // a bezier whose control points sit a quarter in from each end, lifted along the slur's normal;
   // the inner edge is lower by the thickness, so the slur is thin at the tips and full in the middle
-  const H = (height || Math.min(2.2, 0.8 + Math.abs(xb - xa) * 0.06)) / 0.75;
+  const H = (height || Math.min(1.5, 0.55 + Math.abs(xb - xa) * 0.04)) / 0.75;   // low and flat, as engravers draw them
   const dx = xb - xa, dy = yb - ya, L = Math.hypot(dx, dy) || 1;
   const nx = (dy / L) * (above ? 1 : -1), ny = (-dx / L) * (above ? 1 : -1);   // unit normal towards the curve's outside
   const ux = dx / L, uy = dy / L;
-  const k = Math.min(0.3, 0.18 + 1.2 / Math.max(4, L));   // short slurs are rounder
+  const k = Math.min(0.34, 0.24 + 0.8 / Math.max(4, L));   // the middle stays flat; short slurs a little rounder
   const c1 = [xa + ux * L * k, ya + uy * L * k], c2 = [xb - ux * L * k, yb - uy * L * k];
-  const T = Math.min(0.24, 0.12 + L * 0.004);                // thickness in the middle (sp)
+  const T = Math.min(0.19, 0.1 + L * 0.003);                // thickness in the middle (sp)
   const o = H, i2 = H - T / 0.75;
   ctx.beginPath();
   ctx.moveTo(xa, ya);
@@ -1203,8 +1310,11 @@ function drawArts(ctx, e, sy) {
   const nearSide = e.up ? 1 : 0;   // 1 = below
   const cx = e.x + HEAD_W / 2;
   let aboveStack = 0;
-  const topY = Math.min(sy - 1.2, yOf(sy, e.notes[e.notes.length - 1].p) - (e.up ? STEM_LEN + 1.2 : 1.6));
+  // (over the stem's real end: a beam may lift it above its usual length)
+  const tipAbove = e.up && e.stemTip !== undefined ? e.stemTip - 1.4 : Infinity;
+  const topY = Math.min(sy - 1.2, yOf(sy, e.notes[e.notes.length - 1].p) - (e.up ? STEM_LEN + 1.2 : 1.6), tipAbove);
   for (const a of arts) {
+    CUR_MARK = { id: e.ev.id, kind: 'art', name: a };
     // ornaments and string or brass signs: above the staff, one over the other
     const orn = { mord: 'mord', prall: 'prall', turn: 'turn', turnInv: 'turnInv', stopped: 'stopped', open: 'open', snap: 'snapA', fermS: 'fermSA', fermL: 'fermLA' }[a];
     if (orn) { const g = GL.orn[orn], m = gm(g); glyph(ctx, g, cx - (m.l + m.r) / 2, topY - aboveStack); aboveStack += Math.max(1.4, m.a + m.d + 0.5); continue; }
@@ -1220,7 +1330,8 @@ function drawArts(ctx, e, sy) {
     if (!GL.art[a] || a === 'trem') continue;
     const farAbove = a === 'ferm' || a === 'up' || a === 'down' || a === 'trill' || a === 'harm' || a === 'breath';
     if (farAbove) {
-      const yy = Math.min(sy - 1.2, yOf(sy, e.notes[e.notes.length - 1].p) - (e.up ? STEM_LEN + 1.2 : 1.6)) - aboveStack;
+      // (and above any staccato, tenuto or accent already on that side)
+      const yy = Math.min(sy - 1.2, yOf(sy, e.notes[e.notes.length - 1].p) - (e.up ? STEM_LEN + 1.2 : 1.6), tipAbove, nearSide ? Infinity : yNear - 1.0) - aboveStack;
       const g = GL.art[a][0];
       const m = gm(g);
       glyph(ctx, g, a === 'breath' ? e.x + 2.2 : cx - (m.l + m.r) / 2, yy);

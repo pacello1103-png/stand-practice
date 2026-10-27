@@ -171,6 +171,11 @@ function scoreTitle(title, words) {
 // onEarly(results) gets a first answer straight away when the full one takes longer.
 export async function searchWorks(q, onEarly) {
   const pq = await parseQuery(q);
+  // a composer who is not in Stand's own list: IMSLP's list of composers finds them
+  if (!pq.composer) {
+    const found = await findComposerCategory(q).catch(() => null);
+    if (found) { pq.composer = found.composer; pq.words = found.words; pq.keyWords = found.words.filter((w) => !STOP.has(w)); }
+  }
   let results = [];
   // IMSLP's own search runs at the same time; it is used when the composer's list is not enough
   const quick = nativeSearch(q).catch(() => []);
@@ -187,12 +192,12 @@ export async function searchWorks(q, onEarly) {
     results = works.map((t) => ({ title: t, score: scoreTitle(t, pq.words) - fold(t).length / 2000 }))
       .filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 30);
   }
-  if (!pq.composer || results.length < 3) {
+  if (!pq.composer || results.length < 6) {
     const extra = await quick;
     const seen = new Set(results.map((r) => r.title));
     for (const t of extra) if (!seen.has(t)) { seen.add(t); results.push({ title: t, score: 0.2 }); }
   }
-  if (results.length === 0) {
+  if (results.length < 5) {
     const extra = await wikidataSearch(q).catch(() => []);
     const seen = new Set(results.map((r) => r.title));
     for (const t of extra) if (!seen.has(t)) { seen.add(t); results.push({ title: t, score: 0.15 }); }
@@ -200,15 +205,39 @@ export async function searchWorks(q, onEarly) {
   return { composer: pq.composer, results, browse: false };
 }
 
+// IMSLP's own search, asked twice: as typed, and without the instrument and filler words (a
+// piece's page is named after the piece, so "cello" or "for" can hide it).
 async function nativeSearch(q) {
-  const d = await jsonp({ action: 'query', list: 'search', srsearch: q, srnamespace: '0', srlimit: '20' });
+  const plain = fold(q).split(' ').filter((w) => w && !INSTR_WORDS.has(w) && !STOP.has(w)).join(' ');
+  const qs = [q]; if (plain && plain !== fold(q) && plain.split(' ').length >= 1) qs.push(plain);
+  const answers = await Promise.all(qs.map((x) => jsonp({ action: 'query', list: 'search', srsearch: x, srnamespace: '0', srlimit: '40' }).catch(() => null)));
   const out = [];
-  for (const r of (d.query && d.query.search) || []) {
+  for (const d of answers) for (const r of (d && d.query && d.query.search) || []) {
     const m = r.snippet && r.snippet.match(/#REDIRECT \[\[([^\]]+)\]\]/i);
     const t = m ? m[1].replace(/<[^>]+>/g, '') : r.title;
     if (/\(.+\)$/.test(t) && !out.includes(t)) out.push(t);
   }
+  if (!answers.some(Boolean)) throw new Error('network');
   return out;
+}
+const INSTR_WORDS = new Set(['cello', 'violoncello', 'violin', 'viola', 'piano', 'flute', 'oboe', 'clarinet', 'bassoon', 'horn', 'trumpet', 'guitar', 'harp', 'organ', 'bass', 'double', 'solo', 'and', 'with', 'for', 'sheet', 'music', 'score', 'pdf', 'free']);
+// A composer page on IMSLP is a category named "Surname, Given names".
+async function findComposerCategory(q) {
+  const f = fold(q), toks = f.split(' ').filter((w) => w.length >= 3 && !MUSIC.has(w) && !STOP.has(w) && !/^\d+$/.test(w));
+  if (!toks.length) return null;
+  const d = await jsonp({ action: 'query', list: 'search', srsearch: toks.join(' '), srnamespace: '14', srlimit: '8' }, 5000);
+  for (const r of (d.query && d.query.search) || []) {
+    const cat = r.title.replace(/^Category:/, '');
+    const m = cat.match(/^([^,()]+), ([^,()]+)$/); if (!m) continue;
+    const sur = fold(m[1]), given = fold(m[2]).split(' ');
+    if (!(' ' + f + ' ').includes(' ' + sur + ' ')) continue;
+    let rest = ' ' + f + ' ';
+    rest = rest.replace(' ' + sur + ' ', ' ');
+    for (const g of given) rest = rest.replace(' ' + g + ' ', ' ');
+    const words = rest.trim().split(/\s+/).filter(Boolean).map(norm);
+    return { composer: { c: cat, n: m[2] + ' ' + m[1], k: [sur], g: given, p: 0 }, words };
+  }
+  return null;
 }
 
 async function wikidataSearch(q) {

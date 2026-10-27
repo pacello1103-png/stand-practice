@@ -140,6 +140,22 @@ function inkRuns(rows) {
   for (let y = 0; y <= rows.length; y++) { const ink = y < rows.length && rows[y] > 0.004; if (ink && s < 0) s = y; if (!ink && s >= 0) { runs.push([s / rows.length, y / rows.length]); s = -1; } }
   return runs;
 }
+// Truly blank rows of a page at full size (stems, slurs and low notes count as ink, unlike the
+// rough profile used elsewhere): where a cut between systems really touches nothing.
+function blankGaps(cv) {
+  const w = cv.width, h = cv.height, g = cv.getContext('2d', { willReadFrequently: true });
+  const d = g.getImageData(0, 0, w, h).data;
+  const x0 = Math.round(w * 0.03), x1 = Math.round(w * 0.97);
+  const out = []; let s = -1;
+  for (let y = 0; y <= h; y++) {
+    let ink = 0;
+    if (y < h) for (let x = x0; x < x1; x += 2) { const i = (y * w + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 480) { ink++; if (ink > 1) break; } }
+    const blank = y < h && ink <= 1;
+    if (blank && s < 0) s = y;
+    if (!blank && s >= 0) { if (y - s >= 3) out.push({ mid: (s + y - 1) / 2 / h, len: (y - s) / h, a: s / h, b: y / h }); s = -1; }
+  }
+  return out;
+}
 export function openGluer({ doc, orig, next, glue, pageLabel }) {
   return new Promise(async (resolve) => {
     const root = el('section', 'ptool');
@@ -172,12 +188,17 @@ export function openGluer({ doc, orig, next, glue, pageLabel }) {
     const aRuns = inkRuns(inkRows(a)), bRuns = inkRuns(inkRows(bcv));
     let endA = aRuns.length ? aRuns[aRuns.length - 1][1] : 1;
     if (aRuns.length > 1) { const l = aRuns[aRuns.length - 1], pv = aRuns[aRuns.length - 2]; if (l[1] - l[0] < 0.025 && l[0] - pv[1] > 0.03) endA = pv[1]; }
+    { const ga = blankGaps(a); const last = ga.length ? ga[ga.length - 1] : null; if (last && last.b >= 0.995 && last.a > endA - 0.05) endA = last.a; }
     endA = Math.min(1, endA + 0.012);
     let topB = bRuns.length ? bRuns[0][0] : 0;
     if (bRuns.length > 1 && bRuns[0][1] - bRuns[0][0] < 0.025 && bRuns[1][0] - bRuns[0][1] > 0.03) topB = bRuns[1][0];
     topB = Math.max(0, topB - 0.012);
-    const gaps = pageGaps(bcv).filter((q) => q.mid > topB + 0.03);
-    let cut = glue && glue.next === next ? glue.cut : (gaps.find((q) => q.len > 0.012) || { mid: 0.3 }).mid;
+    // the gaps between systems: blank right across, and as tall as the usual space between lines
+    const all = blankGaps(bcv).filter((q) => q.mid > topB + 0.03 && q.mid < 0.985);
+    const lens = all.map((q) => q.len).sort((x, y) => y - x);
+    const typical = lens.length ? lens[Math.min(lens.length - 1, Math.floor(lens.length / 3))] : 0.01;
+    const gaps = all.filter((q) => q.len >= Math.max(0.006, typical * 0.45));
+    let cut = glue && glue.next === next ? glue.cut : (gaps[0] || { mid: 0.3 }).mid;
     const snap = (y) => { let best = null; for (const g of gaps) if (!best || Math.abs(g.mid - y) < Math.abs(best.mid - y)) best = g; return best && Math.abs(best.mid - y) < 0.06 ? best.mid : y; };
     const line = el('div', 'ptool-cut ptool-glue'); const grip = el('b', '', '↕'); line.append(grip); right.append(line);
     const paint = () => {

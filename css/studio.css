@@ -7,10 +7,11 @@
 .st-main { flex: 1; min-height: 0; display: flex; gap: 0; }
 .st-stage { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; background: var(--stage); padding: 18px; overflow: hidden; touch-action: none; }
 #stCanvas { max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: var(--shadow); background: #000; display: block; }
-.st-empty { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); width: min(430px, calc(100% - 40px)); display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 18px 20px; border-radius: 18px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); }
-.st-empty svg { width: 30px; height: 30px; color: var(--accent-text); }
-.st-empty b { font: 600 18px var(--font-serif); }
-.st-empty span { font-size: 13px; color: var(--muted); }
+.st-empty { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); width: auto; max-width: calc(100% - 32px); display: flex; flex-direction: row; align-items: center; gap: 10px; text-align: left; padding: 7px 7px 7px 14px; border-radius: 999px; background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line); }
+.st-empty svg { width: 20px; height: 20px; color: var(--accent-text); flex: none; }
+.st-empty b { font: 600 15px var(--font-serif); white-space: nowrap; }
+.st-empty > span { display: none; }
+.st-empty .btn { padding: 7px 14px; min-height: 0; border-radius: 999px; }
 .st-tap { position: absolute; right: 26px; bottom: 26px; width: 150px; height: 150px; border-radius: 75px; background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
 .st-tap b { font-size: 26px; }
 .st-tap span { font-size: 12px; opacity: .85; padding: 0 16px; }
@@ -80,5 +81,33 @@
   .st-main { flex-direction: column; }
   .st-side { width: auto; max-height: 38vh; border-left: 0; border-top: 1px solid var(--line); }
 }
-.st-empty .btn span { color: inherit; font-size: 15px; }
-.st-empty .btn svg { width: 18px; height: 18px; color: inherit; }
+.st-empty .btn span { color: inherit; font-size: 14px; display: inline; }
+.st-empty .btn svg { width: 16px; height: 16px; color: inherit; }
+
+/* iPhone: the whole Studio scrolls up and down; the video gets a big part of the screen and
+   the timeline and the settings come under it */
+@media (max-width: 600px) and (orientation: portrait) {
+  .studio { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .studio .topbar { position: sticky; top: 0; z-index: 4; flex: none; background: var(--surface-solid); }
+  .st-main { display: contents; }
+  .st-stage { order: 1; flex: none; height: max(340px, 52vh); padding: 10px; touch-action: pan-y; }
+  .st-tracks, .st-timeline { touch-action: pan-y; }
+  .st-timeline { order: 2; height: auto; min-height: 150px; padding-bottom: 8px; }
+  .st-tracks { flex: none; height: 124px; }
+  .st-side { order: 3; flex: none; max-height: none; overflow: visible; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .studio { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .studio .topbar { position: sticky; top: 0; z-index: 4; flex: none; background: var(--surface-solid); }
+  .st-main { flex: none; flex-direction: row; height: calc(100vh - 62px); height: calc(100dvh - 62px); }
+  .st-side { width: 290px; max-height: none; border-top: 0; border-left: 1px solid var(--line); }
+  .st-stage { padding: 8px; touch-action: pan-y; }
+  .st-timeline { height: auto; }
+  .st-tracks, .st-timeline { touch-action: pan-y; }
+  .st-tracks { flex: none; height: 124px; }
+}
+@media (max-width: 600px), (max-height: 500px) {
+  .st-empty { bottom: 10px; padding: 6px 6px 6px 12px; gap: 8px; }
+  .st-empty > svg, .st-empty > span { display: none; }
+  .st-empty b { font-size: 13px; }
+}

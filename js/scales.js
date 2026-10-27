@@ -1,5 +1,5 @@
 // Scale and arpeggio player with selectable tuning system and a soft, unobtrusive tone.
-import { getCtx, master } from './audio.js';
+import { getCtx, master, wantAudio, freshSound } from './audio.js';
 import { tunedFreq, centsOffset, NOTE_NAMES, midiName } from './temperament.js';
 import { playNote, holdNote } from './synth.js';
 
@@ -56,7 +56,7 @@ export class ScalePlayer {
 
   _outFresh() {
     const ctx = getCtx();
-    if (!this.out) {
+    if (!this.out || this.out.context !== ctx) {
       this.out = ctx.createGain();
       this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 7500; this.lp.Q.value = 0.4;
       this.out.connect(this.lp).connect(master());
@@ -77,19 +77,23 @@ export class ScalePlayer {
     const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.32 : 0.18, t + 0.0015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 600;
     o.connect(g).connect(hp).connect(master()); o.start(t); o.stop(t + 0.045);
+    (this._clicks = this._clicks || []).push(o);
   }
 
-  start(at = 0) {
+  start(at = 0, fromIndex = 0, again = false) {
+    // when iOS replaces the sound system (after the microphone, a call…), the scale carries on in the new one
+    if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.playing) { const i = this._i; this.out = null; this.stop(true); this.start(0, Math.max(0, i - 1), true); } }); }
+    if (!this.playing) { freshSound(); this.out = null; }
     const ctx = getCtx();
     this.stop(true);
     this._nodes = [];
     this._list = this.notes();
-    this._i = 0; this._queue = []; this._end = undefined;
-    this.playing = true;
+    this._i = Math.min(fromIndex, this._list.length - 1); this._queue = []; this._end = undefined;
+    this.playing = true; wantAudio(true, 'scale');
     // one bar of count-in: four beats at the scale's tempo, shown as 4 3 2 1 and clicked
     let t0 = at && at > ctx.currentTime ? at : ctx.currentTime + 0.12;
     const beat = 60 / this.bpm;
-    if (this.countIn) {
+    if (this.countIn && !fromIndex && !again) {
       for (let i = 0; i < 4; i++) {
         const t = t0 + i * beat;
         if (!this.click) this._click(t, i === 0);   // with the metronome on, its own clicks are heard
@@ -107,7 +111,7 @@ export class ScalePlayer {
   }
   _startDrone() {
     const f = this.freqOf(12 * (this.octave + 1) + this.tonic);
-    const a = holdNote(this._out(), f, 'flute', 0.4);
+    const a = holdNote(this._out(), f, 'bow', 0.4);
     this._drone = { stop: (t) => a.stop(t) };
   }
   // seconds per note: perBeat notes in one beat (2, 3, 4), or one note over 1/perBeat beats (2, 3, 4 beats)
@@ -166,9 +170,12 @@ export class ScalePlayer {
     }
   }
   stop(silent) {
-    clearInterval(this._timer); this._timer = null;
+    clearInterval(this._timer); this._timer = null; wantAudio(false, 'scale');
     cancelAnimationFrame(this._raf);
     const ctx = getCtx(), now = ctx.currentTime;
+    // (the clicks of a count-in still to come are not heard after stopping)
+    for (const o of this._clicks || []) { try { o.disconnect(); } catch {} }
+    this._clicks = [];
     if (this.out) { this.out.gain.cancelScheduledValues(now); this.out.gain.setTargetAtTime(0, now, 0.03); this.out = null; }
     if (this._drone) { this._drone.stop(now); this._drone = null; }
     const was = this.playing;

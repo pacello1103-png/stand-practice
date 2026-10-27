@@ -3,7 +3,7 @@
 import { WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView } from './model.js';
 import { INST } from './instruments.js';
 import { sampler, Sampler, DEFAULT_MIX } from '../sampler.js';
-import { getCtx } from '../audio.js';
+import { getCtx, wantAudio } from '../audio.js';
 import { encodeWav } from '../recorder.js';
 
 export const DYN_VEL = { ppp: 0.14, pp: 0.24, p: 0.36, mp: 0.5, mf: 0.62, f: 0.76, ff: 0.88, fff: 0.97, sfz: 0.9, sf: 0.88, fp: 0.78, rfz: 0.85 };
@@ -31,7 +31,7 @@ export function playOrder(score, from = 0) {
     if (jumped && q.jump === 'fine') break;
     if (jumped && q.jump === 'tocoda' && coda > m) { m = coda - 1; continue; }
     if (q.bar === 'repeat' && !done.has(m)) { done.add(m); pass++; m = start - 1; continue; }
-    if (q.bar === 'repeat') pass = 1;
+    if (q.bar === 'repeat') { pass = 1; start = m + 1; }   // (a later repeat without its own start goes back to here)
     if (!jumped && q.jump && q.jump !== 'fine' && q.jump !== 'tocoda') {
       jumped = true;
       const to = q.jump.startsWith('ds') && segno >= 0 ? segno : 0;
@@ -289,7 +289,10 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           const q = Math.min(0.09, dur / 6);
           seq.forEach((mm, i3) => add({ ...base, midi: mm, t: t0 + i3 * q, dur: i3 === 3 ? dur - 3 * q : q, vel: v * (i3 ? 0.9 : 1), vib: i3 === 3 ? base.vib : 0 }));
         } else if (tremN !== null) {
-          const step = tremN === 0 ? 0.055 : (f.dur / Math.max(1, f.len / (WHOLE / (4 * tremN))));
+          // the strokes add to the note's own flags: a quarter with one stroke plays eighths, an eighth with one stroke sixteenths
+          const flags = ev.t >= 8 ? Math.log2(ev.t) - 2 : 0, strokes = arts.includes('trem3') ? 3 : arts.includes('trem2') ? 2 : 1;
+          const subT = Math.pow(2, 2 + flags + strokes);
+          const step = strokes >= 3 && subT >= 32 && f.dur / f.len * (WHOLE / subT) < 0.05 ? 0.05 : f.dur / Math.max(1, f.len / (WHOLE / subT));
           for (let x = t0; x < t0 + dur - 0.02; x += Math.max(0.04, step)) add({ ...base, t: x, dur: Math.max(0.04, step) * 0.95, vel: v * (0.9 + rnd() * 0.1), env: null, vib: 0 });
         } else {
           add(base);
@@ -311,19 +314,24 @@ export class ScorePlayer {
   constructor() { this.playing = false; this.onTick = null; this.onEnd = null; }
   async play(score, { from = 0 } = {}) {
     this.stop();
+    const tok = this._tok;
     const tl = buildTimeline(score, { from });
     this.tl = tl;
     sampler.live();
     applyScoreSound(sampler, score);
     this.loading = true;
     await sampler.prepare(tl.notes.slice(0, 400).map((n) => ({ sid: n.sid, midi: n.midi })));
+    // (Stop pressed while the sounds were loading: it does not start after all)
+    if (tok !== this._tok) return;
     sampler.prepare(tl.notes.slice(400).map((n) => ({ sid: n.sid, midi: n.midi })));
     this.loading = false;
     const ctx = getCtx();
     this.t0 = ctx.currentTime + 0.12;
-    this.next = 0; this.playing = true;
+    this.next = 0; this.playing = true; wantAudio(true, 'compose');
     const pump = async () => {
       if (!this.playing) return;
+      // (iOS replaced the sound system meanwhile: playing stops here rather than going on silent)
+      if (getCtx() !== ctx) { this.stop(); if (this.onEnd) this.onEnd(); return; }
       const now = ctx.currentTime - this.t0;
       while (this.next < tl.notes.length && tl.notes[this.next].t < now + 0.6) {
         const n = tl.notes[this.next++];
@@ -344,6 +352,8 @@ export class ScorePlayer {
     pump();
   }
   stop() {
+    this._tok = (this._tok || 0) + 1; this.loading = false;
+    if (this.playing) wantAudio(false, 'compose');
     this.playing = false; clearTimeout(this.timer);
     sampler.stopAll(0.12);
   }

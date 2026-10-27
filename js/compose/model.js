@@ -43,7 +43,15 @@ export function decompose(pos, len, time, forRest) {
     for (const [ticks, t, dots] of VALUES) {
       if (ticks > r) continue;
       let aligned;
-      if (!dots) aligned = p % ticks === 0;
+      if (!dots) {
+        aligned = p % ticks === 0;
+        // a note may also start on any beat and run on, if it stays in the bar ("eighth, quarter" in
+        // 3/8) or, in 6/8 and 9/8, inside its beat; in 4/4 it does not cross the middle of the bar
+        if (!aligned && !forRest) {
+          if (compound) aligned = p % (beat / 3) === 0 && Math.floor(p / beat) === Math.floor((p + ticks - 1) / beat);
+          else aligned = p % beat === 0 && p + ticks <= bar && !(time[0] === 4 && time[1] === 4 && p < bar / 2 && p + ticks > bar / 2);
+        }
+      }
       else if (forRest) aligned = compound && dots === 1 && p % beat === 0 && ticks <= beat * 2;
       else aligned = dots === 1 && p % Math.min(baseTicks(t) * 2, beat) === 0;
       if (!aligned) continue;
@@ -51,7 +59,8 @@ export function decompose(pos, len, time, forRest) {
       if (forRest && time[0] === 4 && time[1] === 4 && p < bar / 2 && p + ticks > bar / 2 && !(p === 0 && ticks === bar)) continue;
       pick = [ticks, t, dots]; break;
     }
-    if (!pick) pick = [r, 64, 0];
+    // nothing lines up with the beat: the longest plain value that fits (never a wrong length)
+    if (!pick) pick = VALUES.find((v) => v[0] <= r && !v[2]) || VALUES.find((v) => v[0] <= r) || [r, 64, 0];
     out.push({ ticks: pick[0], t: pick[1], dots: pick[2] });
     p += pick[0]; r -= pick[0];
   }
@@ -114,6 +123,13 @@ export const CLEFS = {
   treble8: { bottom: 23, glyph: '', line: 1, name: 'Treble 8vb' },
   bass8: { bottom: 11, glyph: '', line: 3, name: 'Bass 8vb' },
   perc: { bottom: 30, glyph: '', line: 2, name: 'Percussion' },
+  treble8va: { bottom: 37, glyph: '', line: 1, name: 'Treble 8va' },
+  bass8va: { bottom: 25, glyph: '', line: 3, name: 'Bass 8va' },
+  soprano: { bottom: 28, glyph: '', line: 0, name: 'Soprano' },
+  mezzo: { bottom: 26, glyph: '', line: 1, name: 'Mezzo-soprano' },
+  baritoneC: { bottom: 20, glyph: '', line: 4, name: 'Baritone (C)' },
+  baritoneF: { bottom: 20, glyph: '', line: 2, name: 'Baritone (F)' },
+  frenchviolin: { bottom: 32, glyph: '', line: 0, name: 'French violin' },
 };
 
 // ---------- score creation ----------
@@ -150,6 +166,10 @@ export function staffInfo(score) {
 export function timeAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].time) return score.measures[i].time; return [4, 4]; }
 export function keyAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].key !== undefined && score.measures[i].key !== null) return score.measures[i].key; return 0; }
 export function tempoAt(score, m) { for (let i = Math.min(m, score.measures.length - 1); i >= 0; i--) if (score.measures[i].tempo) return score.measures[i].tempo; return { bpm: 96, beat: 4 }; }
+// the clef in force at the end of bar m (a clef may change in the middle of a bar, before an event)
+export function clefEnd(st, m) { let c = clefAt(st, m); for (const ev of (st.bars && st.bars[m]) || []) if (ev.clef) c = ev.clef; return c; }
+// the clef in force at a moment of bar m
+export function clefAtPos(score, st, m, t) { let c = clefAt(st, m), pos = 0; const time = timeAt(score, m); for (const ev of (st.bars && st.bars[m]) || []) { if (pos > t) break; if (ev.clef) c = ev.clef; pos += ticksOf(ev, time); } return c; }
 export function clefAt(st, m) { let c = st.clef; if (st.clefs) for (const [k, v] of Object.entries(st.clefs)) if (+k <= m) c = v; return c; }
 
 // ---------- event lengths ----------
@@ -191,6 +211,9 @@ export function tidyBar(bar, time) {
 export function writeEvent(score, st, m, pos, ev) {
   const time = timeAt(score, m);
   const total = barTicks(time);
+  // a value too short to be followed by any written rest (a double-dotted 32nd, a dotted 64th)
+  // loses a dot, so every bar always adds up exactly
+  while (!ev.tup && ev.dots && evTicks(ev) % 30) ev.dots--;
   const len = evTicks(ev);
   if (len <= 0) return null;
   const fit = Math.min(len, total - pos);
@@ -203,15 +226,20 @@ export function writeEvent(score, st, m, pos, ev) {
     if (ev.rest) pieces.forEach((p) => { delete p.notes; });
   }
   replaceRange(st, m, pos, fit, pieces, time);
-  if (fit < len) {
-    // carry over into the next bar
-    if (m + 1 >= score.measures.length) addBars(score, 1);
-    const rest = len - fit;
-    const nextTime = timeAt(score, m + 1);
-    const carry = decompose(0, Math.min(rest, barTicks(nextTime)), nextTime, !!ev.rest).map((pc, i, arr) => ({ ...clone(ev), id: newId(), t: pc.t, dots: pc.dots, tup: null,
+  // carry over into the following bars, as many as it takes: the whole length is always written
+  let rest = len - fit, mm = m;
+  while (rest > 0) {
+    mm++;
+    if (mm >= score.measures.length) addBars(score, 1);
+    const nextTime = timeAt(score, mm);
+    const take = Math.min(rest, barTicks(nextTime));
+    rest -= take;
+    const more = rest > 0;
+    const carry = decompose(0, take, nextTime, !!ev.rest).map((pc, i, arr) => ({ ...clone(ev), id: newId(), t: pc.t, dots: pc.dots, tup: null,
       art: [], dyn: null, txt: null, slur: null, hp: null,
-      notes: ev.notes ? ev.notes.map((n) => ({ ...n, tie: i < arr.length - 1 ? true : !!n.tie })) : undefined }));
-    replaceRange(st, m + 1, 0, carry.reduce((a, c) => a + evTicks(c), 0), carry, nextTime);
+      notes: ev.notes ? ev.notes.map((n) => ({ ...n, tie: i < arr.length - 1 || more ? true : !!n.tie })) : undefined }));
+    if (ev.rest) carry.forEach((c) => { delete c.notes; });
+    replaceRange(st, mm, 0, carry.reduce((a, c) => a + evTicks(c), 0), carry, nextTime);
   }
   return pieces[0];
 }
@@ -256,6 +284,14 @@ export function addBars(score, n, at = score.measures.length) {
     score.measures.splice(at, 0, {});
     for (const st of allStaves(score)) { st.bars.splice(at, 0, restBar(time)); if (st.v2) st.v2.splice(at, 0, restBar(time)); }
   }
+  // (bars put before the first: the time, key and tempo of the start go to the new first bar, so
+  // the music after keeps them without seeming to change there)
+  if (at === 0 && n > 0) {
+    const old = score.measures[n], first = score.measures[0];
+    for (const k of ['time', 'key', 'tempo']) if (old[k] !== undefined && old[k] !== null) { first[k] = old[k]; delete old[k]; }
+  }
+  // clef changes stay on their bars
+  for (const st of allStaves(score)) if (st.clefs) { const c = {}; for (const [k, v] of Object.entries(st.clefs)) c[+k >= at && +k > 0 ? +k + n : +k] = v; st.clefs = c; }
   // lines (slurs, hairpins, endings, 8va…) stay on their notes
   for (const sp of score.spans || []) { if (sp.a.m >= at) sp.a = { ...sp.a, m: sp.a.m + n }; if (sp.b.m >= at) sp.b = { ...sp.b, m: sp.b.m + n }; }
   // the final barline moves to the new end
@@ -274,13 +310,31 @@ export function deleteBars(score, from, n) {
     }
     score.spans = score.spans.filter((sp) => sp.b.m > sp.a.m || (sp.b.m === sp.a.m && sp.b.pos >= sp.a.pos));
   }
-  const keepTime = score.measures[from].time, keepKey = score.measures[from].key;
+  // what is in force after the deleted bars (time, key, tempo, each staff's clef) stays in force
+  const to = from + n - 1;
+  const keepTime = timeAt(score, to).slice(), keepKey = keyAt(score, to), keepTempo = tempoAt(score, to);
+  const keepClef = new Map(allStaves(score).map((st) => [st, clefAt(st, to)]));
   score.measures.splice(from, n);
-  for (const st of allStaves(score)) { st.bars.splice(from, n); if (st.v2) st.v2.splice(from, n); }
-  if (from < score.measures.length) {
-    if (keepTime && !score.measures[from].time) score.measures[from].time = keepTime;
-    if (keepKey !== undefined && score.measures[from].key === undefined) score.measures[from].key = keepKey;
+  for (const st of allStaves(score)) {
+    st.bars.splice(from, n); if (st.v2) st.v2.splice(from, n);
+    if (st.clefs) {
+      const c = {};
+      for (const [k, v] of Object.entries(st.clefs)) { const b = +k; if (b < from) c[b] = v; else if (b > to) c[b - n] = v; }
+      st.clefs = c;
+    }
   }
+  if (from < score.measures.length) {
+    const ms = score.measures[from];
+    if (!ms.time) { const before = from > 0 ? timeAt(score, from - 1) : null; if (!before || before.join() !== keepTime.join()) ms.time = keepTime; }
+    if (ms.key === undefined || ms.key === null) { if (from === 0 || keyAt(score, from - 1) !== keepKey) ms.key = keepKey; }
+    if (!ms.tempo && from > 0 && tempoAt(score, from - 1).bpm !== keepTempo.bpm) ms.tempo = { ...keepTempo };
+    for (const st of allStaves(score)) {
+      const c = keepClef.get(st);
+      if (!(st.clefs && st.clefs[from] !== undefined) && clefAt(st, from) !== c) { if (from === 0) st.clef = c; else st.clefs = { ...(st.clefs || {}), [from]: c }; }
+    }
+  }
+  // the bars that are left are fitted to the time in force (nothing too long or too short)
+  for (let m = from; m < score.measures.length && m < from + 1; m++) { const tt = timeAt(score, m); for (const st of allStaves(score)) { st.bars[m] = tidyBar(st.bars[m], tt); if (st.v2) st.v2[m] = tidyBar(st.v2[m], tt); } }
   if (!score.measures[0].time) score.measures[0].time = [4, 4];
   if (score.measures[0].key === undefined) score.measures[0].key = 0;
   for (const ms of score.measures) if (ms.bar === 'final') delete ms.bar;
@@ -309,7 +363,10 @@ export function addPart(score, instId) {
 }
 export function removePart(score, partId) {
   if (score.parts.length <= 1) return false;
+  const gone = score.parts.find((p) => p.id === partId);
   score.parts = score.parts.filter((p) => p.id !== partId);
+  // (and its lines: slurs, hairpins, pedal lines drawn on its staves)
+  if (gone && score.spans) { const ids = new Set(gone.staves.map((st) => st.id)); score.spans = score.spans.filter((sp) => !ids.has(sp.st) && !(sp.a && ids.has(sp.a.st))); }
   return true;
 }
 
@@ -366,7 +423,7 @@ export function migrateScore(score) {
       for (let i = 0; i < flat.length; i++) {
         const f = flat[i], ev = f.ev;
         if (ev.slur === 'start') {
-          let j = i + 1; while (j < flat.length && flat[j].ev.slur !== 'end') j++;
+          let j = i + 1; while (j < flat.length && flat[j].ev.slur !== 'end' && !flat[j].ev.slurEnd2) j++;
           const b = j < flat.length ? flat[j] : flat[Math.min(flat.length - 1, i + 1)];
           if (b && b !== f) score.spans.push({ id: newId(), kind: 'slur', st: st.id, v, a: { m: f.m, pos: f.pos }, b: { m: b.m, pos: b.pos } });
         }
@@ -379,7 +436,7 @@ export function migrateScore(score) {
           score.spans.push({ id: newId(), kind: 'hairpin', dir: ev.hp, st: st.id, v, a: { m: f.m, pos: f.pos }, b: { m: b.m, pos: b.pos } });
         }
       }
-      for (const { ev } of flat) { delete ev.slur; if (ev.hp) delete ev.hp; }
+      for (const { ev } of flat) { delete ev.slur; delete ev.slurEnd2; if (ev.hp) delete ev.hp; }
     }
   }
   score._v2spans = 1;
