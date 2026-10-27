@@ -57,4 +57,14 @@
     const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.remove('pre'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
     highs.forEach((h) => io.observe(h));
   }
+  /* turn the cover iPad's screens every few seconds, only while the page is on show */
+  const slides = document.querySelectorAll('.cover .slides img');
+  if (slides.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let k = 0;
+    setInterval(() => {
+      const sheet = document.getElementById('sheet');
+      if (document.hidden || (sheet && !sheet.hidden)) return;
+      slides[k].classList.remove('on'); k = (k + 1) % slides.length; slides[k].classList.add('on');
+    }, 3800);
+  }
 })();

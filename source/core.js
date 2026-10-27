@@ -42,6 +42,8 @@ function place() {
     e.style.setProperty('--strip', strip + 'px');
     e.style.setProperty('--tab-y', Math.round(H * 0.34 + i * step) + 'px');
   });
+  /* if any folder's list does not fit its strip, every folder shows only its name (they stay alike) */
+  if (!drawer.classList.contains('tight') && els.some((e) => { const st = e.querySelector('.strip'); return st && st.scrollHeight > st.clientHeight + 1; })) drawer.classList.add('tight');
   cover.style.left = (W - coverW) + 'px'; cover.style.width = coverW + 'px'; cover.style.zIndex = n + 2;
   drawer.style.setProperty('--shift', Math.max(120, Math.min(300, fw - strip - 30)) + 'px');
 }

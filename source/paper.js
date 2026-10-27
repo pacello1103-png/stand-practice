@@ -28,7 +28,7 @@ const THEME = {
           <div class="cta-row">${ctaHTML()}<span class="ctanote">No account · Offline · Private</span></div>
         </div>
         <div class="shots" aria-hidden="true">
-          <div class="dev ipad"><img src="img/s_07_marked.webp" alt="" decoding="async" fetchpriority="high"></div>
+          <div class="dev ipad"><div class="slides">${["07_marked","63_video_over_score","12_drone","26_study_running"].map((n, k) => `<img src="img/s_${n}.webp" alt="" decoding="async"${k ? ' loading="lazy"' : ' fetchpriority="high" class="on"'}>`).join("")}</div></div>
           <div class="dev phone"><img src="img/m_phone_tuner.webp" alt="" decoding="async"></div>
         </div>
       </div>`;

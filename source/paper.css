@@ -39,11 +39,11 @@ body { background: var(--ground); color: var(--on-ground); font: 400 16px/1.55 v
 .cta { display: inline-flex; align-items: center; gap: 10px; justify-self: start; padding: 12px 20px; border-radius: 999px; background: var(--accent); color: #fff; font: 600 15px/1 var(--body); white-space: nowrap; }
 .cover .hint { font: 500 12px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); display: flex; align-items: center; gap: 8px; }
 .hint-phone { display: none; }
-.cover .spine-note { position: absolute; left: 44px; bottom: 26px; writing-mode: vertical-rl; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); white-space: nowrap; }
+.cover .spine-note { position: absolute; left: 112px; bottom: 26px; writing-mode: vertical-rl; font: 500 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); white-space: nowrap; }
 .cover .inner { grid-template-columns: minmax(0, 1fr); }
 .drawer.tight .cover .big { font-size: 88px; }
 .drawer.tight .cover .inner { padding-left: 108px; padding-right: 24px; }
-.drawer.tight .cover .spine-note { left: 36px; }
+.drawer.tight .cover .spine-note { left: 88px; }
 a.cta { text-decoration: none; transition: filter .2s, transform .2s; }
 a.cta:hover { filter: brightness(1.18); }
 a.cta:active { transform: scale(.97); }
@@ -221,3 +221,14 @@ a.cta:active { transform: scale(.97); }
   .folder, .folder:nth-last-child(2), .cover { border-radius: 18px; }
 }
 .cover { -webkit-mask-image: -webkit-radial-gradient(white, black); isolation: isolate; }
+
+/* cover: the iPad turns through a few screens of the app */
+.shots .slides { position: relative; }
+.shots .slides img { transition: opacity 1.1s var(--ease); }
+.shots .slides img:not(:first-child) { position: absolute; inset: 0; }
+.shots .slides img:not(.on) { opacity: 0; }
+/* iPhone: each folder sits in front of the one above it, the first one in front of the cover */
+@media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
+  .cover { position: relative; z-index: 0; }
+  .folder:not(.cover) { z-index: 1; }
+}
