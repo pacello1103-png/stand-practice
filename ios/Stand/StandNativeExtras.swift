@@ -28,6 +28,7 @@ final class StandNativeExtras: NSObject {
     private var browser: MCNearbyServiceBrowser?
     private var invited = [MCPeerID: Date]()
     private var displayName = "Stand"
+    private var lastInvitation = Date.distantPast
 
     // files being written from the page, then sent
     private var outFiles = [String: (url: URL, handle: FileHandle, meta: [String: Any])]()
@@ -38,7 +39,7 @@ final class StandNativeExtras: NSObject {
         let ucc = webView.configuration.userContentController
         ucc.removeScriptMessageHandler(forName: "standPeer")
         ucc.add(WeakScriptHandler(self), name: "standPeer")
-        let caps = "window.standCaps = Object.assign(window.standCaps || {}, { peer: 2 });"
+        let caps = "window.standCaps = Object.assign(window.standCaps || {}, { peer: 3 });"   // 3: file pieces are acknowledged
         ucc.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView.evaluateJavaScript(caps, completionHandler: nil)
         // reminders for the practice plan (StandReminders.swift)
@@ -86,6 +87,8 @@ final class StandNativeExtras: NSObject {
         case "fileChunk":
             guard let id = body["id"] as? String, let f = outFiles[id], let b64 = body["data"] as? String, let d = Data(base64Encoded: b64) else { return }
             f.handle.write(d)
+            // the page sends the next piece only when this one is written (a long video never piles up in memory)
+            js("window.standPeerChunkOk && window.standPeerChunkOk(\(jsValue(id)))")
         case "fileEnd":
             guard let id = body["id"] as? String, let f = outFiles.removeValue(forKey: id) else { return }
             try? f.handle.close()
@@ -128,8 +131,9 @@ final class StandNativeExtras: NSObject {
     private func startPeer(name: String) {
         displayName = String(name.prefix(50))
         if session != nil { reportPeers(); restartDiscovery(); return }
-        let id = MCPeerID(displayName: displayName)
-        let s = MCSession(peer: id, securityIdentity: nil, encryptionPreference: .optional)
+        let id = Self.savedPeerID(displayName)
+        // (always encrypted, the same on both sides: "optional" made the two sometimes argue and drop)
+        let s = MCSession(peer: id, securityIdentity: nil, encryptionPreference: .required)
         s.delegate = self
         peerID = id
         session = s
@@ -141,6 +145,19 @@ final class StandNativeExtras: NSObject {
         browser = br
         adv.startAdvertisingPeer()
         br.startBrowsingForPeers()
+    }
+
+    // The same identity every time (Apple's advice): a new one each start left the other device
+    // seeing an old "ghost" of this one, and the two then failed to connect, or dropped.
+    private static func savedPeerID(_ name: String) -> MCPeerID {
+        let d = UserDefaults.standard
+        if let data = d.data(forKey: "standPeerID"), d.string(forKey: "standPeerName") == name,
+           let id = try? NSKeyedUnarchiver.unarchivedObject(ofClass: MCPeerID.self, from: data) { return id }
+        let id = MCPeerID(displayName: name)
+        if let data = try? NSKeyedArchiver.archivedData(withRootObject: id, requiringSecureCoding: true) {
+            d.set(data, forKey: "standPeerID"); d.set(name, forKey: "standPeerName")
+        }
+        return id
     }
 
     private func stopPeer() {
@@ -262,6 +279,7 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
                     withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         // only Stand invites (the context says so); one link at a time
         let ok = context.flatMap { String(data: $0, encoding: .utf8) } == "stand"
+        DispatchQueue.main.async { self.lastInvitation = Date() }
         invitationHandler(ok && session != nil, session)
     }
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
@@ -272,8 +290,20 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
 extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
         guard info?["app"] == "stand", let s = session else { return }
-        // only one of the two invites the other (the one with the smaller token)
-        guard let theirs = info?["t"], token < theirs else { return }
+        // only one of the two invites the other (the one with the smaller token); but when that one
+        // cannot see this device (it happens: one side finds the other first), this one invites
+        // after a few seconds instead
+        guard let theirs = info?["t"] else { return }
+        if token > theirs {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self = self, let s2 = self.session, s2 === s, !s2.connectedPeers.contains(peerID) else { return }
+                if Date().timeIntervalSince(self.lastInvitation) < 8 { return }
+                if let at = self.invited[peerID], Date().timeIntervalSince(at) < 15 { return }
+                self.invited[peerID] = Date()
+                browser.invitePeer(peerID, to: s2, withContext: "stand".data(using: .utf8), timeout: 12)
+            }
+            return
+        }
         DispatchQueue.main.async {
             if let at = self.invited[peerID], Date().timeIntervalSince(at) < 15 { return }
             guard !s.connectedPeers.contains(peerID) else { return }

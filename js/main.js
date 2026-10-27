@@ -4246,10 +4246,10 @@ stage.addEventListener('pointerdown', (e) => {
   }
   // touch
   // the hand resting on the screen while writing never turns the page: no touch counts while the
-  // Pencil is down, nor for a moment after it lifts (longer while the markings are open), and a
+  // Pencil is down, nor for half a second after it lifts, and a
   // wide contact (the side of the hand) is never a finger
   const wide = Math.max(e.width || 0, e.height || 0) > 48;
-  if (penDown || t - lastPenUp < (V.inking ? 1500 : 350) || (wide && (V.inking || t - lastPenUp < 4000))) { info.palm = true; return; }
+  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (wide && (V.inking || t - lastPenUp < 4000))) { info.palm = true; return; }
   const n = touches().length;
   if (n >= 2 && V.perform) { GS = { kind: 'wait' }; return; }
   if (n >= 2) {
@@ -4313,7 +4313,7 @@ function pointerEnd(e) {
     clearTimeout(g.holdT);
     if (g.held) return;   // the hold menu is open
     if (!p || p.palm || e.type === 'pointercancel') return;
-    if (penDown || (V.inking && now() - lastPenUp < 1500)) return;   // the Pencil came down meanwhile: it was the hand
+    if (penDown || (V.inking && now() - lastPenUp < 500)) return;   // the Pencil came down meanwhile: it was the hand
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
     if (Z.s !== 1) {
       if (g.moved) { scheduleSharpen(); return; }
@@ -7898,6 +7898,9 @@ const NSAVE = () => (window.standCaps || {}).files && window.webkit && window.we
 const canSaveHere = () => !!NSAVE();
 const saveWait = new Map();
 window.standSaved = (r) => { const w = r && saveWait.get(r.id); if (w) { saveWait.delete(r.id); w(r); } };
+// (newer apps say when each piece is written: the next one goes then, so a big file never piles up in memory)
+const chunkWait = new Map();
+window.standSavedChunk = (r) => { const w = r && chunkWait.get(r.id); if (w) { chunkWait.delete(r.id); w(); } };
 const b64Of = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
 async function saveInStandFolder(blob, folder, name) {
   const H = NSAVE(); if (!H) throw new Error('no folder');
@@ -7905,7 +7908,15 @@ async function saveInStandFolder(blob, folder, name) {
   const done = new Promise((res) => saveWait.set(id, res));
   H.postMessage({ op: 'begin', id, folder, name });
   const PIECE = 2 * 1024 * 1024;
-  try { for (let o = 0; o < blob.size; o += PIECE) H.postMessage({ op: 'chunk', id, data: await b64Of(blob.slice(o, o + PIECE)) }); }
+  let acks = +((window.standCaps || {}).files) >= 2;
+  try {
+    for (let o = 0; o < blob.size; o += PIECE) {
+      const ok = acks ? new Promise((r) => { chunkWait.set(id, r); setTimeout(() => { if (chunkWait.get(id) === r) { acks = false; r(); } }, 10000); }) : null;
+      H.postMessage({ op: 'chunk', id, data: await b64Of(blob.slice(o, o + PIECE)) });
+      if (ok) await ok;
+    }
+    chunkWait.delete(id);
+  }
   catch (e) { H.postMessage({ op: 'cancel', id }); saveWait.delete(id); throw e; }
   H.postMessage({ op: 'end', id });
   const r = await Promise.race([done, new Promise((res) => setTimeout(() => res({ ok: false, error: 'timeout' }), 180000))]);

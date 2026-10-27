@@ -5,6 +5,10 @@ import { drawItem, loadItems, loadMusicFont, setPaperColor, preloadAssets, prelo
 let lib = null;
 async function pdfLib() { if (!lib) lib = await import('../vendor/pdf-lib.mjs'); return lib; }
 
+// print quality: markings at 300 dpi over the original pages, and pages made into a picture
+// (photos, turned pages) at about 300 dpi for A4 (a little less on an iPhone, for its memory)
+const PHONE = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent);
+const INK_K = 300 / 72, FLAT_LONG = PHONE ? 2600 : 3500;
 const canvasToBytes = (c, type, q) => new Promise((res) => c.toBlob(async (b) => res(new Uint8Array(await b.arrayBuffer())), type, q));
 
 async function inkPng(items, wPx, hPx) {
@@ -57,7 +61,8 @@ export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf, 
         ({ width: W, height: H } = page.getSize());
         const box = page.getCropBox ? page.getCropBox() : { x: 0, y: 0, width: W, height: H };
         if (items.length) {
-          const png = await inkPng(items, Math.round(box.width * 3), Math.round(box.height * 3));
+          const ik = Math.min(INK_K, Math.sqrt((PHONE ? 6e6 : 10e6) / Math.max(1, box.width * box.height)));   // (a very big page stays within the iPad's memory)
+          const png = await inkPng(items, Math.round(box.width * ik), Math.round(box.height * ik));
           if (png) { const im = await out.embedPng(png); page.drawImage(im, { x: box.x, y: box.y, width: box.width, height: box.height }); }
         }
         if (cropped) {
@@ -70,7 +75,7 @@ export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf, 
     }
     // Photos, manuscript paper and rotated PDF pages: flatten to one image per page.
     const [pw, ph] = doc.sizes[i];
-    const scale = Math.min(3, 2400 / Math.max(pw, ph));
+    const scale = Math.min(4, FLAT_LONG / Math.max(pw, ph));
     const cw = Math.round(pw * scale), ch = Math.round(ph * scale);
     const c = document.createElement('canvas');
     await doc.render(i, c, cw, ch);
@@ -82,7 +87,7 @@ export async function exportPdf({ score, file, doc, withInk, onProgress, boxOf, 
       cc.getContext('2d').drawImage(c, Math.round(bx.x * c.width), Math.round(bx.y * c.height), cc.width, cc.height, 0, 0, cc.width, cc.height);
       fw = bx.w; fh = bx.h;
     }
-    const jpg = await canvasToBytes(cc, 'image/jpeg', 0.9);
+    const jpg = await canvasToBytes(cc, 'image/jpeg', 0.92);
     c.width = c.height = 0; cc.width = cc.height = 0;
     const im = await out.embedJpg(jpg);
     const pics = kindOf(doc, file, orig) === 'images';

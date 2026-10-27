@@ -98,6 +98,8 @@ final class StandFiles {
         case "chunk":
             guard let e = open[id], let b64 = body["data"] as? String, let data = Data(base64Encoded: b64) else { fail(id, "chunk"); return }
             e.0.write(data)
+            // (files ≥ 2: the page sends the next piece when this one is written)
+            send?("standSavedChunk", ["id": id])
         case "end":
             guard let e = open.removeValue(forKey: id) else { send?("standSaved", ["id": id, "ok": false, "error": "none"]); return }
             let (h, tmp, dest) = e

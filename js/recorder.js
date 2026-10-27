@@ -208,7 +208,8 @@ export function makeImpulse(ctx, room) {
 }
 
 // ---------------- WAV ----------------
-export function encodeWav(channels, sr) {
+export function encodeWav(channels, sr, bits = 16) {
+  if (bits === 24) return encodeWav24(channels, sr);
   const nCh = channels.length, len = channels[0].length;
   const buf = new ArrayBuffer(44 + len * nCh * 2);
   const v = new DataView(buf);
@@ -222,6 +223,23 @@ export function encodeWav(channels, sr) {
     // TPDF dither
     s += (Math.random() - Math.random()) / 32768;
     v.setInt16(o, s < 0 ? Math.max(-32768, s * 32768) : Math.min(32767, s * 32767), true); o += 2;
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// studio quality (24-bit), for the audio of a composition
+function encodeWav24(channels, sr) {
+  const nCh = channels.length, len = channels[0].length, bytes = len * nCh * 3;
+  const buf = new ArrayBuffer(44 + bytes), v = new DataView(buf), u = new Uint8Array(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + bytes, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, nCh, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * nCh * 3, true); v.setUint16(32, nCh * 3, true); v.setUint16(34, 24, true); w(36, 'data'); v.setUint32(40, bytes, true);
+  let o = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < nCh; c++) {
+    const s = Math.max(-1, Math.min(1, channels[c][i]));
+    let x = Math.round(s * 8388607); if (x < 0) x += 16777216;
+    u[o++] = x & 255; u[o++] = (x >> 8) & 255; u[o++] = (x >> 16) & 255;
   }
   return new Blob([buf], { type: 'audio/wav' });
 }

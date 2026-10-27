@@ -5,7 +5,7 @@
 import { Signal, ICE, LS, myPairKey, roomName, DIRECT, DirectBox, directPeers, directWatch, knownPairs } from './link.js';
 
 const TAG = { standPractice: 1 };
-const PART = 15000;
+const PART = 15000, DPART = 60000;
 const newCode = () => String(Math.floor(100000 + Math.random() * 900000));
 export const pairId = (key) => 'stand-pp-' + key;
 export const codeId = (code) => 'stand-pc-' + code;
@@ -27,8 +27,9 @@ export class PracticeHost {
           const rid = (m.payload || {}).rid;
           try {
             const json = JSON.stringify(await this.answer((m.payload || {}).q || {}));
-            const n = Math.ceil(json.length / PART);
-            for (let o = 0, k = 0; o < json.length; o += PART, k++) { this.box.send(m.src, 'SC_PART', { rid, k, s: json.slice(o, o + PART) }); if (k % 20 === 19) await new Promise((r) => setTimeout(r, 15)); }
+            // (bigger pieces on the direct link: fewer messages, a page crosses several times faster)
+            const n = Math.ceil(json.length / DPART);
+            for (let o = 0, k = 0; o < json.length; o += DPART, k++) { this.box.send(m.src, 'SC_PART', { rid, k, s: json.slice(o, o + DPART) }); if (k % 8 === 7) await new Promise((r) => setTimeout(r, 10)); }
             this.box.send(m.src, 'SC_END', { rid, n });
           } catch (e) { this.box.send(m.src, 'SC_ERR', { rid, why: String((e && e.message) || '') }); }
           return;

@@ -400,8 +400,10 @@ export async function renderAudio(score, onProgress) {
   sampler.live();
   sampler.plain = (score.sound || {}).plainStrings === true;
   await sampler.prepare(tl.notes.map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
-  const sr = 44100;
-  const len = Math.ceil((tl.total + 3) * sr);
+  // studio quality: 48 kHz, 24-bit, with the room's whole tail (a very long piece: CD quality,
+  // so the iPad's memory is never at risk)
+  const long = tl.total > 420, sr = long ? 44100 : 48000;
+  const len = Math.ceil((tl.total + 5) * sr);
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const off = new OAC(2, len, sr);
   const s2 = new Sampler();
@@ -417,5 +419,18 @@ export async function renderAudio(score, onProgress) {
   if (onProgress) onProgress(0.35);
   const buf = await off.startRendering();
   if (onProgress) onProgress(1);
-  return encodeWav([buf.getChannelData(0), buf.getChannelData(1)], sr);
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  // the silence after the last sound goes (the tail of the room stays), then a short fade
+  let end = L.length, peak = 0;
+  for (let i = 0; i < L.length; i++) { const a = Math.max(Math.abs(L[i]), Math.abs(R[i])); if (a > peak) peak = a; }
+  const quiet = Math.max(1e-5, peak * 0.0003);   // about -70 dB under the loudest moment
+  while (end > sr && Math.abs(L[end - 1]) < quiet && Math.abs(R[end - 1]) < quiet) end--;
+  end = Math.min(L.length, end + Math.round(sr * 0.3));
+  const fade = Math.round(sr * 0.25);
+  for (let i = 0; i < fade && end - 1 - i >= 0; i++) { const g = i / fade; L[end - 1 - i] *= g; R[end - 1 - i] *= g; }
+  // as loud as it can be without ever clipping: the loudest moment at -1 dB
+  const gain = peak > 0 ? Math.min(4, 0.891 / peak) : 1;
+  const l = L.subarray(0, end), r = R.subarray(0, end);
+  if (gain !== 1) for (let i = 0; i < end; i++) { l[i] *= gain; r[i] *= gain; }
+  return encodeWav([l, r], sr, long ? 16 : 24);
 }

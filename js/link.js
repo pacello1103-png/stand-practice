@@ -27,6 +27,7 @@ function hubStart() {
   window.standPeerFrame = (b64) => { if (direct.onFrame) direct.onFrame(b64); };
   window.standPeerFile = (meta, path, err) => { for (const f of [...direct.fileWatch]) { try { f(meta || {}, path, err); } catch {} } };
   window.standPeerProgress = (id, f, dir) => { const cb = direct.progress.get(id); if (cb) cb(f, dir); for (const w of [...direct.fileProgress]) { try { w(id, f, dir); } catch {} } };
+  window.standPeerChunkOk = (id) => { const r = direct.chunk.get(id); if (r) { direct.chunk.delete(id); r(); } };
   window.standPeerSent = (id, err) => { const cb = direct.sent.get(id); if (cb) { direct.sent.delete(id); cb(err); } };
   try { window.webkit.messageHandlers.standPeer.postMessage({ op: 'start', name: 'Stand ' + (/iPad/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)) ? 'iPad' : 'iPhone') }); } catch {}
 }
@@ -42,7 +43,7 @@ export { ANY_HOST };
 // ---------- the direct link carries everything (apps with the new native part) ----------
 // Messages, the live picture and the finished video all go over Apple's peer-to-peer link: no
 // internet, no meeting service, no WebRTC (which often cannot connect two iPhones/iPads by itself).
-const direct = { watch: new Set(), onFrame: null, fileWatch: new Set(), fileProgress: new Set(), progress: new Map(), sent: new Map() };
+const direct = { watch: new Set(), onFrame: null, fileWatch: new Set(), fileProgress: new Set(), progress: new Map(), sent: new Map(), chunk: new Map() };
 export const DIRECT = () => NATIVE() && +((window.standCaps || {}).peer) >= 2;
 export const directPeers = () => hub.peers || 0;
 export function directWatch(f) { direct.watch.add(f); return () => direct.watch.delete(f); }
@@ -68,8 +69,13 @@ export async function directSendFile(blob, meta, onProgress) {
   const H = window.webkit.messageHandlers.standPeer;
   H.postMessage({ op: 'fileBegin', id, ext, meta: { ...meta, mime: blob.type } });
   const PIECE = 1024 * 1024;
+  // (newer apps say when each piece is written: the next goes then; a long video never piles up
+  // in the iPhone's memory waiting to be written)
+  let acks = +((window.standCaps || {}).peer) >= 3;
   for (let o = 0; o < blob.size; o += PIECE) {
+    const ok = acks ? new Promise((r) => { direct.chunk.set(id, r); setTimeout(() => { if (direct.chunk.get(id) === r) { acks = false; r(); } }, 10000); }) : null;   // (no answer: on without waiting, as before)
     H.postMessage({ op: 'fileChunk', id, data: await b64Of(blob.slice(o, o + PIECE)) });
+    if (ok) await ok;
     if (onProgress) onProgress(0.15 * Math.min(1, (o + PIECE) / blob.size));   // handing it to the app: the first part of the bar
   }
   const done = new Promise((res, rej) => {
