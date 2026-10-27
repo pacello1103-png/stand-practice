@@ -550,7 +550,7 @@
         <select id="subSel"><option value="1">None</option><option value="2">Eighths</option><option value="3">Triplets</option><option value="4">Sixteenths</option></select></label>
       <label class="field"><span>Sound</span>
         <select id="soundSel"><option value="click">Click</option><option value="wood">Woodblock</option><option value="beep">Beep</option></select></label>
-      <label class="field"><span>Volume</span><input type="range" id="metroVol" min="0" max="1" step="0.01" value="0.8"></label>
+      <label class="field"><span>Volume</span><input type="range" id="metroVol" min="0" max="1.5" step="0.01" value="1"></label>
     </div>
     <section class="sub-card">
       <div class="sub-head">
@@ -1337,6 +1337,7 @@
       <div class="ctl-head"><span>Room amount</span><span class="num" id="mxRoomVal"></span></div>
       <input type="range" id="mxRoomMix" min="0" max="150" value="100" aria-label="How much room">
       <label class="field"><span>Tuning</span><select id="mxTuning"><option value="415">A = 415 (Baroque)</option><option value="430">A = 430</option><option value="440">A = 440</option><option value="441">A = 441</option><option value="442">A = 442</option><option value="443">A = 443</option></select></label>
+      <label class="check"><input type="checkbox" id="mxRealStr" checked> Violin, viola, cello and bass: real recordings of each bowing (held, spiccato, pizzicato, tremolo)</label>
       <p class="hint">Pan and tone for each instrument are shown above while More settings is open.</p>
     </section>
   </div>

@@ -1,4 +1,6 @@
-// Sampled instruments for Compose and the Studio: real recorded notes (MusyngKite sound set),
+// Sampled instruments for Compose and the Studio: real recorded notes (MusyngKite sound set;
+// the solo strings from VSCO 2 Community Edition, CC0, with soft and loud layers and their own
+// sustained, spiccato, pizzicato and tremolo recordings),
 // one sample every three semitones, pitched to the exact note. Sustaining instruments loop a
 // seamless part of the held note, so a note can last as long as the music needs. Each instrument
 // plays through its own channel: volume, pan, tone (low, high, brightness), attack, release and
@@ -47,6 +49,10 @@ const ROOMS = {
 };
 export const ROOM_LABELS = Object.fromEntries(Object.entries(ROOMS).map(([k, v]) => [k, v.label]));
 
+// The strings recorded for real in each way of playing (bowed, spiccato, pizzicato, tremolo), each
+// at two strengths: the right recording is chosen for each note instead of shaping one sound.
+const REAL = { violin: 'vl', viola: 'va', cello: 'vc', bass: 'cb' };
+export const realSet = (sid, kind = 'sus') => (REAL[sid] ? REAL[sid] + '_' + kind : null);
 let INDEX = null;
 const FALLBACK = { mandolin: 'steelguitar', ukulele: 'guitar' };
 async function loadIndex() {
@@ -116,22 +122,34 @@ export class Sampler {
   }
   setRoomMix(v) { this.roomMix = v; if (this.verbIn) this.verbIn.gain.value = v; }
 
-  async sampleFor(sid, midi) {
-    const index = (await loadIndex()).n;
+  async sampleFor(sid, midi, kind = 'sus', vel = 0.7) {
+    const I = await loadIndex();
+    // a real recording of this way of playing, at the nearest strength
+    const set = realSet(sid, kind);
+    if (set && I.n[set] && I.n[set].length && !this.plain) {
+      const list = I.n[set]; let best = list[0];
+      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      const L = (I.L && I.L[set]) || ['f'];
+      const layer = L.includes('p') && vel < 0.52 ? 'p' : L.includes('f') ? 'f' : L[0];
+      return this.load(set, best, layer, kind);
+    }
+    if (kind === 'pizz' && REAL[sid]) sid = 'pizz';
+    const index = I.n;
     if (!index[sid] || !index[sid].length) sid = FALLBACK[sid] && index[FALLBACK[sid]] ? FALLBACK[sid] : 'piano';
     const list = index[sid];
     let best = list[0];
     for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
     return this.load(sid, best);
   }
-  load(sid, m) {
-    const key = sid + ':' + m;
+  load(sid, m, layer = null, kind = null) {
+    const key = sid + ':' + m + (layer ? ':' + layer : '');
     if (!this.buffers.has(key)) {
       const ctx = getCtx();
-      const p = fetch(new URL(`../vendor/sounds/${sid}/${m}.mp3`, import.meta.url))
+      const rings = kind === 'pizz' || kind === 'spic';
+      const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}.mp3`, import.meta.url))
         .then((r) => { if (!r.ok) throw new Error('missing sample'); return r.arrayBuffer(); })
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
-        .then(async (buf) => ({ buf, midi: m, gain: ((await loadIndex()).g || {})[sid] || 4, loop: DECAYING.has(sid) ? null : makeLoop(buf, m) }));
+        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * (layer === 'p' ? (((await loadIndex()).P || {})[sid] || 1) : 1), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer }));
       p.catch(() => this.buffers.delete(key));
       this.buffers.set(key, p);
     }
@@ -140,7 +158,7 @@ export class Sampler {
   // Load every sample a list of notes needs, before playing starts.
   async prepare(list) {
     const jobs = new Map();
-    for (const { sid, midi } of list) jobs.set(sid + ':' + midi, this.sampleFor(sid, midi).catch(() => null));
+    for (const { sid, midi, kind, vel } of list) jobs.set(sid + ':' + midi + ':' + (kind || '') + ':' + (vel < 0.52 ? 'p' : 'f'), this.sampleFor(sid, midi, kind || 'sus', vel ?? 0.7).catch(() => null));
     await Promise.all(jobs.values());
   }
 
@@ -187,14 +205,17 @@ export class Sampler {
     const human = (Math.random() - 0.5) * 4 + (opts.tune || 0);
     const cents = (midi - sample.midi) * 100 + 1200 * Math.log2(this.tuning / 440) + human;
     src.playbackRate.value = Math.pow(2, cents / 1200);
-    const decaying = DECAYING.has(sid);
+    // (a real recording played short, or plucked: it rings as recorded)
+    const decaying = DECAYING.has(sid) || sample.kind === 'pizz' || sample.kind === 'spic';
+    const real = !!sample.real;
     if (!decaying && sample.loop) { src.loop = true; src.loopStart = sample.loop.start; src.loopEnd = sample.loop.end; }
     // softer notes are darker as well as quieter, like a real instrument
     const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
-    tone.frequency.value = 900 + Math.pow(vel, 1.7) * 17000;
+    // (a real soft or loud recording already has its own colour: only a little more shaping)
+    tone.frequency.value = real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
     // quick sweep up from a warm sound), and the top is kept smooth.
-    const bowed = BOWED.has(sid);
+    const bowed = BOWED.has(sid) && !real;
     if (bowed) {
       const top = Math.min(9000, 2200 + Math.pow(vel, 1.4) * 7500 + (midi - 48) * 40);
       tone.frequency.setValueAtTime(Math.min(top, 1400 + midi * 8), t);
@@ -222,7 +243,7 @@ export class Sampler {
     if (connect) offset = Math.min(0.09, (sample.buf.duration || 1) * 0.1);
     if (opts.legato && !decaying) hold = Math.max(hold, dur + 0.05);
     // vibrato: comes in after the start of the note, like a player's
-    if (opts.vib && !decaying && dur > 0.3) {
+    if (opts.vib && !decaying && !real && dur > 0.3) {   // (the real strings play their own vibrato)
       const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2 + Math.random() * 0.8;
       const depth = ctx.createGain(); depth.gain.value = 0;
       // more intense playing, wider vibrato; quiet long notes keep it narrow
@@ -238,11 +259,17 @@ export class Sampler {
       const slide = Math.min(0.08, 0.03 + Math.abs(opts.from - midi) * 0.006);
       src.playbackRate.setValueAtTime(startRate, t); src.playbackRate.exponentialRampToValueAtTime(target, t + slide);
     }
+    // a glissando: after a moment on the note, the pitch slides to the next note through the whole length
+    if (opts.glissTo !== undefined && !decaying) {
+      const r0 = src.playbackRate.value, r1 = r0 * Math.pow(2, (opts.glissTo - midi) / 12);
+      src.playbackRate.setValueAtTime(r0, t + Math.min(0.15, dur * 0.25));
+      src.playbackRate.exponentialRampToValueAtTime(Math.max(0.05, r1), t + dur);
+    }
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(level * (shape && dur > 0.6 ? 0.86 : 1), t + atk);
     if (shape && dur > 0.6 && !(opts.env && opts.env.length)) g.gain.linearRampToValueAtTime(level, t + atk + Math.min(0.35, dur * 0.3));
     // the sound of the bow catching the string or the breath starting the note
-    if ((BOWED.has(sid) || BLOWN.has(sid)) && !connect && this.noise) {
+    if ((BOWED.has(sid) || BLOWN.has(sid)) && !connect && !real && this.noise) {
       const n = ctx.createBufferSource(); n.buffer = this.noise;
       // the bow: a soft, low rosin sound (not a hiss), rising and dying away quickly
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = BOWED.has(sid) ? Math.min(1800, 500 + midi * 9) : 1500 + midi * 10; bp.Q.value = BOWED.has(sid) ? 0.8 : 0.9;
@@ -266,7 +293,7 @@ export class Sampler {
     const end = t + hold;
     if (decaying) {
       // ringing instruments: the note sounds on until it is damped (or rings out)
-      const ringFor = sid === 'harp' || sid === 'vibraphone' || sid === 'bells' || sid === 'glockenspiel' || sid === 'celesta' ? Math.max(hold, 1.8) : hold;
+      const ringFor = sid === 'harp' || sid === 'vibraphone' || sid === 'bells' || sid === 'glockenspiel' || sid === 'celesta' ? Math.max(hold, 1.8) : sample.kind === 'pizz' ? Math.max(hold, 0.6) : hold;
       g.gain.setValueAtTime(g.gain.value, t + ringFor);
       g.gain.setTargetAtTime(0, t + ringFor, rel / 3);
       src.start(t, offset); src.stop(t + ringFor + rel * 3 + 0.05);
@@ -291,7 +318,7 @@ export class Sampler {
   // Quick audition (placing a note, tapping a key): loads on demand and plays at once.
   async preview(sid, midi, vel = 0.7, dur = 0.7, mix) {
     this.live();
-    const sample = await this.sampleFor(sid, midi).catch(() => null);
+    const sample = await this.sampleFor(sid, midi, 'sus', vel).catch(() => null);
     const ch = this.channel('preview:' + sid, sid, mix || { ...DEFAULT_MIX(), reverb: 0.25 });
     return this.noteOn(ch, sample, midi, this.ctx.currentTime + 0.01, dur, vel);
   }

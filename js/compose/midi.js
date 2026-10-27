@@ -55,7 +55,7 @@ export function toMidi(score) {
     let prog = -1;
     const lastOff = new Map();   // key → its note-off, moved earlier when the same key sounds again
     for (const n of mine.slice().sort((a, b) => a.t - b.t)) {
-      const pr = PROGRAM[n.sid] ?? 0;
+      const pr = n.kind === 'pizz' ? PROGRAM.pizz : n.kind === 'trem' ? PROGRAM.tremolo : PROGRAM[n.sid] ?? 0;
       if (pr !== prog && !unpitched) { ev.push([tick(n.t), 1, [0xc0 | c, pr]]); prog = pr; }
       const on = tick(n.t), off = Math.max(on + 1, tick(n.t + Math.max(0.02, n.dur)));
       const key = Math.max(0, Math.min(127, Math.round(n.midi)));

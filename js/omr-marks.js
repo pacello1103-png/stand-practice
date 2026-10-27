@@ -180,8 +180,17 @@ export function readMarks(read, ctx) {
     const yEndOf = (q) => q.cl.ys[q.cl.ys.length - 1], yStartOf = (q) => q.cl.ys[0];
     let host = null, bestD = Infinity;
     for (const q of joined) {
-      const gx = p.x0 - q.x1; if (gx < -sp0 * 0.1 || gx > sp0 * 0.9) continue;
+      const gx = p.x0 - q.x1; if (gx < -sp0 * 0.1) continue;
       const dy = Math.abs(yStartOf(p) - yEndOf(q)); if (dy > sp0 * 0.55) continue;
+      // (a longer break, where the curve passed a stem or a digit and lost its ink: only between two
+      // long, thin pieces that carry on at the same height and slope)
+      if (gx > sp0 * 0.9) {   // (off unless asked: it changed the readings of real pages for the worse)
+        const G = globalThis.__slurGap ?? 0;
+        if (gx > sp0 * G || dy > sp0 * 0.35 || q.x1 - q.x0 < sp0 * 1.5 || p.x1 - p.x0 < sp0 * 1.5 || q.y1 - q.y0 > sp0 * 2.2 || p.y1 - p.y0 > sp0 * 2.2) continue;
+        const nq = q.cl.ys.length, np = p.cl.ys.length; if (nq < 6 || np < 6) continue;
+        const sq = (q.cl.ys[nq - 1] - q.cl.ys[nq - 6]) / Math.max(1, q.cl.xs[nq - 1] - q.cl.xs[nq - 6]), spp = (p.cl.ys[5] - p.cl.ys[0]) / Math.max(1, p.cl.xs[5] - p.cl.xs[0]);
+        const pred = yEndOf(q) + sq * gx; if (Math.abs(pred - yStartOf(p)) > sp0 * 0.35 || Math.abs(sq - spp) > 0.5) continue;
+      }
       const d = gx + dy * 2; if (d < bestD) { bestD = d; host = q; }
     }
     if (host) {

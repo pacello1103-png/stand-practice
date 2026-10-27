@@ -2,7 +2,7 @@
 // hairpins, articulations, fermatas and a light human touch. Also renders the score to audio.
 import { WHOLE, barTicks, timeAt, tempoAt, ticksOf, midiOf, staffInfo, keyAlter, keyAt, voiceView } from './model.js';
 import { INST } from './instruments.js';
-import { sampler, Sampler, DEFAULT_MIX } from '../sampler.js';
+import { sampler, Sampler, DEFAULT_MIX, realSet } from '../sampler.js';
 import { getCtx, wantAudio } from '../audio.js';
 import { encodeWav } from '../recorder.js';
 
@@ -215,6 +215,13 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     const peds = spans.filter((q) => q.kind === 'ped' && part.staves.some((x) => x.id === q.st));
     const pedEnd = (f) => { for (const pd of peds) { if ((f.m > pd.a.m || (f.m === pd.a.m && f.pos >= pd.a.pos)) && (f.m < pd.b.m || (f.m === pd.b.m && f.pos <= pd.b.pos))) { const k = order.indexOf(pd.b.m); if (k >= 0) { const bf = flat.find((q) => q.m === pd.b.m && q.pos >= pd.b.pos) || null; return bf ? bf.t + bf.dur : tAt(k, barMap[k].total); } } } return null; };
     const trillSpans = spans.filter((q) => q.kind === 'trill' && q.st === st.id);
+    // a glissando: from the note where it starts, the pitch slides all the way to the note it ends on
+    const glissFrom = new Map();
+    for (const q of spans) if (q.kind === 'gliss' && q.st === st.id) {
+      const i = flat.findIndex((x) => x.m === q.a.m && x.pos === q.a.pos);
+      const j = flat.findIndex((x) => (x.m > q.a.m || (x.m === q.a.m && x.pos > q.a.pos)) && x.ev.notes && !x.ev.rest);
+      if (i >= 0 && j > i) { const top = (e) => Math.max(...e.ev.notes.map((n) => midiOf(n.s, n.a))); glissFrom.set(flat[i], top(flat[j])); }
+    }
     const inTrill = (f) => trillSpans.some((q) => (f.m > q.a.m || (f.m === q.a.m && f.pos >= q.a.pos)) && (f.m < q.b.m || (f.m === q.b.m && f.pos <= q.b.pos)));
     // pizz. and arco written over the notes of a string instrument: plucked until arco
     if (/violin|viola|cello|^bass$|strings/.test(sid)) {
@@ -229,7 +236,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       if (!ev.notes || ev.rest) { open.clear(); continue; }
       const ids = [ev.id];
       const arts = ev.art || [];
-      const sidF = f.pizz ? 'pizz' : sid, susF = sustained && !f.pizz;
+      // (the strings recorded for real keep their own instrument, plucked or bowed)
+      const sidF = f.pizz && !realSet(sid, 'pizz') ? 'pizz' : sid, susF = sustained && !f.pizz;
       const fer = arts.some((a) => a === 'ferm' || a === 'fermS' || a === 'fermL') ? fermatas.find((q) => q.m === f.m) : null;
       let dur = f.dur + (fer ? fer.extra : 0);
       const art = arts.find((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)) || null;
@@ -267,6 +275,9 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         if (head === 'ghost') v *= 0.5;
         if (head === 'x' && !inst.unpitched) v *= 0.75;
         const base = { part: part.id, sid: sidF, midi: pm, t: t0, dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
+        if (glissFrom.has(f) && ni === sorted.length - 1 && !inst.unpitched) { base.glissTo = glissFrom.get(f); base.dur = dur + 0.03; base.legato = true; }
+        // which recording: plucked, short and bouncing (spiccato), or the bow held
+        base.kind = f.pizz ? 'pizz' : (art === 'stacc' || art === 'stacciss') && dur < 0.5 ? 'spic' : 'sus';
         if (head === 'x' && !inst.unpitched) { base.dur = Math.min(base.dur, 0.12); base.art = 'stacciss'; }
         if (harmBelow && ni === 0) { base.harm = true; base.vel = v * 0.7; }
         if (expr && susF) {
@@ -301,7 +312,9 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           const flags = ev.t >= 8 ? Math.log2(ev.t) - 2 : 0, strokes = arts.includes('trem3') ? 3 : arts.includes('trem2') ? 2 : 1;
           const subT = Math.pow(2, 2 + flags + strokes);
           const step = strokes >= 3 && subT >= 32 && f.dur / f.len * (WHOLE / subT) < 0.05 ? 0.05 : f.dur / Math.max(1, f.len / (WHOLE / subT));
-          for (let x = t0; x < t0 + dur - 0.02; x += Math.max(0.04, step)) add({ ...base, t: x, dur: Math.max(0.04, step) * 0.95, vel: v * (0.9 + rnd() * 0.1), env: null, vib: 0 });
+          // an unmeasured tremolo of a string: its own recording, held
+          if (strokes >= 3 && realSet(sid, 'trem') && !f.pizz) add({ ...base, kind: 'trem', vib: 0 });
+          else for (let x = t0; x < t0 + dur - 0.02; x += Math.max(0.04, step)) add({ ...base, t: x, dur: Math.max(0.04, step) * 0.95, vel: v * (0.9 + rnd() * 0.1), env: null, vib: 0, kind: base.kind === 'sus' && step < 0.3 ? 'spic' : base.kind });
         } else {
           add(base);
           if (n.tie) open.set(n.s, base); else open.delete(n.s);
@@ -328,10 +341,10 @@ export class ScorePlayer {
     sampler.live();
     applyScoreSound(sampler, score);
     this.loading = true;
-    await sampler.prepare(tl.notes.slice(0, 400).map((n) => ({ sid: n.sid, midi: n.midi })));
+    await sampler.prepare(tl.notes.slice(0, 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
     // (Stop pressed while the sounds were loading: it does not start after all)
     if (tok !== this._tok) return;
-    sampler.prepare(tl.notes.slice(400).map((n) => ({ sid: n.sid, midi: n.midi })));
+    sampler.prepare(tl.notes.slice(400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
     this.loading = false;
     const ctx = getCtx();
     this.t0 = ctx.currentTime + 0.12;
@@ -344,9 +357,9 @@ export class ScorePlayer {
       while (this.next < tl.notes.length && tl.notes[this.next].t < now + 0.6) {
         const n = tl.notes[this.next++];
         const ch = sampler.channels.get(n.part) || sampler.channel(n.part, n.sid, DEFAULT_MIX());
-        const smp = await sampler.sampleFor(n.sid, n.midi).catch(() => null);
+        const smp = await sampler.sampleFor(n.sid, n.midi, n.kind, n.vel).catch(() => null);
         if (!this.playing) return;
-        sampler.noteOn(ch, smp, n.midi, this.t0 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [this.t0 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm });
+        sampler.noteOn(ch, smp, n.midi, this.t0 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [this.t0 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm, glissTo: n.glissTo });
       }
       if (this.onTick) {
         const sounding = new Set();
@@ -372,6 +385,7 @@ export function applyScoreSound(smp, score) {
   smp.setRoom(snd.room || 'hall');
   smp.setRoomMix(snd.roomMix ?? 1);
   smp.tuning = snd.tuning || 440;
+  smp.plain = snd.plainStrings === true;   // (the classic string sounds, chosen in the mixer)
   const anySolo = score.parts.some((p) => p.mix && p.mix.solo);
   for (const p of score.parts) {
     const sid = p.sound || (INST[p.inst] || INST.piano).sound;
@@ -384,7 +398,8 @@ export function applyScoreSound(smp, score) {
 export async function renderAudio(score, onProgress) {
   const tl = buildTimeline(score, { from: 0 });
   sampler.live();
-  await sampler.prepare(tl.notes.map((n) => ({ sid: n.sid, midi: n.midi })));
+  sampler.plain = (score.sound || {}).plainStrings === true;
+  await sampler.prepare(tl.notes.map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
   const sr = 44100;
   const len = Math.ceil((tl.total + 3) * sr);
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -395,8 +410,8 @@ export async function renderAudio(score, onProgress) {
   applyScoreSound(s2, score);
   let i = 0;
   for (const n of tl.notes) {
-    const smp = await s2.sampleFor(n.sid, n.midi).catch(() => null);
-    s2.noteOn(s2.channels.get(n.part), smp, n.midi, 0.2 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [0.2 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm });
+    const smp = await s2.sampleFor(n.sid, n.midi, n.kind, n.vel).catch(() => null);
+    s2.noteOn(s2.channels.get(n.part), smp, n.midi, 0.2 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [0.2 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm, glissTo: n.glissTo });
     if (++i % 200 === 0 && onProgress) onProgress(0.3 * (i / tl.notes.length));
   }
   if (onProgress) onProgress(0.35);

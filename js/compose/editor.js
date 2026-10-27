@@ -1619,7 +1619,7 @@ function renderTab() {
     const LK = { k: 6.6 };
     const dash = (gg, x0, x1, y) => { gg.save(); gg.lineWidth = 0.12; gg.setLineDash([0.5, 0.45]); gg.beginPath(); gg.moveTo(x0, y); gg.lineTo(x1, y); gg.stroke(); gg.restore(); };
     cg.append(card('Trill', has('trill'), () => addSpan('trill'), (gg, W, H) => { glyph(gg, GL.orn.tr, W * 0.08, H / 2 + 0.7, 3.4); for (let x = W * 0.08 + 2.0; x < W * 0.92; x += gm(GL.orn.wiggle).r || 0.8) glyph(gg, GL.orn.wiggle, x, H / 2 + 0.2, 3.4); }, LK));
-    for (const [k, name] of [['8va', 'Octave up'], ['8vb', 'Octave down'], ['15ma', 'Two octaves up']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { const up = k !== '8vb'; glyph(gg, GL.ott[k], W * 0.08, H / 2 + 0.8, 3.0); dash(gg, W * 0.08 + (k === '15ma' ? 3.0 : 2.3), W * 0.9, H / 2 - 0.1); drawLine(gg, W * 0.9, H / 2 - 0.1, W * 0.9, H / 2 + (up ? 1 : -1), 0.12); }, LK));
+    for (const [k, name] of [['8va', 'Octave up'], ['8vb', 'Octave down'], ['15ma', 'Two octaves up'], ['15mb', 'Two octaves down']]) cg.append(card(name, has(k), () => addSpan(k), (gg, W, H) => { const up = k !== '8vb' && k !== '15mb'; glyph(gg, GL.ott[k], W * 0.08, H / 2 + 0.8, 3.0); dash(gg, W * 0.08 + (k.startsWith('15') ? 3.0 : 2.3), W * 0.9, H / 2 - 0.1); drawLine(gg, W * 0.9, H / 2 - 0.1, W * 0.9, H / 2 + (up ? 1 : -1), 0.12); }, LK));
     cg.append(card('Pedal', has('ped'), () => addSpan('ped'), (gg, W, H) => { glyph(gg, GL.ped, W * 0.06, H / 2 + 0.8, 3.0); gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.06 + 3.1, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 + 0.7); gg.lineTo(W * 0.92, H / 2 - 0.6); gg.stroke(); }, LK));
     cg.append(card('Pedal ✱', false, () => addSpan('ped', { line: false }), (gg, W, H) => { glyph(gg, GL.ped, W * 0.08, H / 2 + 0.8, 3.0); glyph(gg, GL.pedUp, W * 0.74, H / 2 + 0.8, 3.0); }, LK));
     cg.append(card('1st ending', false, () => addEnding(1), (gg, W, H) => { gg.lineWidth = 0.12; gg.beginPath(); gg.moveTo(W * 0.1, H * 0.85); gg.lineTo(W * 0.1, H * 0.25); gg.lineTo(W * 0.9, H * 0.25); gg.lineTo(W * 0.9, H * 0.85); gg.stroke(); text(gg, '1.', W * 0.1 + 0.4, H * 0.25 + 1.6, 1.6); }, LK));
@@ -2143,6 +2143,7 @@ function wirePanels() {
     b.addEventListener('click', () => { C.score.sound.room = k; sampler.setRoom(k); renderMixer(); saveSoon(); });
     $('#mxRoom').append(b);
   }
+  $('#mxRealStr').addEventListener('change', (e) => { C.score.sound.plainStrings = !e.target.checked; saveSoon(); });
   $('#mxRoomMix').addEventListener('input', (e) => { C.score.sound.roomMix = +e.target.value / 100; sampler.live().setRoomMix(C.score.sound.roomMix); $('#mxRoomVal').textContent = e.target.value + '%'; saveSoon(); });
   $('#mxTuning').addEventListener('change', (e) => { C.score.sound.tuning = +e.target.value; sampler.tuning = C.score.sound.tuning; saveSoon(); });
   $$('#mxStyle button').forEach((b) => b.addEventListener('click', () => { C.score.sound.style = b.dataset.style; C.score.sound.human = b.dataset.style !== 'straight'; renderMixer(); saveSoon(); }));
@@ -2356,6 +2357,7 @@ function renderMixer() {
   $$('#mxRoom button').forEach((b) => b.classList.toggle('on', b.dataset.room === (snd.room || 'hall')));
   $('#mxRoomMix').value = Math.round((snd.roomMix ?? 1) * 100); $('#mxRoomVal').textContent = Math.round((snd.roomMix ?? 1) * 100) + '%';
   $('#mxTuning').value = String(snd.tuning || 440);
+  $('#mxRealStr').checked = snd.plainStrings !== true;
   $$('#mxStyle button').forEach((b) => b.classList.toggle('on', b.dataset.style === (snd.style || 'expressive')));
   $('#mxAdv').hidden = !C.mixAdv; $('#mxAdvBtn').textContent = C.mixAdv ? 'Fewer settings' : 'More settings';
   sampler.live(); applyScoreSound(sampler, C.score);

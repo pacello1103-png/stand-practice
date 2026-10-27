@@ -1564,6 +1564,7 @@ body.touring #score.chrome-off .inkbar { opacity: 1; }
 .eyecal.result .eyecal-box { top: auto; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--surface-solid); border: 1px solid var(--line); border-radius: 20px; padding: 16px 18px; box-shadow: 0 10px 30px rgba(14,20,45,.12); }
 .eyecal.result .eyecal-cam, .eyecal.result .eyecal-state { display: none; }
 .eyecal-live { position: absolute; left: 50%; top: max(18px, env(safe-area-inset-top)); transform: translateX(-50%); padding: 8px 14px; border-radius: 999px; background: #fff3d6; color: #7a5310; font-size: 14px; font-weight: 600; z-index: 3; }
+.eyecal-say { background: var(--card, #fff); color: var(--ink, #16181d); box-shadow: 0 4px 18px rgba(0,0,0,.14); max-width: calc(100vw - 32px); text-align: center; }
 .eyecal-marks { position: absolute; inset: 0; pointer-events: none; }
 .eyecal-mark { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 2px dashed var(--muted); }
 .eyecal-hit { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; }

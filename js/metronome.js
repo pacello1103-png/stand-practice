@@ -10,7 +10,10 @@ function synth(ctx, dur, fn) {
   const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
   let peak = 0;
   for (let i = 0; i < n; i++) { const t = i / sr; d[i] = fn(t, i); peak = Math.max(peak, Math.abs(d[i])); }
-  if (peak > 0) for (let i = 0; i < n; i++) d[i] /= peak;
+  // (made dense, like a real click heard over a band: the peak stays, the sound around it is lifted
+  // about 8 dB, so the small speakers of an iPad or iPhone are heard over an instrument)
+  const drive = 3, k = Math.tanh(drive);
+  if (peak > 0) for (let i = 0; i < n; i++) d[i] = Math.tanh((drive * d[i]) / peak) / k;
   // 1 ms fade-in and fade-out: no clicks on the click.
   const f = Math.min(n >> 2, Math.round(sr * 0.001));
   for (let i = 0; i < f; i++) { d[i] *= i / f; d[n - 1 - i] *= i / f; }
@@ -24,20 +27,20 @@ const VOICES = {
   // A round, clear "tock": a small bright wooden knock. The pitch falls a little as it
   // sounds (the way a struck block rings), a second mode adds body, and a tiny
   // transient gives the attack a crisp edge without any hiss.
-  click: (ctx, f) => synth(ctx, 0.07, (t) => {
+  click: (ctx, f) => synth(ctx, 0.08, (t) => {
     const glide = f * 0.06 * (1 - Math.exp(-t * 180)) / 180;
-    const body = Math.sin(TAU * (f * t + glide)) * Math.exp(-t * 105);
-    const ring = 0.4 * Math.sin(TAU * f * 2.1 * t) * Math.exp(-t * 170);
+    const body = Math.sin(TAU * (f * t + glide)) * Math.exp(-t * 60);
+    const ring = 0.55 * Math.sin(TAU * f * 2.1 * t) * Math.exp(-t * 95);
     const tick = 0.22 * noise() * Math.exp(-t * 900);
     return body + ring + tick;
   }),
   // Woodblock: two resonant modes and a short knock
-  wood: (ctx, f) => synth(ctx, 0.07, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 70) + 0.5 * Math.sin(TAU * f * 2.42 * t) * Math.exp(-t * 120) + 0.15 * noise() * Math.exp(-t * 900)),
+  wood: (ctx, f) => synth(ctx, 0.08, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 50) + 0.55 * Math.sin(TAU * f * 2.42 * t) * Math.exp(-t * 85) + 0.15 * noise() * Math.exp(-t * 900)),
   // Plain beep
   beep: (ctx, f) => synth(ctx, 0.06, (t) => Math.sin(TAU * f * t) * Math.min(1, t / 0.0015) * Math.exp(-t * 45)),
 };
 const PITCH = { click: [1750, 1250, 1250], wood: [1180, 860, 860], beep: [1500, 1000, 1000] };
-const GAINS = [1, 0.62, 0.32]; // accent, beat, subdivision
+const GAINS = [1, 0.74, 0.44]; // accent, beat, subdivision
 
 // ---------- tempo names, as printed in scores ----------
 const MARKS = [[40, 'Grave'], [60, 'Largo'], [66, 'Larghetto'], [76, 'Adagio'], [92, 'Andante'], [108, 'Andantino'],
@@ -61,7 +64,7 @@ export class Metronome {
     this.accents = [2, 1, 1, 1];
     this.subdiv = 1;
     this.sound = 'click';
-    this.volume = 0.8;
+    this.volume = 1;
     this.ramp = { on: false, mode: 'smooth', from: 60, to: 100, bars: 32, step: 4, every: 4, repeat: false };
     this.gap = { on: false, play: 2, mute: 2 };
     this.running = false;

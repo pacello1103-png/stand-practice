@@ -1647,6 +1647,21 @@ async function ecDots() {
     for (let k = 0; k < 30 && cur.good < 5 && EC.on; k++) await ecWait(100);
     cur = null;
   }
+  // Then the head moves while the eyes stay on one dot: so how the head turns is learned apart from
+  // where the eyes look (else turning the head moved the point as if the eyes had moved)
+  const say = el('div', 'eyecal-live eyecal-say'); say.style.top = '28%'; $('#eyeCal').append(say);
+  const heads = ['Keep looking at the dot, and turn your head a little to the left', 'Now a little to the right', 'Now tilt it a little up', 'And a little down'];
+  for (let k = 0; k < heads.length && EC.on; k++) {
+    say.textContent = heads[k];
+    dot.classList.remove('shrink'); dot.style.left = 0.5 * W + 'px'; dot.style.top = 0.5 * H + 'px';
+    await ecWait(1100);
+    void dot.offsetWidth; dot.classList.add('shrink');
+    // (each its own place in the set-up, a hair apart, so they are not merged into one)
+    cur = { px: 0.5 * W + (k + 1) * 0.001, py: 0.5 * H, from: performance.now() + 350, good: 0 };
+    await ecWait(1300);
+    cur = null;
+  }
+  say.remove();
   off(); $('#eyeCal').classList.remove('running'); $('#eyeCalLive').hidden = true;
   return samples;
 }
