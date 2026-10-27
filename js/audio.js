@@ -9,11 +9,20 @@ if (typeof window !== 'undefined') window.__audioLog = audioLog;
 let holding = 0;
 export function holdSound(on) { holding = Math.max(0, holding + (on ? 1 : -1)); }
 
+// What kind of sound Stand makes, said to iOS. Without it, the web view's sound counts as
+// "ambient": with the iPad or iPhone in silent mode the speaker stays quiet (Bluetooth headphones
+// still play), until the microphone opens and the sound becomes play-and-record. So it is said in
+// the app too: playback (the silent switch does not mute it), or play-and-record while the
+// microphone is open, or when the sound is kept on the iPad's speaker (that choice exists only there).
 function setSession(type) {
-  // In the iPad app the native side keeps one play-and-record session for everything.
-  if (window.standCaps && window.standCaps.native) return;
-  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch { /* not supported */ }
+  try {
+    if (!navigator.audioSession) return;
+    if (type === 'playback' && window.standCaps && window.standCaps.native && window.__standSpeaker) type = 'play-and-record';
+    if (navigator.audioSession.type !== type) navigator.audioSession.type = type;
+  } catch { /* not supported */ }
 }
+// said again (the speaker choice changed): the kind of sound for what is going on now
+export function applySession() { setSession(micStream ? 'play-and-record' : 'playback'); }
 
 // When the sound goes somewhere else (Bluetooth headphones connected or gone), or the microphone
 // was used and let go, iOS can leave the sound system running with its clock ticking and nothing
@@ -36,8 +45,9 @@ export function getCtx() {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -3; comp.knee.value = 6; comp.ratio.value = 12; comp.attack.value = 0.002; comp.release.value = 0.1;
     masterGain.connect(comp).connect(ctx.destination);
-    // Play through the speaker even when the iPad's silent switch is on.
-    setSession('playback');
+    // Play through the speaker even when the iPad's silent switch is on (play-and-record while the
+    // microphone is open: a new sound system then must not take it away)
+    setSession(micStream ? 'play-and-record' : 'playback');
     const c0 = ctx;
     c0.addEventListener('statechange', () => {
       if (c0 !== ctx) return;

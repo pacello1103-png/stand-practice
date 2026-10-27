@@ -1,6 +1,6 @@
 import { pixDropFile } from './pixcache.js';
 import { db, getSetting, setSetting, uid } from './db.js';
-import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog } from './audio.js';
+import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
 import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } from './temperament.js';
@@ -7726,7 +7726,7 @@ $('#winkOn').addEventListener('change', (e) => { S.wink = e.target.checked; save
 $('#winkSens').addEventListener('input', (e) => { S.winkSens = +e.target.value / 100; saveSettings(); sendFace(); });
 $('#autoTurn').addEventListener('change', (e) => { S.autoTurn = +e.target.value; saveSettings(); autoBars = 0; });
 // Sound routing in the iPad app: the microphone is always the iPad's; the speaker can be forced.
-function sendAudio() { if (NATIVE && NATIVE.standAudio) NATIVE.standAudio.postMessage({ speaker: !!S.audioSpeaker }); }
+function sendAudio() { window.__standSpeaker = !!S.audioSpeaker; try { applySession(); } catch {} if (NATIVE && NATIVE.standAudio) NATIVE.standAudio.postMessage({ speaker: !!S.audioSpeaker }); }
 $('#audioSpeaker').addEventListener('change', (e) => { S.audioSpeaker = e.target.checked; saveSettings(); sendAudio(); });
 // (the microphone opening or closing resets where the sound goes on iOS: said again)
 window.addEventListener('stand-mic-changed', () => setTimeout(sendAudio, 300));
