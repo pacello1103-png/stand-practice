@@ -1499,7 +1499,7 @@ const eyes = {
   sample(smp) {
     // winks, while the camera is ours
     if (S.wink && !$('#score').hidden) {
-      if (!this.wink) this.wink = new WinkDetector((eye) => winkFound(eye));
+      if (!this.wink) this.wink = new WinkDetector((eye) => winkFound(eye, 'camera'));
       this.wink.sens = S.winkSens || 0.7;
       this.wink.feed(smp);
     }
@@ -7750,8 +7750,10 @@ $('#penOpens').addEventListener('change', (e) => { S.penOpens = e.target.checked
 $('#winkSwap').addEventListener('change', (e) => { S.winkSwap = e.target.checked; saveSettings(); });
 $('#winkTest').addEventListener('click', () => { wink.testing = !wink.testing; $('#winkTest').textContent = wink.testing ? 'Stop test' : 'Test'; $('#winkMeter').hidden = !wink.testing; sendFace(); });
 // a wink seen (from the levels here, or the iPad's own): the page turns, once
-function winkFound(rawEye) {
-  const now = performance.now(); if (now - wink.lastTurn < 900) return; wink.lastTurn = now;
+// (one wink seen twice, by the iPad and from the levels here, turns once; two winks of yours, one
+// after the other, turn twice: the next can come 0.4 s after the last)
+function winkFound(rawEye, src = 'ipad') {
+  const now = performance.now(); if (now - wink.lastTurn < (src !== wink.lastSrc ? 900 : 400)) return; wink.lastTurn = now; wink.lastSrc = src;
   let eye = rawEye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
   if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
   if (!$('#score').hidden && S.wink) {
@@ -7771,7 +7773,7 @@ window.standFaceEvent = (ev) => {
     // (judged here as well, from the levels: a wink is seen ~0.12 s after the eye shuts, sooner than
     // the iPad's own, which comes later; the first of the two turns the page, once)
     const e = wink.det.feed(now, +ev.l || 0, +ev.r || 0, !ev.hand);
-    if (e && (faceAside() || (S.winkFast ?? true))) winkFound(e);
+    if (e && (faceAside() || (S.winkFast ?? true))) winkFound(e, 'levels');
     if (!wink.testing) return;
     const [l, r] = S.winkSwap ? [ev.r, ev.l] : [ev.l, ev.r];
     $('#eyeL').style.setProperty('--v', l); $('#eyeR').style.setProperty('--v', r);

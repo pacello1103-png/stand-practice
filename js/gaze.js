@@ -262,7 +262,7 @@ export class WinkLevels {
     if (this.run && !this.run.spoilt && this.run.eye === eye) {
       // fired as soon as the wink has lasted long enough to be one (no wait for the eye to open)
       const d = t - this.run.t0;
-      if (!this.run.fired && d >= 120 && t - this.lastFire > 900) { this.run.fired = true; this.lastFire = t; return eye; }
+      if (!this.run.fired && d >= 120 && t - this.lastFire > 400) { this.run.fired = true; this.lastFire = t; return eye; }
       if (d > 1200) this.run.spoilt = true;
       return null;
     }
