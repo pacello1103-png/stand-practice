@@ -7,8 +7,13 @@ let opening = null, known = null, count = 0;
 function open() {
   if (opening) return opening;
   opening = new Promise((res, rej) => {
-    const r = indexedDB.open(NAME, 1);
-    r.onupgradeneeded = () => { const s = r.result.createObjectStore('p', { keyPath: 'k' }); s.createIndex('at', 'at'); };
+    const r = indexedDB.open(NAME, 2);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains('p')) { const s = d.createObjectStore('p', { keyPath: 'k' }); s.createIndex('at', 'at'); }
+      // (light copies of heavy scans: every page once, never pruned, dropped with the file)
+      if (!d.objectStoreNames.contains('L')) d.createObjectStore('L', { keyPath: 'k' });
+    };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   }).catch((e) => { opening = null; throw e; });
@@ -62,8 +67,24 @@ async function prune() {
     });
   } catch {} finally { pruning = false; }
 }
+// ---- the light copy of a heavy scan: each page once as a picture of a sensible size, so the
+// enormous original is not read again (reading one of its pages took hundreds of MB)
+export async function lightGet(f, i) {
+  try { const d = await open(); const v = await wrap(d.transaction('L').objectStore('L').get(f + '|' + i)); return v ? v.b : null; } catch { return null; }
+}
+export async function lightPut(f, i, b) {
+  if (!b || !b.size) return;
+  try { const d = await open(); const tx = d.transaction('L', 'readwrite'); tx.objectStore('L').put({ k: f + '|' + i, f, b, at: Date.now() }); await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); } catch {}
+}
+export async function lightKeys(f) {
+  try { const d = await open(); const ks = await wrap(d.transaction('L').objectStore('L').getAllKeys()); return new Set(ks.filter((k) => String(k).startsWith(f + '|')).map((k) => +String(k).slice(f.length + 1))); } catch { return new Set(); }
+}
+async function lightDrop(f) {
+  try { const d = await open(); const ks = (await wrap(d.transaction('L').objectStore('L').getAllKeys())).filter((k) => String(k).startsWith(f + ':') || String(k).startsWith(f + '|')); if (!ks.length) return; const tx = d.transaction('L', 'readwrite'); for (const k of ks) tx.objectStore('L').delete(k); } catch {}
+}
 // a score's file was replaced or deleted: its pictures go too
 export async function pixDropFile(f) {
+  lightDrop(f);
   try {
     const ks = [...(await keys())].filter((k) => k.startsWith(f + ':'));
     if (!ks.length) return;
@@ -72,5 +93,5 @@ export async function pixDropFile(f) {
   } catch {}
 }
 export async function pixClear() {
-  try { const d = await open(); const tx = d.transaction('p', 'readwrite'); tx.objectStore('p').clear(); known = new Set(); count = 0; } catch {}
+  try { const d = await open(); const tx = d.transaction(['p', 'L'], 'readwrite'); tx.objectStore('p').clear(); tx.objectStore('L').clear(); known = new Set(); count = 0; } catch {}
 }

@@ -1543,6 +1543,14 @@ body.touring #score.chrome-off .inkbar { opacity: 1; }
 .bk-what { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--sunk); }
 .bk-what .check { align-items: flex-start; }
 .bk-what small { font-size: 12.5px; line-height: 1.35; }
+/* the Stand folder in Files: nothing to choose, just what is where */
+#panel-backup .folder-only { display: none; }
+#panel-backup.in-folder .folder-only { display: block; }
+#panel-backup.in-folder .share-only { display: none; }
+.bk-tree { list-style: none; margin: 8px 0 0; padding: 12px 14px; border-radius: 14px; background: var(--sunk); display: flex; flex-direction: column; gap: 8px; }
+.bk-tree li { display: flex; flex-direction: column; gap: 1px; padding-left: 22px; position: relative; }
+.bk-tree li::before { content: ''; position: absolute; left: 0; top: 3px; width: 14px; height: 11px; border-radius: 2px 3px 3px 3px; background: var(--accent, #2b6fd6); opacity: .8; }
+.bk-tree small { font-size: 12.5px; line-height: 1.35; }
 
 /* setting up the eyes: dots to look at, over everything */
 .eyecal { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: block; touch-action: none; }

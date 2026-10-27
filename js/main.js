@@ -4245,7 +4245,11 @@ stage.addEventListener('pointerdown', (e) => {
     return;
   }
   // touch
-  if (penDown || t - lastPenUp < 350) { info.palm = true; return; }
+  // the hand resting on the screen while writing never turns the page: no touch counts while the
+  // Pencil is down, nor for a moment after it lifts (longer while the markings are open), and a
+  // wide contact (the side of the hand) is never a finger
+  const wide = Math.max(e.width || 0, e.height || 0) > 48;
+  if (penDown || t - lastPenUp < (V.inking ? 1500 : 350) || (wide && (V.inking || t - lastPenUp < 4000))) { info.palm = true; return; }
   const n = touches().length;
   if (n >= 2 && V.perform) { GS = { kind: 'wait' }; return; }
   if (n >= 2) {
@@ -4308,7 +4312,8 @@ function pointerEnd(e) {
     const g = GS; GS = null;
     clearTimeout(g.holdT);
     if (g.held) return;   // the hold menu is open
-    if (!p || e.type === 'pointercancel') return;
+    if (!p || p.palm || e.type === 'pointercancel') return;
+    if (penDown || (V.inking && now() - lastPenUp < 1500)) return;   // the Pencil came down meanwhile: it was the hand
     const dx = e.clientX - g.x, dy = e.clientY - g.y, dt = now() - g.t0;
     if (Z.s !== 1) {
       if (g.moved) { scheduleSharpen(); return; }
@@ -7855,7 +7860,9 @@ async function renderBackup() {
   const set = await getSetting('backupTakes', false); $('#bkTakes').checked = !!set && sz.recordings > 0;
   $('#bkSettingsState').textContent = st.at ? `Last backup ${ago(st.at)}.` : 'Everything in Stand, kept safe outside the app.';
   const auto = await getSetting('backupAuto', 'week'); $$('#bkAuto button').forEach((x) => x.classList.toggle('on', x.dataset.auto === auto));
-  $('#bkTakesWhich').hidden = !$('#bkTakes').checked;
+  $('#bkTakesWhich').hidden = !$('#bkTakes').checked || canSaveHere();
+  $('#panel-backup').classList.toggle('in-folder', canSaveHere());
+  if (canSaveHere()) $('#bkAutoHint').textContent = 'When it is time and something has changed, Stand makes the backup by itself, in the Stand folder, without asking anything.';
   const fresh = (await newTakeIds(false)).length; const nb = $('#bkTakesWhich button[data-which="new"]'); if (nb) nb.textContent = fresh ? `Only new ones (${fresh})` : 'Only new ones (none)';
 }
 async function renderBackupBanner() {
@@ -7906,6 +7913,34 @@ async function saveInStandFolder(blob, folder, name) {
   if (!r.ok) throw new Error(r.error || 'not saved');
   return r.path;
 }
+// Files › Stand › Scores: each score of the library as a PDF, in its folder. Only what is new or
+// changed is written; a score renamed or moved leaves its old copy behind no more. (A score deleted
+// in Stand keeps its copy here: nothing you had is ever lost by a backup.)
+const fileSafe = (t, max = 80) => String(t || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).replace(/[. ]+$/, '') || 'Untitled';
+async function mirrorScores() {
+  const H = NSAVE(); if (!H) return;
+  const done = await getSetting('folderPdfs', {}), next = {}, used = new Set();
+  for (const sc of scores) {
+    if (!sc.fileId || sc.kind === 'paper' || sc.kind === 'comp') continue;
+    const fo = FOLD.list.find((x) => x.id === sc.folder);
+    const folder = 'Scores' + (fo ? '/' + fileSafe(fo.name, 60) : '');
+    let name = fileSafe((sc.composer ? sc.composer + ' - ' : '') + sc.title, 110), k = 2;
+    while (used.has((folder + '/' + name).toLowerCase())) name = fileSafe((sc.composer ? sc.composer + ' - ' : '') + sc.title, 104) + ` (${k++})`;
+    used.add((folder + '/' + name).toLowerCase());
+    const path = folder + '/' + name + '.pdf';
+    const f = await db.get('files', sc.fileId);
+    if (!f || f.kind !== 'pdf' || !f.data) continue;
+    const size = f.data.byteLength ?? f.data.size ?? 0, key = path + '|' + size;
+    if (done[sc.fileId] === key) { next[sc.fileId] = key; continue; }
+    await saveInStandFolder(f.data instanceof Blob ? f.data : new Blob([f.data], { type: 'application/pdf' }), folder, name + '.pdf');
+    const old = done[sc.fileId] && done[sc.fileId].split('|')[0];
+    if (old && old !== path) try { H.postMessage({ op: 'remove', path: old }); } catch {}
+    next[sc.fileId] = key;
+    await setSetting('folderPdfs', { ...done, ...next });   // (kept as it goes: an interrupted copy goes on from here)
+  }
+  for (const [id, key] of Object.entries(done)) if (!next[id]) next[id] = key;
+  await setSetting('folderPdfs', next);
+}
 // a little time in the background for work that should not stop half way (newer iPad apps only)
 function nativeBusy(on, why) { try { if ((window.standCaps || {}).busy) window.webkit.messageHandlers.standBusy.postMessage({ on: !!on, why }); } catch {} }
 window.__nativeBusy = nativeBusy;
@@ -7916,8 +7951,10 @@ async function backupNow({ auto = false } = {}) {
   try {
     const stamp = prettyDay();
     const vols = await makeBackupSet('library', stamp, FOLD.list);
-    if ($('#bkTakes').checked) {
-      const ids = await newTakeIds(BK.which === 'all');
+    // with the Stand folder nothing is asked: every recording not yet kept goes along too
+    const here = canSaveHere();
+    if (here || $('#bkTakes').checked) {
+      const ids = await newTakeIds(here ? false : BK.which === 'all');
       if (ids.length) { toast('Packing your recordings…', 60000); vols.push(...await makeBackupSet('recordings', stamp, FOLD.list, ids)); }
     }
     BK.vols = vols;
@@ -7957,11 +7994,21 @@ async function backupNow({ auto = false } = {}) {
       nativeBusy(true, 'backup');
       try {
         toast('Saving the backup in Files › Stand › Backups…', 120000);
-        for (const li of ul.children) { const v = vols[[...ul.children].indexOf(li)]; await saveInStandFolder(v.blob, 'Backups', v.name); const go = li.querySelector('.btn'); markSaved(li, go); go.textContent = 'Share'; go.classList.remove('primary'); }
+        // Backups: the library (the newest three stay); Recordings: the new recordings (each
+        // backup's own file, with the time, so none is written over)
+        const hm = new Date().toTimeString().slice(0, 5).replace(':', '.');
+        for (const li of ul.children) {
+          const v = vols[[...ul.children].indexOf(li)];
+          const rec = v.kind === 'Recordings';
+          await saveInStandFolder(v.blob, rec ? 'Recordings' : 'Backups', rec ? v.name.replace(/\.zip$/, ` ${hm}.zip`) : v.name);
+          const go = li.querySelector('.btn'); markSaved(li, go); go.textContent = 'Share'; go.classList.remove('primary');
+        }
         const nLib = vols.filter((v) => v.kind === 'Library').length;
         try { NSAVE().postMessage({ op: 'keep', folder: 'Backups', prefix: 'Stand – Library – ', count: Math.max(3, nLib * 3) }); } catch {}
-        $('#bkHow').innerHTML = 'Saved in <b>Files › On My iPad › Stand › Backups</b>. They stay on this iPad, so if Stand is deleted they go with it: from time to time tap <b>Share</b> and save a copy in <b>iCloud Drive</b> too.';
-        toast('Backup saved in Files › Stand › Backups', 3500);
+        // Scores: every score as a PDF you can open by hand, in the folders of your library
+        try { toast('Saving your scores in Files › Stand › Scores…', 120000); await mirrorScores(); } catch (err) { console.warn('scores copy', err); }
+        $('#bkHow').innerHTML = 'Saved in <b>Files › On My iPad › Stand</b>: <b>Backups</b> (to bring everything back), <b>Scores</b> (your scores as PDFs, in your folders), <b>Recordings</b> and <b>Diagnostics</b>. They stay on this iPad, so if Stand is deleted they go with it: from time to time tap <b>Share</b> and save a copy in <b>iCloud Drive</b> too.';
+        toast('Backup saved in Files › Stand', 3500);
       } catch (err) { toast('The backup could not be saved in the Stand folder (' + (err.message || err) + '). Use Share instead.', 6000); }
       nativeBusy(false, 'backup');
     } else if (vols.length === 1 || auto) ul.querySelector('.btn').click();

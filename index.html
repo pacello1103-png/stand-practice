@@ -1115,8 +1115,17 @@
   <div class="panel-body">
     <div class="bk-state" id="bkState"><svg><use href="#i-cloud"/></svg><div><strong id="bkStateTitle">No backup yet</strong><span class="hint" id="bkStateText"></span></div></div>
     <p class="hint">Deleting Stand deletes everything inside it. A backup keeps it as files in iCloud Drive, so you can bring it back on this or any iPad.</p>
-    <div class="ctl-head"><span>What goes in the backup</span></div>
-    <div class="bk-what">
+    <div class="bk-here folder-only">
+      <p class="hint">Everything goes in the <b>Stand</b> folder of this iPad (<b>Files › On My iPad › Stand</b>, with Stand’s picture), already in order. Nothing to choose:</p>
+      <ul class="bk-tree">
+        <li><b>Scores</b><small class="hint">Every score as a PDF, in the folders of your library</small></li>
+        <li><b>Recordings</b><small class="hint">Your recordings and videos (the new ones, each time)</small></li>
+        <li><b>Backups</b><small class="hint">Your whole library, to bring it all back (the three newest stay)</small></li>
+        <li><b>Diagnostics</b><small class="hint">What went wrong, if anything did (to send to help)</small></li>
+      </ul>
+    </div>
+    <div class="ctl-head share-only"><span>What goes in the backup</span></div>
+    <div class="bk-what share-only">
       <label class="check"><input type="checkbox" checked disabled> <span><b>Library</b> <span class="num hint" id="bkLibSize"></span><br><small class="hint">Your scores (as PDFs, in your folders), markings, notebooks, compositions, practice log and settings. One file.</small></span></label>
       <label class="check"><input type="checkbox" id="bkTakes"> <span><b>Recordings and videos</b> <span class="num hint" id="bkTakesSize"></span><br><small class="hint">In their own files, so the library file stays small.</small></span></label>
     </div>
@@ -1130,7 +1139,7 @@
     <div class="ctl-head"><span>Automatic backup</span></div>
     <div class="seg full" id="bkAuto"><button data-auto="off">Off</button><button data-auto="day">Every day</button><button data-auto="week" class="on">Every week</button></div>
     <p class="hint" id="bkAutoHint">When it is time and something has changed, Stand makes the backup by itself and asks you once to save it: one tap.</p>
-    <p class="hint"><b>Where it goes:</b> the first time, in the sheet choose <b>Save to Files › iCloud Drive</b>, make a folder called <b>Stand</b> and save there. After that the sheet opens in the Stand folder by itself.</p>
+    <p class="hint share-only"><b>Where it goes:</b> the first time, in the sheet choose <b>Save to Files › iCloud Drive</b>, make a folder called <b>Stand</b> and save there. After that the sheet opens in the Stand folder by itself.</p>
     <div class="ctl-head"><span>Bring back</span></div>
     <p class="hint">Choose the backup file in iCloud Drive. If a backup has several files, select all of them together.</p>
     <label class="btn" for="bkInput"><svg><use href="#i-download"/></svg><span>Restore from a backup…</span></label>

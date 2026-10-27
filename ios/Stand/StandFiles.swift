@@ -8,6 +8,7 @@ import MetricKit
 // Page → app:
 //   standSave   { op: "begin", id, folder, name } · { op: "chunk", id, data: base64 } · { op: "end", id }
 //               · { op: "keep", folder, prefix, count } (only the newest `count` files starting with prefix stay)
+//               · { op: "remove", path } (a file in Scores, Backups or Recordings)
 //   standBusy   { on: true | false, why }
 //   standDiag   { op: "list" } · { op: "log", text }
 // App → page:
@@ -65,6 +66,13 @@ final class StandFiles {
     private var busyWhy: Set<String> = []
     var send: ((String, [String: Any]) -> Void)?
 
+    // the Stand folder in Files is there from the first day, already in order
+    init() {
+        for name in ["Scores", "Backups", "Recordings", "Diagnostics"] {
+            try? FileManager.default.createDirectory(at: documentsDir.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
+        }
+    }
+
     // a name for a file or folder that is safe on disk (no folders hidden inside it)
     private func clean(_ s: String) -> String {
         let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>\0")
@@ -105,6 +113,15 @@ final class StandFiles {
             }
         case "cancel":
             if let e = open.removeValue(forKey: id) { try? e.0.close(); try? FileManager.default.removeItem(at: e.1) }
+        case "remove":
+            // one file the app itself wrote earlier (a score copy that was renamed or moved)
+            let parts = (body["path"] as? String ?? "").split(separator: "/").map { clean(String($0)) }
+            guard parts.count >= 2, ["Scores", "Backups", "Recordings"].contains(parts[0]) else { return }
+            var url = documentsDir; for p in parts { url.appendPathComponent(p) }
+            try? FileManager.default.removeItem(at: url)
+            // a folder left empty goes too
+            let dir = url.deletingLastPathComponent()
+            if dir.lastPathComponent != parts[0], ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? ["x"]).isEmpty { try? FileManager.default.removeItem(at: dir) }
         case "keep":
             // the older files of a kind go, the newest few stay (backups do not fill the iPad)
             let dir = folderURL(body["folder"] as? String ?? "")

@@ -3,14 +3,20 @@
 import * as pdfjsLib from '../vendor/pdf.min.mjs';
 import { loadMusicFont } from './ink.js';
 import { paintCover } from './covers.js';
-import { pixGet, pixPut, pixHas } from './pixcache.js';
+import { pixGet, pixPut, pixHas, lightGet, lightPut, lightKeys } from './pixcache.js';
 import { db } from './db.js';
 import { drawNotebookPage, drawCover, PAGE_W as NB_W, PAGE_H as NB_H } from './notebook.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
 // drawn pages kept as pictures: up to this size, and only those slower than this to draw (ms)
 const PIX_MAX = 7e6, PIX_SLOW = 120;
+// Scanned pages can hold enormous pictures (an IMSLP scan: 7000 × 9300 dots, 260 MB once
+// decoded, for one page). The reader shrinks every picture to a few million dots as it reads it
+// (sharper than the screen still), so a page never takes more than about 30 MB: the big scans
+// were what made iOS close Stand.
+const PHONE_UA = typeof navigator !== 'undefined' && /iPhone|iPod/.test(navigator.userAgent || '');
 const PDF_OPTS = {
+  canvasMaxAreaInBytes: (globalThis.__pdfMaxPix || (PHONE_UA ? 5e6 : 8e6)) * 4,
   cMapUrl: new URL('../vendor/cmaps/', import.meta.url).href,
   cMapPacked: true,
   standardFontDataUrl: new URL('../vendor/standard_fonts/', import.meta.url).href,
@@ -189,10 +195,38 @@ async function openDocumentOne(file, known) {
     // are cleaned up, or a long score (the Pages panel draws every page) runs the iPhone out
     // of memory and Stand is closed by iOS.
     const live = [], drawing = new Map();
+    // A heavy scan (a page slow to draw: its pictures are huge): its pages are drawn one at a time
+    // (two at once could take more memory than iOS allows), and, while nothing else is drawn, a
+    // light copy is made, page by page, that is used from then on instead of the original.
+    const LIGHT_LONG = PHONE_UA ? 1900 : 2600, HEAVY_MS = 650, scanLike = file.data.byteLength / Math.max(1, pdf.numPages) > 90e3;
+    let heavy = false, gone = false, chain = Promise.resolve(), active = 0, lightening = false, lightHave = null;
+    const lightenAll = async () => {
+      if (lightening || !fid || gone) return; lightening = true;
+      try {
+        lightHave = lightHave || await lightKeys(fid);
+        for (let k = 0; k < pdf.numPages && !gone; k++) {
+          if (lightHave.has(k)) continue;
+          // (only when nothing else is being drawn: never two of these pages at once)
+          for (let w8 = 0; (active > 0 || globalThis.__busyUntil > performance.now()) && w8 < 600 && !gone; w8++) await new Promise((r) => setTimeout(r, 250));
+          if (gone) break;
+          const pg = await pdf.getPage(k + 1); const v1 = pg.getViewport({ scale: 1 });
+          const sc = LIGHT_LONG / Math.max(v1.width, v1.height);
+          const c = document.createElement('canvas'); c.width = Math.round(v1.width * sc); c.height = Math.round(v1.height * sc);
+          try {
+            active++;
+            await (chain = chain.then(() => pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise).catch(() => {}));
+          } finally { active--; }
+          const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+          c.width = c.height = 0; pg.cleanup();
+          if (b && !gone) { await lightPut(fid, k, b); lightHave.add(k); }
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      } catch {} finally { lightening = false; }
+    };
     const done = (i, page) => {
       drawing.set(i, (drawing.get(i) || 1) - 1);
       const at = live.indexOf(i); if (at >= 0) live.splice(at, 1); live.push(i);
-      while (live.length > 4) {
+      while (live.length > (globalThis.__pdfLive ?? (heavy ? 1 : 4))) {
         const old = live.shift();
         if (drawing.get(old) > 0) { live.push(old); break; }
         pdf.getPage(old + 1).then((pg) => { if (!(drawing.get(old) > 0)) pg.cleanup(); }).catch(() => {});
@@ -202,6 +236,21 @@ async function openDocumentOne(file, known) {
       pages: pdf.numPages, sizes, pdf,
       async render(i, canvas, w, h, opts = {}) {
         const W = Math.round(w), H = Math.round(h);
+        // the light copy of a heavy scan, when its page is ready
+        if (fid && (heavy || lightHave === null || lightHave.size)) {
+          if (lightHave === null) lightHave = await lightKeys(fid);
+          if (lightHave.size) heavy = true;
+          const lb = lightHave.has(i) ? await lightGet(fid, i) : null;
+          if (lb) {
+            try {
+              const bmp = await createImageBitmap(lb);
+              canvas.width = W; canvas.height = H;
+              const g = canvas.getContext('2d', { alpha: false });
+              g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
+              return;
+            } catch { /* drawn from the original below */ }
+          }
+        }
         // a page drawn slowly before is shown from its picture at once
         const key = fid && W * H <= PIX_MAX ? `${fid}|${i}|${W}x${H}` : null;
         if (key) {
@@ -219,6 +268,10 @@ async function openDocumentOne(file, known) {
         const t0 = performance.now();
         drawing.set(i, (drawing.get(i) || 0) + 1);
         let page = null;
+        // (a heavy scan: after the page drawn before it)
+        let release = null;
+        if (heavy) { const prev = chain; chain = new Promise((r) => { release = r; }); await prev.catch(() => {}); }
+        active++;
         try {
         page = await pdf.getPage(i + 1);
         const vp1 = page.getViewport({ scale: 1 });
@@ -230,10 +283,13 @@ async function openDocumentOne(file, known) {
         await task.promise;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
-        } finally { done(i, page); }
+        // (only a scan is made light: its file holds large pictures; music drawn as lines stays sharp at any zoom)
+        if (performance.now() - t0 > HEAVY_MS && !heavy && fid && scanLike) { heavy = true; setTimeout(lightenAll, 1500); }
+        else if (heavy && !lightening) setTimeout(lightenAll, 1500);
+        } finally { active--; if (release) release(); done(i, page); }
       },
       pixHas: (i, w, h) => { const W = Math.round(w), H = Math.round(h); return fid && W * H <= PIX_MAX ? pixHas(`${fid}|${i}|${W}x${H}`) : Promise.resolve(true); },
-      destroy() { pdf.destroy(); },
+      destroy() { gone = true; pdf.destroy(); },
     };
   }
   // Photos and scans: decode only the pages being shown (a few at a time), so a long scan

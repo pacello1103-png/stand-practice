@@ -332,13 +332,21 @@ function wireInput() {
     }
   });
   box.addEventListener('pointerleave', () => { if (!C.placing) { C.hover = null; drawHover(); } });
-  box.addEventListener('touchmove', (e) => { if (C.lpDrag) e.preventDefault(); }, { passive: false });
+  // the Pencil never scrolls the page here: it writes, selects, or moves what it holds (a slur, a
+  // hairpin, a selection); the page scrolls with a finger. (On the iPad a pen can scroll a page
+  // like a finger unless the touch itself is stopped.)
+  const isPen = (e) => [...e.changedTouches].some((t) => t.touchType === 'stylus');
+  box.addEventListener('touchstart', (e) => { if (isPen(e)) e.preventDefault(); }, { passive: false });
+  box.addEventListener('touchmove', (e) => { if (C.lpDrag || C.drag || C.placing || isPen(e)) e.preventDefault(); }, { passive: false });
   box.addEventListener('pointerdown', (e) => {
     if (!C.score) return;
     if (e.pointerType === 'touch' && !C.finger && C.mode !== 'select') { touchDown(e); return; }
     // in Select mode a finger scrolls and taps; held still for a moment, it selects by dragging
     if (e.pointerType === 'touch' && C.mode === 'select') { selectTouchDown(e); return; }
-    if (canWrite(e)) {
+    // the pen on the slur or hairpin already chosen moves it, in either mode
+    const pa0 = C.markSel && C.markSel.kind === 'span' ? pageAt(e.clientX, e.clientY) : null;
+    const regrab = pa0 && (spanAtPoint(pa0) || {}).id === C.markSel.id;
+    if (canWrite(e) && !regrab) {
       // the pen right on a marking (an accent, a trill, a dynamic): it is selected, not written over
       const pm = pageAt(e.clientX, e.clientY); let mk = pm && markAt(pm, 0);
       if (mk && ['tie', 'barline', 'repstart', 'lyric'].includes(mk.kind)) mk = null;
@@ -355,9 +363,11 @@ function wireInput() {
     const pa = pageAt(e.clientX, e.clientY); if (!pa) return;
     e.preventDefault();
     try { box.setPointerCapture(e.pointerId); } catch {}
-    const sn = noteAt(pa);
-    // a slur or a hairpin (away from the notes): drag it up or down
-    const sp = !sn && spanAtPoint(pa);
+    let sn = noteAt(pa);
+    // a slur or a hairpin (away from the notes, or the one already chosen): drag it up or down
+    const chosen = C.markSel && C.markSel.kind === 'span' ? spanAtPoint(pa) : null;
+    if (chosen && chosen.id === C.markSel.id) sn = null;
+    const sp = chosen && chosen.id === C.markSel.id ? chosen : !sn && spanAtPoint(pa);
     if (sp) {
       // grabbed near an end: that end moves (any way); in the middle: a slur gets taller or flatter,
       // a hairpin moves up or down
@@ -469,7 +479,9 @@ function spanAtPoint(pa) {
   const hit = C.hits[pa.i]; if (!hit || !hit.spans) return null;
   let best = null, bd = 1e9;
   for (const h of hit.spans) {
-    if (pa.x < h.x0 - 0.3 || pa.x > h.x1 + 0.3 || pa.y < h.y0 - 0.3 || pa.y > h.y1 + 0.3) continue;
+    // the one already chosen is easier to grab again (a whole space around it)
+    const tol = C.markSel && C.markSel.kind === 'span' && C.markSel.id === h.id ? 1.2 : 0.3;
+    if (pa.x < h.x0 - tol || pa.x > h.x1 + tol || pa.y < h.y0 - tol || pa.y > h.y1 + tol) continue;
     const d = Math.abs(pa.y - (h.y0 + h.y1) / 2);
     if (d < bd) { bd = d; best = h; }
   }
