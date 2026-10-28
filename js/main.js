@@ -1380,8 +1380,7 @@ async function layout(fade) {
         const e = V.pages.find((x) => x.art === art);
         if (!sharp || !e || token !== layoutToken) return;
         sharp.className = 'art'; e.inner.replaceChild(sharp, art); e.art = sharp;
-        e.layer.resize(sharp.width, sharp.height);
-        if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); }
+        inkFollowsArt(e);
         if (!INCACHE.has(art)) freeCanvas(art);
       }, () => {});
       const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
@@ -1931,9 +1930,7 @@ async function sharpen() {
     if (art !== p.art) {
       art.className = 'art';
       p.inner.replaceChild(art, p.art); p.art = art;
-      p.layer.resize(art.width, art.height);
-      // (each page's markings made sharp again at once, not only after every page is drawn)
-      if (want > 1) sharpenInk();
+      inkFollowsArt(p);
     }
   }
   sharpenInk();
@@ -1944,7 +1941,8 @@ async function sharpen() {
 // If not (a page drawn again underneath, a turn, anything that set the layer back to the whole
 // page), it is made sharp again. (Writing looked blurred after the Pencil lifted on the iPad.)
 setInterval(() => {
-  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && GS.kind) || $('#score').hidden) return;
+  // (only while a line is being drawn or the page pinched: a touch left over must not stop this)
+  if (!V.doc || Z.s <= 1.05 || TURN() || (GS && /^(ink|erase|smart|lasso|tape|pinch)$/.test(GS.kind)) || $('#score').hidden) return;
   // (nothing moved since the markings were last made sharp: they are as sharp as they can be; very
   // zoomed in, the memory limit keeps them a little under the screen's sharpness, and drawing them
   // again every second made the iPad work for nothing)
@@ -1957,6 +1955,15 @@ setInterval(() => {
     if (p.ink.width / (r.width * dpr) < 0.92) { sharpenInk(); return; }
   }
 }, 1000);
+// The page drawn again (sharper, another size): its markings layer goes with it. Zoomed in, the
+// markings are made sharp for the part on screen straight after (before, the layer went back to the
+// whole page but kept the place of the part on screen: the writing showed blurred, and out of place)
+function inkFollowsArt(p) {
+  if (!p.layer || !p.ink || !p.art) return;
+  p.ink.style.cssText = '';
+  p.layer.resize(p.art.width, p.art.height);
+  if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 60); }
+}
 function sharpenInk() {
   clearTimeout(Z.inkT);
   if (!V.pages.length) return;
