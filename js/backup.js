@@ -17,7 +17,9 @@ async function putInkMerged(rec) {
   const items = [...cur.items, ...(rec.items || rec.strokes || []).filter((x) => !seen.has(JSON.stringify(x)))];
   await db.put('ink', { ...cur, items });
 }
-const LOCAL_KV = new Set(['ipadRemoved', 'ipadOrg', 'ipadScores']);
+const LOCAL_KV = new Set(['ipadRemoved', 'ipadOrg', 'ipadScores', 'mirrorState', 'folderPdfs']);
+// (what the folder backup keeps of itself: not part of the library)
+const MIRROR_LOCAL = new Set(['mirrorState', 'folderPdfs']);
 const maxMerge = (a, b) => {
   if (typeof a === 'number' && typeof b === 'number') return Math.max(a, b);
   if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) { const o = { ...a }; for (const [k, v] of Object.entries(b)) o[k] = k in a ? maxMerge(a[k], v) : v; return o; }
@@ -425,4 +427,82 @@ export async function lastChange() {
   for (const s of await db.all('scores')) t = Math.max(t, s.added || 0, s.opened || 0, s.edited || 0);
   for (const k of await db.all('takes')) t = Math.max(t, k.created || 0);
   return t;
+}
+
+// ---------- the backup as one folder, kept up to date (Files › Stand › Backup) ----------
+// Everything Stand needs to bring the library back, as files that keep their names from one backup
+// to the next: Stand library.json (scores, folders, markings, notebooks, compositions, practice,
+// settings) and, in files/, each score's PDF or pages and each recording. A backup writes only what
+// is new or changed (the size and the start of each file tell), so it takes a moment, and nothing
+// piles up: there is one backup, always the latest.
+const fileTag = (id) => String(id).replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 80);
+async function sigOf(blob) {
+  const head = new Uint8Array(await blob.slice(0, 262144).arrayBuffer());
+  const tail = blob.size > 262144 ? new Uint8Array(await blob.slice(Math.max(262144, blob.size - 65536)).arrayBuffer()) : new Uint8Array(0);
+  return blob.size + ':' + ((crc32(tail, crc32(head)) ^ 0xFFFFFFFF) >>> 0).toString(36);
+}
+export async function makeMirror() {
+  const bins = [];   // { path, blob }
+  const scores = await db.all('scores');
+  const files = (await db.all('files')).filter((f) => !/^(ipadcopy|follow):/.test(String(f.id)));
+  const takes = await db.all('takes');
+  const srOf = new Map(takes.map((t) => ['audio:' + t.id, t.sr || 48000]));
+  let cur = null;
+  const pack = (v, key) => {
+    const base = 'files/' + fileTag(cur) + (key && key.startsWith('img:') ? '-' + String(+key.slice(4) + 1).padStart(3, '0') : '');
+    if (v instanceof Blob) {
+      const ext = /pdf/.test(v.type) ? '.pdf' : /png/.test(v.type) ? '.png' : /jpe?g/.test(v.type) ? '.jpg' : /quicktime/.test(v.type) ? '.mov' : /mp4/.test(v.type) ? '.mp4' : /webm/.test(v.type) ? '.webm' : '.bin';
+      const p = base + ext; bins.push({ path: p, blob: v }); return { $path: p, $t: 'blob', mime: v.type, n: v.size };
+    }
+    if (v instanceof ArrayBuffer) {
+      const isPdf = v.byteLength > 4 && new TextDecoder().decode(new Uint8Array(v, 0, 4)) === '%PDF';
+      const p = base + (isPdf ? '.pdf' : '.bin'); bins.push({ path: p, blob: new Blob([v], isPdf ? { type: 'application/pdf' } : {}) }); return { $path: p, $t: 'ab', n: v.byteLength };
+    }
+    if (ArrayBuffer.isView(v)) {
+      const t = v instanceof Float32Array ? 'f32' : v instanceof Int16Array ? 'i16' : 'u8';
+      if (t === 'f32' && key === 'data' && String(cur).startsWith('audio:')) { const p = base + '.wav'; bins.push({ path: p, blob: wavOf(v, srOf.get(cur) || 48000) }); return { $path: p, $t: 'wav', n: v.length }; }
+      const p = base + '.' + t; bins.push({ path: p, blob: new Blob([v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)]) }); return { $path: p, $t: t, n: v.byteLength };
+    }
+    if (Array.isArray(v)) return v.map((x, i) => pack(x, key === 'data' ? 'img:' + i : key));
+    if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) o[k] = pack(x, k); return o; }
+    return v;
+  };
+  const pfiles = files.map((f) => { cur = f.id; const r = pack(f); cur = null; return r; });
+  // (anything outside a file record that is binary: scores' covers, settings with pictures)
+  // (each score's cover, and anything binary in the markings or settings, under a name of its own)
+  const each = (list, tag) => list.map((x) => { cur = tag(x); const r = pack(x); cur = null; return r; });
+  const kv = (await db.all('kv')).filter((x) => !MIRROR_LOCAL.has(x.k));
+  const lib = { magic: 'stand-mirror', v: 1, made: Date.now(), scores: each(scores, (x) => 'score-' + x.id), files: pfiles, ink: each(await db.all('ink'), (x) => 'ink-' + x.key), takes: each(takes, (x) => 'take-' + x.id), kv: each(kv, (x) => 'kv-' + x.k) };
+  for (const b of bins) b.sig = await sigOf(b.blob);
+  return { lib: new Blob([JSON.stringify(lib)], { type: 'application/json' }), bins };
+}
+// Bring the library back from the folder. get(path) gives a Blob (or null) for a path in it.
+export async function restoreMirror(get) {
+  const libBlob = await get('Stand library.json');
+  if (!libBlob) throw new Error('There is no backup in the Stand folder yet.');
+  const lib = JSON.parse(await libBlob.text());
+  if (lib.magic !== 'stand-mirror') throw new Error('The backup in the Stand folder could not be read.');
+  const unpack = async (v) => {
+    if (v && typeof v === 'object' && '$path' in v) {
+      const blob = await get(v.$path); if (!blob) return undefined;
+      if (v.$t === 'blob') return new Blob([blob], { type: v.mime || '' });
+      if (v.$t === 'wav') return f32OfWav(blob);
+      const ab = await blob.arrayBuffer();
+      return v.$t === 'f32' ? new Float32Array(ab) : v.$t === 'i16' ? new Int16Array(ab) : v.$t === 'u8' ? new Uint8Array(ab) : ab;
+    }
+    if (Array.isArray(v)) { const r = []; for (const x of v) r.push(await unpack(x)); return r; }
+    if (v && typeof v === 'object') { const r = {}; for (const [k, x] of Object.entries(v)) r[k] = await unpack(x); return r; }
+    return v;
+  };
+  let scores = 0, takes = 0; const okFiles = new Set(); const lost = [];
+  for (const f of lib.files) {
+    const r = await unpack(f);
+    if ((r.data === undefined && f.data !== undefined) || (Array.isArray(r.data) && r.data.some((x) => x === undefined))) { lost.push(f.id); continue; }
+    await db.put('files', r); okFiles.add(r.id);
+  }
+  for (const s of lib.scores) if (!s.fileId || okFiles.has(s.fileId) || await db.get('files', s.fileId)) { await db.put('scores', await unpack(s)); scores++; }
+  for (const i of lib.ink) await putInkMerged(await unpack(i));
+  for (const t of lib.takes) if (okFiles.has('audio:' + t.id) || okFiles.has('video:' + t.id)) { await db.put('takes', await unpack(t)); takes++; }
+  for (const k of lib.kv) await putKvMerged(await unpack(k));
+  return { scores, takes, lost: lost.length, made: lib.made };
 }

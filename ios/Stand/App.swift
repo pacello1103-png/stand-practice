@@ -85,6 +85,9 @@ final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
         let rel: String
         if path.hasPrefix("/__incoming/") {
             base = incomingDir; rel = String(path.dropFirst("/__incoming/".count))
+        } else if path.hasPrefix("/__docs/") {
+            // the backup kept in Files › Stand › Backup, read back to bring the library back (only there)
+            base = documentsDir.appendingPathComponent("Backup", isDirectory: true); rel = String(path.dropFirst("/__docs/".count))
         } else {
             base = root; rel = String(path.dropFirst())
         }
@@ -137,7 +140,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         for name in ["standShare", "standOpen", "standDone", "standFace", "standTap", "standScan", "standVideo", "standAudio", "standRecognize", "standOrientation", "standSave", "standBusy", "standDiag"] {
             config.userContentController.add(self, name: name)
         }
-        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 2, busy: 1, recover: 1, memory: 1 };"
+        let caps = "window.standCaps = { native: true, face: \(FaceTurner.supported), tap: \(StandTapper.supported), scan: \(PageScanner.available), video: true, pencil: true, audio: true, files: 3, busy: 1, recover: 1, memory: 1 };"
         config.userContentController.addUserScript(WKUserScript(source: caps, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.websiteDataStore = .default()
 

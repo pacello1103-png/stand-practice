@@ -68,7 +68,7 @@ final class StandFiles {
 
     // the Stand folder in Files is there from the first day, already in order
     init() {
-        for name in ["Scores", "Backups", "Recordings", "Diagnostics"] {
+        for name in ["Scores", "Backup", "Diagnostics"] {
             try? FileManager.default.createDirectory(at: documentsDir.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
         }
     }
@@ -118,12 +118,20 @@ final class StandFiles {
         case "remove":
             // one file the app itself wrote earlier (a score copy that was renamed or moved)
             let parts = (body["path"] as? String ?? "").split(separator: "/").map { clean(String($0)) }
-            guard parts.count >= 2, ["Scores", "Backups", "Recordings"].contains(parts[0]) else { return }
+            guard parts.count >= 2, ["Scores", "Backups", "Recordings", "Backup"].contains(parts[0]) else { return }
             var url = documentsDir; for p in parts { url.appendPathComponent(p) }
             try? FileManager.default.removeItem(at: url)
             // a folder left empty goes too
             let dir = url.deletingLastPathComponent()
             if dir.lastPathComponent != parts[0], ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? ["x"]).isEmpty { try? FileManager.default.removeItem(at: dir) }
+        case "purge":
+            // the old backups made as .zip files (one each time): the folder backup replaces them
+            for folder in ["Backups", "Recordings"] {
+                let dir = documentsDir.appendingPathComponent(folder, isDirectory: true)
+                let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+                for f in items where f.pathExtension.lowercased() == "zip" && f.lastPathComponent.hasPrefix("Stand") { try? FileManager.default.removeItem(at: f) }
+                if ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? ["x"]).isEmpty { try? FileManager.default.removeItem(at: dir) }
+            }
         case "keep":
             // the older files of a kind go, the newest few stay (backups do not fill the iPad)
             let dir = folderURL(body["folder"] as? String ?? "")

@@ -20,7 +20,7 @@ export const SOUND_LABELS = {
 };
 // Sounds that ring and fade by themselves (no loop): they keep ringing after a short note
 // only as long as a real player would let them.
-const DECAYING = new Set(['piano', 'grand', 'epiano', 'harpsichord', 'celesta', 'pizz', 'harp', 'guitar', 'steelguitar', 'eguitar', 'ebass', 'jazzbass',
+const DECAYING = new Set(['piano', 'grand', 'grand2', 'epiano', 'harpsichord', 'celesta', 'pizz', 'harp', 'guitar', 'steelguitar', 'eguitar', 'ebass', 'jazzbass',
   'banjo', 'timpani', 'marimba', 'vibraphone', 'xylophone', 'glockenspiel', 'bells', 'woodblock', 'drum']);
 // natural release after the note ends (seconds)
 // instruments that can slide between slurred notes (strings, voices, trombone, winds a little)
@@ -121,6 +121,12 @@ function evenGain(I, sid, m, layer, rings) {
   }
   // (the grand piano: its three strengths as loud as each other, the register only half evened, as
   // a piano's treble is lighter by nature)
+  if (sid === 'grand2') {
+    let r4 = MED.get('grand2:4');
+    if (r4 === undefined) { const v = Object.entries(R).filter(([k]) => k.endsWith('_4')).map(([, x]) => x).sort((a, b) => a - b); r4 = v[v.length >> 1] || 1; MED.set('grand2:4', r4); }
+    const rm = R[m + '_4'] || r4;
+    return Math.max(0.4, Math.min(4, Math.pow(r4 / rm, 0.5)));
+  }
   if (sid === 'grand') {
     const rf = R[m + '_f'] || r;
     const k = Math.pow(ref / rf, 0.5) * (rf / r);
@@ -188,6 +194,20 @@ export class Sampler {
       return this.load(set, best, layer, kind);
     }
     // the grand piano: a real concert grand recorded at three strengths, blended by the dynamic
+    // (the concert grand: six strengths, each blended into the next as the dynamic grows)
+    if (sid === 'piano' && I.n.grand2 && I.LV && I.LV.grand2 && !this.plain && (globalThis.__grand ?? 1) && (globalThis.__grand2 ?? 1)) {
+      const list = I.n.grand2; let best = list[0];
+      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      const L = I.L.grand2, C = I.LV.grand2;
+      if (vel <= C[0]) return Object.assign(Object.create(await this.load('grand2', best, L[0], 'sus')), { under: vel / C[0] });
+      if (vel >= C[C.length - 1]) return this.load('grand2', best, L[L.length - 1], 'sus');
+      let i = 0; while (i < C.length - 2 && vel > C[i + 1]) i++;
+      const w = (vel - C[i]) / (C[i + 1] - C[i]);
+      if (w < 0.08) return this.load('grand2', best, L[i], 'sus');
+      if (w > 0.92) return this.load('grand2', best, L[i + 1], 'sus');
+      const [a, b] = await Promise.all([this.load('grand2', best, L[i], 'sus'), this.load('grand2', best, L[i + 1], 'sus')]);
+      return Object.assign(Object.create(b), { pair: a, w });
+    }
     const LAYERED = { piano: 'grand' };
     if (LAYERED[sid] && I.n[LAYERED[sid]] && !this.plain && (globalThis.__grand ?? 1)) {
       const set2 = LAYERED[sid], list = I.n[set2]; let best = list[0];
@@ -220,6 +240,18 @@ export class Sampler {
   }
   load(sid, m, layer = null, kind = null) {
     const key = sid + ':' + m + (layer ? ':' + layer : '');
+    // (the concert grand's recordings are long and in stereo: kept within a limit, the ones not used
+    // for longest let go first, never one used in the last half minute)
+    if (sid === 'grand2') {
+      const lru = this.lru || (this.lru = new Map());
+      const now = Date.now(); const e = lru.get(key); if (e) e.t = now; else lru.set(key, { t: now, bytes: 0 });
+      let total = 0; for (const v of lru.values()) total += v.bytes;
+      const LIMIT = (globalThis.__grandMB ?? (document.body && document.body.classList.contains('phone') ? 90 : 180)) * 1e6;
+      if (total > LIMIT) for (const [k, v] of [...lru.entries()].sort((a, b) => a[1].t - b[1].t)) {
+        if (total <= LIMIT * 0.8 || now - v.t < 30000 || k === key) continue;
+        this.buffers.delete(k); lru.delete(k); total -= v.bytes;
+      }
+    }
     if (!this.buffers.has(key)) {
       const ctx = getCtx();
       const rings = kind === 'pizz' || kind === 'spic';
@@ -228,6 +260,7 @@ export class Sampler {
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
         .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, oneLayer: /_solo$/.test(sid), tc: (((await loadIndex()).T || {})[sid] || {})[m] || 0, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, atkT: (await loadIndex()).AT || null }));
       p.catch(() => this.buffers.delete(key));
+      if (sid === 'grand2') p.then((x) => { const e = this.lru && this.lru.get(key); if (e && x && x.buf) e.bytes = x.buf.length * x.buf.numberOfChannels * 4; }, () => {});
       this.buffers.set(key, p);
     }
     return this.buffers.get(key);
@@ -305,7 +338,7 @@ export class Sampler {
     const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
     // (a real soft or loud recording already has its own colour: only a little more shaping)
     // (the grand piano's three recordings already have the colour of each strength)
-    const ownColour = sample.set === 'grand';
+    const ownColour = sample.set === 'grand' || sample.set === 'grand2';
     // (one loud recording only: softer is also darker, as with the general sounds, a little less so)
     tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
@@ -347,7 +380,10 @@ export class Sampler {
     if (cg) src.connect(tone).connect(cg).connect(g).connect(ch.input); else src.connect(tone).connect(g).connect(ch.input);
     // (real recordings, now all as loud as each other: the dynamic gives the whole range, from a
     // true pp to ff, in even steps of about 3.5 dB from one dynamic to the next)
-    let level = (sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
+    // (the concert grand: its recordings are already as loud as the strength they were played at;
+    // softer than its softest recording, it is turned down)
+    const natural = sample.set === 'grand2';
+    let level = (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) : sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
     if (opts.art === 'acc' || opts.art === 'marc') level = Math.min(1.15, level * 1.3);
     // a connected (slurred) note starts past the sample's attack and fades in: no new bow or tongue
     const connect = !!opts.connect && !decaying;

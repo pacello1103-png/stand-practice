@@ -24,7 +24,7 @@ export function jsonp(params, timeout = 15000) {
     const qs = new URLSearchParams({ ...params, format: 'json', callback: name });
     const s = document.createElement('script');
     const t = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, timeout);
-    function cleanup() { clearTimeout(t); delete window[name]; s.remove(); }
+    function cleanup() { clearTimeout(t); window[name] = () => {}; setTimeout(() => { delete window[name]; }, 120000); s.remove(); }   // (an answer that comes late finds a quiet callback)
     window[name] = (data) => { cleanup(); resolve(data); };
     s.onerror = () => { cleanup(); reject(new Error('network')); };
     s.src = API + '?' + qs.toString();

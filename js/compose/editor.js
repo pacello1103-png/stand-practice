@@ -93,7 +93,7 @@ async function save(thumb) {
   const meta = await db.get('scores', C.id);
   if (!meta) return;
   meta.title = C.score.title || 'Untitled'; meta.composer = C.score.composer || ''; meta.pages = C.lay ? C.lay.pages.length : 1;
-  if (thumb && C.lay) meta.thumb = await thumbOf();
+  if (thumb && C.lay) { meta.thumb = await thumbOf(); meta.thumbAt = Date.now(); }
   await db.put('scores', meta);
 }
 async function thumbOf() {
@@ -109,7 +109,7 @@ function edit(fn, opts = {}) {
   if (C.inEdit) return fn();
   const before = JSON.stringify(C.score);
   let r; C.inEdit = true; try { r = fn(); } finally { C.inEdit = false; }
-  if (r === false) { if (JSON.stringify(C.score) !== before) { C.score = JSON.parse(before); relayout(); } return; }
+  if (r === false) { if (JSON.stringify(C.score) !== before) { C.score = JSON.parse(before); pruneSel(); relayout(); } return; }
   checkDoubt();
   C.undo.push(before); if (C.undo.length > 150) C.undo.shift(); C.redo = [];
   if (!opts.keepSel) pruneSel();
@@ -220,14 +220,28 @@ function overCtx(i) {
   if (!p.painted) paintPage(i);
   const g = p.over.getContext('2d'); g.setTransform(p.k * dpr, 0, 0, p.k * dpr, 0, 0); return g;
 }
-function setZoom(z, keepPoint) {
+function setZoom(z, keepPoint, toPoint) {
+  // The point of the music under the fingers (or the middle) stays where it is: found on its page
+  // before the zoom and put back after it. (The gaps between pages do not grow with the zoom and
+  // the pages are centred, so scaling the scroll position alone made the page jump, more the
+  // further down the score.)
   const sc = $('#cpScroll');
   const old = C.zoom; C.zoom = clamp(z, 0.4, 3);
+  const sr = sc.getBoundingClientRect();
   const fx = keepPoint ? keepPoint.x : sc.clientWidth / 2, fy = keepPoint ? keepPoint.y : sc.clientHeight / 2;
-  const cx = sc.scrollLeft + fx, cy = sc.scrollTop + fy;
+  const tx = toPoint ? toPoint.x : fx, ty = toPoint ? toPoint.y : fy;
+  // which page, and where on it (as a share of its size)
+  let anchor = null;
+  for (let i = 0; i < C.pages.length; i++) {
+    const r = C.pages[i].pg.getBoundingClientRect();
+    if (sr.top + fy <= r.bottom + 12 || i === C.pages.length - 1) { anchor = { i, u: (sr.left + fx - r.left) / r.width, v: (sr.top + fy - r.top) / r.height }; break; }
+  }
   relayout();
-  const f = C.zoom / old;
-  sc.scrollLeft = cx * f - fx; sc.scrollTop = cy * f - fy;
+  if (anchor && C.pages[anchor.i]) {
+    const r = C.pages[anchor.i].pg.getBoundingClientRect();
+    const px = r.left + anchor.u * r.width - sr.left, py = r.top + anchor.v * r.height - sr.top;
+    sc.scrollLeft += px - tx; sc.scrollTop += py - ty;
+  }
   setSetting('composeUI', { ...(uiState()), zoom: C.zoom });
 }
 function uiState() { const p = $('#cpPal'); return { zoom: C.zoom, pal: { x: p.offsetLeft, y: p.offsetTop, anchor: C.palAnchor || null }, folded: p.classList.contains('folded') }; }
@@ -389,8 +403,10 @@ function wireInput() {
   const touches = new Map(); let pinch = null;
   sc.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
-      const [a, b] = e.touches; const r = sc.getBoundingClientRect();
-      pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z0: C.zoom, cx: (a.clientX + b.clientX) / 2 - r.left, cy: (a.clientY + b.clientY) / 2 - r.top, s: 1, dx: 0, dy: 0, r };
+      const [a, b] = e.touches; const r = sc.getBoundingClientRect(), pr = $('#cpPages').getBoundingClientRect();
+      // (the page grows around the point between the fingers: that point, on the pages' own box)
+      pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z0: C.zoom, cx: (a.clientX + b.clientX) / 2 - r.left, cy: (a.clientY + b.clientY) / 2 - r.top, ox: (a.clientX + b.clientX) / 2 - pr.left, oy: (a.clientY + b.clientY) / 2 - pr.top, s: 1, dx: 0, dy: 0, r };
+      $('#cpPages').style.transformOrigin = `${pinch.ox}px ${pinch.oy}px`;
       $('#cpPages').style.willChange = 'transform';
       e.preventDefault();
     }
@@ -401,16 +417,18 @@ function wireInput() {
       // the page follows both fingers: it grows around them and moves with them, like a photo
       pinch.s = clamp(Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d0, 0.4 / pinch.z0, 3 / pinch.z0);
       pinch.dx = (a.clientX + b.clientX) / 2 - pinch.r.left - pinch.cx; pinch.dy = (a.clientY + b.clientY) / 2 - pinch.r.top - pinch.cy;
-      $('#cpPages').style.transformOrigin = `${sc.scrollLeft + pinch.cx}px ${sc.scrollTop + pinch.cy}px`;
       $('#cpPages').style.transform = `translate(${pinch.dx}px, ${pinch.dy}px) scale(${pinch.s})`;
       e.preventDefault();
     } else if (C.finger && C.mode === 'write' && e.touches.length === 1) e.preventDefault();
   }, { passive: false });
   sc.addEventListener('touchend', () => {
     if (pinch) {
-      const p = pinch; pinch = null; $('#cpPages').style.transform = ''; $('#cpPages').style.willChange = '';
-      if (Math.abs(p.s - 1) > 0.03) setZoom(p.z0 * p.s, { x: p.cx, y: p.cy });
-      sc.scrollLeft -= p.dx; sc.scrollTop -= p.dy;
+      const p = pinch; pinch = null;
+      // the point that was between the fingers ends where the fingers are now, at the new size
+      // (taken before the page goes back from its stretched picture to the real layout)
+      $('#cpPages').style.transform = ''; $('#cpPages').style.willChange = '';
+      if (Math.abs(p.s - 1) > 0.03) setZoom(p.z0 * p.s, { x: p.cx, y: p.cy }, { x: p.cx + p.dx, y: p.cy + p.dy });
+      else { sc.scrollLeft -= p.dx; sc.scrollTop -= p.dy; }
     }
   });
   // a trackpad pinch (or ctrl + wheel) zooms around the pointer
@@ -732,6 +750,7 @@ function selNoteEvents() {
     for (const st0 of selStaves()) {
       const info = M.staffInfo(C.score).find((x) => x.st === st0 || x.st.id === (st0.id || st0)); if (!info) continue;
       for (let m = C.selBars.from; m <= C.selBars.to; m++) for (const v of [1, 2]) {
+        if (v === 2 && !info.st.v2) continue;   // (no second voice: none is made just by looking)
         const vst = M.voiceView(info.st, v, C.score); const bar = (v === 2 ? info.st.v2 : info.st.bars) || []; if (!bar[m]) continue;
         for (const ev of bar[m]) if (ev.notes && !ev.rest) out.push({ ev, st: vst, m, part: info.part, inst: info.inst });
       }
@@ -1246,8 +1265,12 @@ const lastSet = (m, has) => { for (let i = m; i >= 0; i--) if (has(i)) return i;
 const staffById = (id) => M.allStaves(C.score).find((x) => x.id === id);
 function changeAt(mk, tab) {
   const st = (mk.st && staffById(mk.st)) || M.allStaves(C.score)[0];
-  C.markSel = null; C.sel.clear(); selectBars(st, st, mk.m, mk.m);
+  C.markSel = null; C.sel.clear(); selectBars(st, st, mk.m, mk.m); C.sigFor = null; C.sigOnly = false;
   C.tab = tab; $('#cpPal').classList.remove('folded'); relayout(); syncSelBar(); renderTab(); drawHover();
+  // the palette opens at the part that changes it (the tempo is further down the words)
+  const want = mk.kind === 'tempo' ? /^Tempo/ : mk.kind === 'key' ? /^Key/ : mk.kind === 'time' ? /^Time/ : null;
+  const lb = want && [...$('#cpPalBody').querySelectorAll('.cp-lab')].find((x) => want.test(x.textContent));
+  if (lb) try { lb.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {}
   hint(tab === 'clef' ? 'Choose the new one in the palette.' : 'Change it in the palette.', 2200);
 }
 const KEY_LABEL = (k) => (KEY_NAMES[+k + 7] || '').split(' / ')[0];
@@ -1493,6 +1516,8 @@ function setHead(head, topOnly) {
 }
 // A clef, key or time from bar m (to bar 'to' only, when given: the score goes back afterwards).
 function applySig(kind, val, st, m, to) {
+  // (the staff as the score has it now: one held from before an undo is a copy no longer drawn)
+  if (st && st.id) st = staffById(st.id) || st;
   const S = C.score, after = to !== null && to !== undefined ? to + 1 : null, hasAfter = after !== null && after < S.measures.length;
   // a clef for one note in the middle of a bar: the clef changes there, and holds on after it
   if (kind === 'clef' && !C.selBars && C.sel.size === 1) {
@@ -1513,7 +1538,9 @@ function applySig(kind, val, st, m, to) {
     if (kind === 'clef') {
       const old = M.clefAt(st, hasAfter ? after : m);
       if (hasAfter && !(st.clefs && st.clefs[after]) && old !== val) st.clefs = { ...(st.clefs || {}), [after]: old };
-      if (m === 0) st.clef = val; else { st.clefs = { ...(st.clefs || {}) }; st.clefs[m] = val; if (M.clefAt(st, m - 1) === val) delete st.clefs[m]; }
+      if (m === 0) { st.clef = val; if (st.clefs && st.clefs[0] !== undefined) { st.clefs = { ...st.clefs }; delete st.clefs[0]; } } else { st.clefs = { ...(st.clefs || {}) }; st.clefs[m] = val; if (M.clefAt(st, m - 1) === val) delete st.clefs[m]; }
+      // a clef written on the bar's first note would still win over the new one: it goes
+      for (const bars of [st.bars, st.v2]) { const f = bars && bars[m] && bars[m][0]; if (f && f.clef) delete f.clef; }
     } else if (kind === 'key') {
       const old = M.keyAt(S, hasAfter ? after : m);
       if (hasAfter && (S.measures[after].key === undefined || S.measures[after].key === null) && old !== val) S.measures[after].key = old;
@@ -1771,11 +1798,12 @@ function renderTab() {
     g3.append(mbtn('No text', 'Remove the words', false, () => setText(null), { textCls: '', small: 'remove' }));
   } else if (C.tab === 'clef') {
     const sel0 = evs[0];
-    const st = C.selBars ? C.selBars.st : sel0 ? sel0.st : M.allStaves(C.score)[0];
+    const st = C.selBars ? (staffById(C.selBars.stId) || C.selBars.st) : sel0 ? sel0.st : M.allStaves(C.score)[0];
     // where the change starts: the selected bar (or bar 1); a selection of several bars can have it
     // only for those bars
     const range = C.selBars && C.selBars.to > C.selBars.from ? [C.selBars.from, C.selBars.to] : null;
-    if (C.sigFor !== (C.selBars ? `${C.selBars.from}-${C.selBars.to}` : sel0 ? 'e' + sel0.m : '')) { C.sigFor = C.selBars ? `${C.selBars.from}-${C.selBars.to}` : sel0 ? 'e' + sel0.m : ''; C.sigBar = targetBar() ?? 0; C.sigOnly = false; }
+    const sigKey = (C.selBars ? `${C.selBars.stId}:${C.selBars.from}-${C.selBars.to}` : sel0 ? 'e' + sel0.st.id + ':' + sel0.m : '');
+    if (C.sigFor !== sigKey) { C.sigFor = sigKey; C.sigBar = targetBar() ?? 0; C.sigOnly = false; }
     const m = Math.min(C.score.measures.length - 1, C.sigBar ?? 0);
     const step = el('div', 'cp-row cp-sigbar');
     const minus = el('button', 'btn small', '−'), plus = el('button', 'btn small', '+');
@@ -1958,9 +1986,14 @@ function wireTop() {
 async function togglePlay(from) {
   if (player.playing || player.loading) { player.stop(); syncPlay(); C.pages.forEach(clearOver); return; }
   unlock();
-  const start = from ?? targetBar() ?? 0;
+  // a note chosen: playing starts on that note (the earliest one, when several are chosen)
+  let start = from ?? targetBar() ?? 0, pos = 0;
+  if (from === undefined && !C.selBars && C.sel.size) {
+    const f = selEvents().slice().sort((a, b) => a.m - b.m || a.pos - b.pos)[0];
+    if (f) { start = f.m; pos = f.pos || 0; }
+  }
   $('#cpPlay').classList.add('on'); $('#cpPlay').querySelector('span').textContent = 'Loading';
-  await player.play(C.score, { from: start });
+  await player.play(C.score, { from: start, pos });
   syncPlay();
 }
 function syncPlay() {

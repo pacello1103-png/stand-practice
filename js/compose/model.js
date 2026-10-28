@@ -441,7 +441,10 @@ export function isEmptyStaff(st) { return st.bars.every((b) => b.every((e) => e.
 // Older scores kept them as marks on the first and last note; those are turned into spans.
 const posLE = (a, b) => a.m < b.m || (a.m === b.m && a.pos <= b.pos);
 export function migrateScore(score) {
-  if (!score || score._v2spans) return score;
+  if (!score) return score;
+  // a clef kept for bar 1 in the list of changes is the staff's own clef
+  for (const st of allStaves(score)) if (st.clefs && st.clefs[0] !== undefined) { st.clef = st.clefs[0]; const c = { ...st.clefs }; delete c[0]; st.clefs = c; }
+  if (score._v2spans) return score;
   score.spans = score.spans || [];
   for (const st of allStaves(score)) {
     for (const [v, bars] of [[1, st.bars], [2, st.v2 || []]]) {

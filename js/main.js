@@ -36,7 +36,7 @@ import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
 import { startTour } from './tour.js';
-import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange } from './backup.js';
+import { makeBackupSet, restoreBackup as restoreFiles, backupSizes, lastChange, makeMirror, restoreMirror } from './backup.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -256,6 +256,39 @@ $$('#homeTabs button').forEach((b) => b.addEventListener('click', () => setHomeT
 
 let scores = [];
 const thumbURLs = new Map();
+// Where each score is (a folder or the library) is what you last chose. Any other copy of a score
+// that is saved later (the score open on the stand keeping its page, a cover drawn again in the
+// background, the practice time) keeps that choice: before, such a copy, taken before the move,
+// was saved after it and put the score back where it had been.
+const FOLDER_SET = new Map();
+{
+  const put0 = db.put.bind(db);
+  db.put = (store, value) => {
+    if (store === 'scores' && value && FOLDER_SET.has(value.id)) { const f = FOLDER_SET.get(value.id); if (f) value.folder = f; else delete value.folder; }
+    return put0(store, value);
+  };
+}
+// When the library last changed (anything you add, move, write or practise): the backup in the
+// Stand folder follows it. (Before, only adding or opening a score counted: markings written,
+// recordings made or settings changed did not, and the automatic backup thought nothing had changed.)
+const DIRTY_STORES = new Set(['scores', 'files', 'ink', 'takes', 'kv']);
+const DIRTY_SKIP = new Set(['mirrorState', 'folderPdfs', 'backupAt', 'backupSnooze', 'standDirty']);
+const markDirty = () => { try { localStorage.setItem('standDirty', String(Date.now())); } catch {} };
+const dirtyAt = () => { try { return +localStorage.getItem('standDirty') || 0; } catch { return 0; } };
+{
+  const put1 = db.put.bind(db), del1 = db.del.bind(db);
+  db.put = (store, value) => { if (DIRTY_STORES.has(store) && !(store === 'kv' && value && DIRTY_SKIP.has(value.k)) && !(store === 'files' && /^(ipadcopy|follow):/.test(String(value && value.id)))) markDirty(); return put1(store, value); };
+  db.del = (store, key) => { if (DIRTY_STORES.has(store)) markDirty(); return del1(store, key); };
+}
+function setFolder(sc, target) {
+  FOLDER_SET.set(sc.id, target || null);
+  if (target) sc.folder = target; else delete sc.folder;
+  if (typeof V !== 'undefined' && V.score && V.score.id === sc.id && V.score !== sc) { if (target) V.score.folder = target; else delete V.score.folder; }
+  return db.put('scores', sc);
+}
+// a score whose folder is not there (deleted, or not yet saved when Stand was closed) shows in the
+// library, never nowhere
+const folderShown = (s) => (s.folder && FOLD.list.some((f) => f.id === s.folder) ? s.folder : null);
 async function refreshLibrary() {
   scores = await db.all('scores').catch(() => []);
   renderGrid();
@@ -269,7 +302,7 @@ function renderGrid() {
   if (FOLD.current && !folderOf(FOLD.current)) FOLD.current = null;
   const inFolder = !q && FOLD.current ? FOLD.current : null;
   const list = scores.filter((s) => !s.preview && (!q || (s.title + ' ' + (s.composer || '')).toLowerCase().includes(q))
-    && (q || (inFolder ? s.folder === inFolder : !s.folder)));
+    && (q || (inFolder ? folderShown(s) === inFolder : !folderShown(s))));
   const by = S.sort;
   list.sort((a, b) => by === 'title' ? a.title.localeCompare(b.title)
     : by === 'composer' ? (a.composer || '~').localeCompare(b.composer || '~') || a.title.localeCompare(b.title)
@@ -381,7 +414,7 @@ function beginLibDrag(e, card) {
       return;
     }
     const target = d.over.id === 'folderBack' || d.over.id === 'libOut' ? null : d.over.dataset.folder;
-    for (const sid of d.ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; if (target) sc.folder = target; else delete sc.folder; db.put('scores', sc); }
+    for (const sid of d.ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; setFolder(sc, target); }
     setLibEditing(false); renderGrid();
     toast(target ? `Moved ${d.ids.length === 1 ? 'it' : d.ids.length + ' scores'} to ${folderOf(target).name}.` : 'Moved to the library.');
   };
@@ -401,8 +434,13 @@ const folderOf = (id) => FOLD.list.find((f) => f.id === id);
 const thumbChecked = new Set();
 let thumbFixing = Promise.resolve();
 const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && s.kind !== 'paper' && !s.preview;
+const thumbOfURL = new Map();   // score id -> which cover its picture was made from
+const thumbSig = (s) => (s.thumb ? s.thumb.size + ':' + (s.thumb.type || '') : '') + ':' + (s.thumbAt || 0);
 function thumbURL(s) {
-  if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
+  // (a new cover — a composition edited, a cover made again — gets a new picture: the old one was
+  // kept by score and shown for ever)
+  if (thumbURLs.has(s.id) && thumbOfURL.get(s.id) !== thumbSig(s)) { URL.revokeObjectURL(thumbURLs.get(s.id)); thumbURLs.delete(s.id); thumbChecked.delete(s.id); }
+  if (!thumbURLs.has(s.id)) { thumbURLs.set(s.id, URL.createObjectURL(s.thumb)); thumbOfURL.set(s.id, thumbSig(s)); }
   const u = thumbURLs.get(s.id);
   if (!thumbChecked.has(s.id) && canRemakeThumb(s)) {
     thumbChecked.add(s.id);
@@ -438,12 +476,12 @@ function fixThumb(s) {
     }
     const mine = scores.find((x) => x.id === s.id); if (mine) mine.thumb = thumb;
     if (thumbURLs.has(s.id)) { URL.revokeObjectURL(thumbURLs.get(s.id)); thumbURLs.delete(s.id); }
-    thumbURLs.set(s.id, URL.createObjectURL(thumb));
+    thumbURLs.set(s.id, URL.createObjectURL(thumb)); thumbOfURL.set(s.id, thumbSig({ thumb, thumbAt: mine ? mine.thumbAt : 0 }));
     for (const th of document.querySelectorAll(`.card[data-sid="${s.id}"] .thumb`)) { th.style.backgroundImage = `url(${thumbURLs.get(s.id)})`; th.classList.add('has-pic'); }
   }).catch(() => {});
 }
 function folderCard(f) {
-  const n = scores.filter((s) => s.folder === f.id).length;
+  const n = scores.filter((s) => folderShown(s) === f.id).length;
   const b = el('button', 'card folder');
   b.dataset.folder = f.id;
   const th = el('div', 'thumb folder-tile');
@@ -477,8 +515,7 @@ function openFolderSheet(mode, id) {
       for (const sid of ids) {
         const sc = scores.find((x) => x.id === sid);
         if (!sc) continue;
-        if (target) sc.folder = target; else delete sc.folder;
-        db.put('scores', sc);
+        setFolder(sc, target);
       }
       setLibEditing(false);
       hidePanel();
@@ -510,7 +547,7 @@ $('#folderSave').addEventListener('click', async () => {
     FOLD.list.push(f); FOLD.current = f.id;
     if (FP.withSel) {
       const ids = [...LIB.sel];
-      for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; sc.folder = f.id; db.put('scores', sc); }
+      for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (!sc) continue; setFolder(sc, f.id); }
       setLibEditing(false);
       toast(`${ids.length === 1 ? 'Moved it' : 'Moved ' + ids.length + ' scores'} to ${name}.`);
     }
@@ -522,7 +559,7 @@ $('#folderSave').addEventListener('click', async () => {
 $('#folderDelete').addEventListener('click', async () => {
   if (!FP.armed) { FP.armed = true; $('#folderDelete').textContent = 'Tap again to delete'; setTimeout(() => { FP.armed = false; $('#folderDelete').textContent = 'Delete folder'; }, 3000); return; }
   // the scores in it go back to the library; nothing is deleted
-  for (const sc of scores.filter((x) => x.folder === FP.id)) { delete sc.folder; await db.put('scores', sc); }
+  for (const sc of scores.filter((x) => x.folder === FP.id)) await setFolder(sc, null);
   FOLD.list = FOLD.list.filter((f) => f.id !== FP.id);
   FOLD.current = null; saveFolders(); hidePanel(); renderGrid();
 });
@@ -530,7 +567,7 @@ $('#libMove').addEventListener('click', () => { if (LIB.sel.size) openFolderShee
 // inside a folder: the selected scores go back to the library, out of any folder
 $('#libOutBtn').addEventListener('click', () => {
   const ids = [...LIB.sel]; if (!ids.length) return;
-  for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (sc) { delete sc.folder; db.put('scores', sc); } }
+  for (const sid of ids) { const sc = scores.find((x) => x.id === sid); if (sc) setFolder(sc, null); }
   setLibEditing(false); renderGrid();
   toast(ids.length === 1 ? 'Taken out of the folder: it is in the library.' : `${ids.length} scores taken out of the folder.`, 2000);
 });
@@ -7933,7 +7970,7 @@ new MutationObserver(() => sendFace()).observe($('#score'), { attributes: true, 
 const mb = (n) => n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} KB` : n < 1e9 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${(n / 1e9).toFixed(1)} GB`;
 const ago = (t) => { const d = Math.floor((Date.now() - t) / 864e5); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
 async function backupState() {
-  const at = await getSetting('backupAt', 0), changed = await lastChange();
+  const at = await getSetting('backupAt', 0), changed = Math.max(await lastChange(), dirtyAt());
   return { at, changed, stale: !at || changed > at, days: at ? (Date.now() - at) / 864e5 : Infinity };
 }
 async function renderBackup() {
@@ -7951,6 +7988,17 @@ async function renderBackup() {
   $('#bkTakesWhich').hidden = !$('#bkTakes').checked || canSaveHere();
   $('#panel-backup').classList.toggle('in-folder', canSaveHere());
   if (canSaveHere()) $('#bkAutoHint').textContent = 'When it is time and something has changed, Stand makes the backup by itself, in the Stand folder, without asking anything.';
+  // the folder backup: one backup, kept up to date by itself
+  const fb = folderBackupOK();
+  $('#bkFromFolder').hidden = !fb;
+  $('#panel-backup').classList.toggle('mirror', fb);
+  if (fb) {
+    $('#bkAutoHint').textContent = 'On: Stand keeps the backup up to date by itself, a little after you change something and as you leave the app. Only what changed is written; there is always one backup, the latest.';
+    $$('#bkAuto button').forEach((x) => { if (x.dataset.auto === 'day') x.textContent = 'On'; if (x.dataset.auto === 'week') x.hidden = true; });
+    if (auto === 'week') $$('#bkAuto button').forEach((x) => x.classList.toggle('on', x.dataset.auto === 'day'));
+    $('#bkHow').innerHTML = 'Your backup is in <b>Files › On My iPad › Stand</b>: <b>Backup</b> (everything, to bring it all back) and <b>Scores</b> (your scores as PDFs, in your folders). It stays on this iPad, so if Stand is deleted it goes with it: from time to time copy the Stand folder to <b>iCloud Drive</b>.';
+    $('#bkFiles').hidden = false; $('#bkList').textContent = ''; $('#bkSaveAll').hidden = true;
+  }
   const fresh = (await newTakeIds(false)).length; const nb = $('#bkTakesWhich button[data-which="new"]'); if (nb) nb.textContent = fresh ? `Only new ones (${fresh})` : 'Only new ones (none)';
 }
 async function renderBackupBanner() {
@@ -7960,7 +8008,7 @@ async function renderBackupBanner() {
   const has = scores.length > 0;
   const auto = await getSetting('backupAuto', 'week');
   const every = auto === 'day' ? 1 : 7;
-  const show = has && st.stale && st.days >= every && Date.now() > snooze;
+  const show = !folderBackupOK() && has && st.stale && st.days >= every && Date.now() > snooze;
   b.hidden = !show;
   if (show) {
     $('#bkBannerTitle').textContent = st.at ? 'Time for a new backup' : 'Keep a copy in iCloud Drive';
@@ -8044,7 +8092,82 @@ async function mirrorScores() {
 function nativeBusy(on, why) { try { if ((window.standCaps || {}).busy) window.webkit.messageHandlers.standBusy.postMessage({ on: !!on, why }); } catch {} }
 window.__nativeBusy = nativeBusy;
 const canShareAll = (vols) => { try { const fs = vols.map((v) => new File([v.blob], v.name, { type: 'application/zip' })); return !!(navigator.canShare && navigator.canShare({ files: fs })); } catch { return false; } };
+// ---- the backup as one folder kept up to date: Files › On My iPad › Stand › Backup ----
+const folderBackupOK = () => canSaveHere() && +((window.standCaps || {}).files) >= 3;
+const MIRROR = { running: false };
+async function mirrorBackup({ quiet = false } = {}) {
+  if (MIRROR.running) return false;
+  MIRROR.running = true; nativeBusy(true, 'backup');
+  const startedDirty = dirtyAt();
+  try {
+    if (!quiet) toast('Bringing the backup in Files › Stand up to date…', 120000);
+    const { lib, bins } = await makeMirror();
+    const was = (await getSetting('mirrorState', null)) || {};
+    const now = {};
+    let wrote = 0;
+    for (const b of bins) {
+      now[b.path] = b.sig;
+      if (was[b.path] === b.sig) continue;
+      const slash = b.path.lastIndexOf('/');
+      await saveInStandFolder(b.blob, 'Backup/' + b.path.slice(0, slash), b.path.slice(slash + 1));
+      wrote++;
+      // (kept as it goes: an interrupted backup carries on from here next time)
+      await setSetting('mirrorState', { ...was, ...now });
+    }
+    // the library itself last: a backup is only complete once it is written
+    await saveInStandFolder(lib, 'Backup', 'Stand library.json');
+    if (!was['Read me.txt']) await saveInStandFolder(new Blob([`Stand — your backup
+
+This folder holds everything in Stand: your scores, markings, notebooks, compositions,
+recordings, practice log and settings. Stand keeps it up to date by itself: only what changed is
+written, and there is always one backup, the latest.
+
+To bring everything back (a new iPad, Stand installed again): copy this whole Stand folder back into
+Files › On My iPad › Stand, open Stand, then Settings › Backup › Bring back from the Stand folder.
+
+Your scores as ordinary PDFs, in the folders of your library, are in Stand › Scores.
+Please do not change the files in this folder.
+`], { type: 'text/plain' }), 'Backup', 'Read me.txt');
+    now['Read me.txt'] = 'x';
+    // what is no longer in the library goes from the backup (a deleted score stays a month)
+    const gone = (await getSetting('mirrorGone', {})) || {};
+    for (const path of Object.keys(was)) {
+      if (now[path]) { delete gone[path]; continue; }
+      if (!gone[path]) gone[path] = Date.now();
+      if (Date.now() - gone[path] > 30 * 864e5) { try { NSAVE().postMessage({ op: 'remove', path: 'Backup/' + path }); } catch {} delete gone[path]; }
+      else now[path] = was[path];
+    }
+    await setSetting('mirrorGone', gone);
+    await setSetting('mirrorState', now);
+    // the old backups made as .zip files are not needed any more
+    try { NSAVE().postMessage({ op: 'purge' }); } catch {}
+    try { await mirrorScores(); } catch (err) { console.warn('scores copy', err); }
+    await setSetting('backupAt', Math.max(Date.now(), startedDirty + 1)); await setSetting('backupSnooze', 0);
+    try { localStorage.setItem('standBackupOk', String(Date.now())); } catch {}
+    if (!quiet) toast(wrote ? `Backup up to date (${wrote} file${wrote === 1 ? '' : 's'} written) in Files › Stand.` : 'Backup up to date in Files › Stand.', 3000);
+    renderBackup(); renderBackupBanner();
+    return true;
+  } catch (err) {
+    console.warn('backup', err);
+    if (!quiet) toast('The backup could not be finished (' + (err.message || err) + '). It will try again.', 6000);
+    return false;
+  } finally { MIRROR.running = false; nativeBusy(false, 'backup'); }
+}
+// Kept up to date by itself: a little after something changes (while nothing else is going on),
+// and as you leave Stand (iOS gives it the time to finish).
+async function autoMirror(why) {
+  if (!folderBackupOK() || MIRROR.running || window.__restoring) return;
+  if ((await getSetting('backupAuto', 'day')) === 'off') return;
+  const at = await getSetting('backupAt', 0);
+  if (!(dirtyAt() > at)) return;
+  if (why === 'idle' && (Date.now() - dirtyAt() < 2 * 60000 || Date.now() - at < 20 * 60000)) return;
+  if (why === 'idle' && (!$('#score').hidden || openPanel || recState || !$('#compose').hidden)) return;
+  await mirrorBackup({ quiet: true });
+}
+setInterval(() => { if (document.visibilityState === 'visible') autoMirror('idle').catch(() => {}); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autoMirror('leave').catch(() => {}); });
 async function backupNow({ auto = false } = {}) {
+  if (folderBackupOK()) { const b = $('#bkMake'); b.disabled = true; try { await mirrorBackup({ quiet: auto }); } finally { b.disabled = false; } return; }
   const btn = $('#bkMake'); if (btn.disabled) return; btn.disabled = true;
   toast('Packing your library…', 60000);
   try {
@@ -8124,7 +8247,7 @@ $$('#bkAuto button').forEach((b) => b.addEventListener('click', async () => { aw
 // the library is on screen and nothing else is going on (once a day at most)
 setInterval(async () => {
   try {
-    if (!canSaveHere() || document.visibilityState !== 'visible' || !$('#score').hidden || openPanel || recState || $('#bkMake').disabled) return;
+    if (folderBackupOK() || !canSaveHere() || document.visibilityState !== 'visible' || !$('#score').hidden || openPanel || recState || $('#bkMake').disabled) return;
     if (Date.now() - (window.__autoBkAt || 0) < 864e5 || !scores.length) return;
     const auto = await getSetting('backupAuto', 'week'); if (auto === 'off') return;
     const st = await backupState(); if (!(st.stale && st.days >= (auto === 'day' ? 1 : 7))) return;
@@ -8146,6 +8269,18 @@ $('#bkInput').addEventListener('change', async (e) => {
     // settings and the practice log come back too: start fresh with them
     setTimeout(() => location.reload(), miss.length ? 9000 : 2200);
   } catch (err) { window.__restoring = false; console.error(err); toast(err.message || 'That file could not be restored.', 5000); }
+});
+$('#bkFromFolder').addEventListener('click', async () => {
+  if (!folderBackupOK()) return;
+  toast('Bringing your library back from Files › Stand…', 180000);
+  try {
+    window.__restoring = true;
+    const get = async (path) => { const r = await fetch('/__docs/' + path.split('/').map(encodeURIComponent).join('/')).catch(() => null); return r && r.ok ? r.blob() : null; };
+    const r = await restoreMirror(get);
+    await setSetting('backupAt', Date.now());
+    toast(`Restored ${r.scores} score${r.scores === 1 ? '' : 's'}${r.takes ? ` and ${r.takes} recording${r.takes === 1 ? '' : 's'}` : ''}${r.lost ? ` (${r.lost} file${r.lost === 1 ? '' : 's'} missing from the folder)` : ''}. Starting again…`, 3500);
+    setTimeout(() => location.reload(), 2600);
+  } catch (err) { window.__restoring = false; console.error(err); toast(err.message || 'The backup could not be brought back.', 5000); }
 });
 // ask the system to keep our storage (it is never cleared to make room)
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist().catch(() => {}); } catch {}

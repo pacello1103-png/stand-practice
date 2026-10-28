@@ -158,6 +158,48 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
   const notes = [];
   const marks = [];   // onsets for the moving cursor: {t, m, pos, ids}
+  // ---- the pianist's pedal, where the score marks none (expressive style): held through each
+  // harmony and changed as the bass moves (a new bass note, a rest, or a bar's length at most), so
+  // the piano rings as a played piano does. Lightly in quick passages (no blur of scales).
+  const AUTO_PED = new Map();
+  if (expr && (globalThis.__autoPed ?? 1)) {
+    const byPart = new Map();
+    for (const x of info) { if (!byPart.has(x.part)) byPart.set(x.part, []); byPart.get(x.part).push(x); }
+    for (const [part, xs] of byPart) {
+      const sid0 = part.sound || xs[0].inst.sound;
+      if (!/^(piano|epiano)$/.test(sid0)) continue;
+      if (spans.some((q) => q.kind === 'ped' && part.staves.some((y) => y.id === q.st))) continue;
+      // every staff's events in time (the lowest staff gives the bass)
+      // the harmony, half a bar at a time (a bar in 3/4, 3/8, 2/4): its bass and its notes
+      const winOf = (time) => { const bt = barTicks(time); const halves = time[0] === 4 || time[0] === 6 || time[0] === 12 || (time[0] === 2 && time[1] === 2); return halves ? bt / 2 : bt; };
+      const wins = new Map();
+      for (const x of xs) order.forEach((m, k) => {
+        const time = timeAt(score, m), W = winOf(time); let p = 0;
+        for (const ev of x.st.bars[m] || []) {
+          const len = ticksOf(ev, time), wi = Math.floor(p / W), key = k + ':' + wi;
+          let w = wins.get(key); if (!w) { w = { k, t: tAt(k, wi * W), end: tAt(k, Math.min(barMap[k].total, (wi + 1) * W)), low: null, pcs: new Set(), any: false }; wins.set(key, w); }
+          if (ev.notes && !ev.rest) for (const n of ev.notes) { const mm = midiOf(n.s, n.a); w.any = true; w.pcs.add(mm % 12); if (x === xs[xs.length - 1] && (w.low === null || mm < w.low)) w.low = mm; }
+          p += len;
+        }
+      });
+      const segs = []; let cur = null;
+      for (const w of [...wins.values()].sort((x, y) => x.t - y.t)) {
+        if (!w.any) { if (cur) { cur.t1 = w.t; segs.push(cur); cur = null; } continue; }
+        // the same harmony goes on (the same bass, mostly the same notes): one pedal, a bar at most
+        let same = false;
+        if (cur) { const inter = [...w.pcs].filter((q) => cur.pcs.has(q)).length, uni = new Set([...w.pcs, ...cur.pcs]).size; same = (w.low === null || cur.bass === null || w.low % 12 === cur.bass % 12) && inter / Math.max(1, uni) >= 0.5 && w.end - cur.t0 <= cur.barDur * 1.01; }
+        if (cur && !same) { cur.t1 = w.t; segs.push(cur); cur = null; }
+        if (!cur) cur = { t0: w.t, bass: w.low, pcs: new Set(w.pcs), t1: w.end, barDur: tAt(w.k, barMap[w.k].total) - tAt(w.k, 0) };
+        cur.t1 = Math.max(cur.t1, w.end);
+      }
+      if (cur) segs.push(cur);
+      const all = xs.map((x) => { const out = []; order.forEach((m, k) => { const time = timeAt(score, m); let p = 0; for (const ev of x.st.bars[m] || []) { if (ev.notes && !ev.rest) out.push({ t: tAt(k, p), low: 1 }); p += ticksOf(ev, time); } }); return out; });
+      // (quick notes under one pedal: only a touch of it)
+      const onsets = all.flat().filter((e) => e.low !== null).map((e) => e.t);
+      for (const g of segs) { const n = onsets.filter((t) => t >= g.t0 - 1e-3 && t < g.t1).length; g.light = n / Math.max(0.05, g.t1 - g.t0) > 7; }
+      AUTO_PED.set(part.id, segs);
+    }
+  }
   for (const { st, part, inst } of info) {
     const sid = part.sound || inst.sound;
     const sustained = SUSTAIN.test(sid);
@@ -303,7 +345,12 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       const fer = arts.some((a) => a === 'ferm' || a === 'fermS' || a === 'fermL') ? fermatas.find((q) => q.m === f.m) : null;
       let dur = f.dur + (fer ? fer.extra : 0);
       const art = arts.find((a) => ['stacc', 'stacciss', 'ten', 'acc', 'marc'].includes(a)) || null;
-      const pe = keyed ? pedEnd(f) : null;
+      let pe = keyed ? pedEnd(f) : null;
+      // (the pianist's own pedal: the note rings until the pedal changes, a little after it)
+      if (!pe && keyed && AUTO_PED.has(part.id)) {
+        const g = AUTO_PED.get(part.id).find((q) => f.t >= q.t0 - 0.01 && f.t < q.t1 - 0.005);
+        if (g) pe = g.light ? Math.min(g.t1, f.t + dur + 0.18) : g.t1 + 0.03;
+      }
       if (pe && pe > f.t + dur) dur = pe - f.t;
       if (arts.includes('breath')) dur = Math.max(0.06, dur - 0.18);
       const roll = arts.includes('arp');
@@ -403,22 +450,27 @@ function keyAlterAt(score, m, s) { return keyAlter(keyAt(score, m), s); }
 // ---------- live playback ----------
 export class ScorePlayer {
   constructor() { this.playing = false; this.onTick = null; this.onEnd = null; }
-  async play(score, { from = 0 } = {}) {
+  async play(score, { from = 0, pos = 0 } = {}) {
     this.stop();
     const tok = this._tok;
     const tl = buildTimeline(score, { from });
     this.tl = tl;
+    // (from a note in the middle of the bar: the music before it in that bar is left out)
+    let skip = 0;
+    if (pos > 0) { const mk = tl.marks.find((q) => q.m === from && q.pos >= pos); if (mk) skip = Math.max(0, mk.t - 0.005); }
+    let first = 0; while (first < tl.notes.length && tl.notes[first].t < skip) first++;
+    this.skip = skip;
     sampler.live();
     applyScoreSound(sampler, score);
     this.loading = true;
-    await sampler.prepare(tl.notes.slice(0, 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
+    await sampler.prepare(tl.notes.slice(first, first + 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
     // (Stop pressed while the sounds were loading: it does not start after all)
     if (tok !== this._tok) return;
-    sampler.prepare(tl.notes.slice(400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
+    sampler.prepare(tl.notes.slice(first + 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
     this.loading = false;
     const ctx = getCtx();
-    this.t0 = ctx.currentTime + 0.12;
-    this.next = 0; this.playing = true; wantAudio(true, 'compose');
+    this.t0 = ctx.currentTime + 0.12 - skip;
+    this.next = first; this.playing = true; wantAudio(true, 'compose');
     const pump = async () => {
       if (!this.playing) return;
       // (iOS replaced the sound system meanwhile: playing stops here rather than going on silent)
