@@ -20,6 +20,9 @@ for (const k of ['r4', 'r8', 'r16', 'r32']) SHAPES[k] = [...(SHAPES[k] || []), .
 import { SHAPES2 } from './omr-shapes2.js';
 // (accidentals stay with the printed fonts: the handwritten ones' flats and naturals look too alike)
 for (const [k, v] of Object.entries(SHAPES2)) if (!['sharp', 'flat', 'natural', 'dflat', 'dsharp'].includes(k)) SHAPES[k] = [...(SHAPES[k] || []), ...v];
+// and LilyPond's own shapes (Emmentaler: Mutopia, and many printed editions), accidentals too
+import { SHAPES3 } from './omr-shapes3.js';
+for (const [k, v] of Object.entries(SHAPES3)) if (!globalThis.__noShapes3) SHAPES[k] = [...(SHAPES[k] || []), ...v];
 
 const SP = 20;                  // working size of a staff space, in pixels
 const GW = 12, GH = 20;         // shape grid
@@ -305,6 +308,15 @@ function findStaves(b, w, h, sp, T, gaps = false) {
         const g = st.sp, above = cov(-g, 0), bottom = cov(0, 4);
         if (!(above > 0.88 && above - bottom > 0.22)) break;
         const t2 = t.map((q) => ({ ...q, ys: [q.ys[0] - (q.ys[4] - q.ys[0]) / 4, q.ys[0], q.ys[1], q.ys[2], q.ys[3]] }));
+        t.splice(0, t.length, ...t2); st = makeStaff(t, b, w, h, T, gaps);
+      }
+      // and one found too high: high notes all along a line (a cellist's thumb positions, a
+      // violin's top) have rows of ledger lines over the staff, taken for its top lines; a line
+      // below all along, the 'top line' only in short pieces
+      if (globalThis.__staffDown ?? 1) for (let it = 0; it < 3; it++) {
+        const g = st.sp, below = cov(g, 4), top = cov(0, 0);
+        if (!(below > 0.88 && below - top > 0.22)) break;
+        const t2 = t.map((q) => ({ ...q, ys: [q.ys[1], q.ys[2], q.ys[3], q.ys[4], q.ys[4] + (q.ys[4] - q.ys[0]) / 4] }));
         t.splice(0, t.length, ...t2); st = makeStaff(t, b, w, h, T, gaps);
       }
     }
@@ -1258,6 +1270,7 @@ function readStaff(s, ctx, header) {
     if (c.x0 < startX - sp * 0.2 || c.x1 > s.x1 || c.h < sp * 1.2 || c.h > sp * 3.8 || c.w > sp * 1.7 || c.w < sp * 0.3) continue;
     if (!band((c.y0 + c.y1) / 2)) continue;
     // something with a head in it is not an accidental
+    if (globalThis.__accLog && c.h > sp * 1.2) globalThis.__accLog.push({ x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, h: +(c.h / sp).toFixed(2), w: +(c.w / sp).toFixed(2), k: ctx.best(c, ['sharp', 'flat', 'natural', 'dflat'], sp * 1.8) });
     if (ctx.dbg && c.h > sp * 1.5 && c.w < sp * 1.2) (ctx.accTrace = ctx.accTrace || []).push({ x0: c.x0, y0: c.y0, h: +(c.h / sp).toFixed(2), w: +(c.w / sp).toFixed(2), headIn: heads.some((hd) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1), k: ctx.best(c, ['sharp', 'flat', 'natural', 'dflat'], sp * 1.8) });
     if (heads.some((hd) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1)) continue;
     // nor one with another note's stem in it (the flag of the note before)
@@ -1901,6 +1914,19 @@ function readHeader(s, comps, ctx, prev, heads) {
     else if (top > 7.4 && top < 9.8 && bot > -1.2 && bot < 0.8) name = k.cls === 'bass' && k.d < 0.3 ? 'bass' : 'alto';
     else if (top > 9.6 && top < 11.8 && bot > 1.2 && bot < 2.8) name = 'tenor';
     else if (k.d < 0.33) name = k.cls;
+    // a C clef run together with a low (or high) note just after it, by its ledger lines: the clef's
+    // own shape alone tells on which line it sits (alto on the middle line, tenor on the fourth)
+    if (!name && k.cls === 'alto' && k.d < 0.45 && (globalThis.__cClefAlone ?? 1)) {
+      // (the ink of its first two spaces' width only: the note after it is further right)
+      const xa = c.x0, xb = Math.min(c.x1, Math.round(c.x0 + sp * 2.1));
+      let ya = Infinity, yb = -1;
+      for (let y = c.y0; y <= c.y1; y++) for (let x = xa; x <= xb; x++) if (C[y * w + x]) { if (y < ya) ya = y; if (y > yb) yb = y; break; }
+      const k1 = yb > ya ? classify(shapeOf(C, w, xa, ya, xb, yb, sp), ['treble', 'bass', 'alto']) : { cls: '', d: 9 };
+      const t1 = P(ya, (xa + xb) / 2), b1 = P(yb, (xa + xb) / 2), mid = (t1 + b1) / 2;
+      if (globalThis.__clefLog) globalThis.__clefLog.push({ alone: [+t1.toFixed(2), +b1.toFixed(2), k1.cls, +(+k1.d).toFixed(3)] });
+      if (k1.cls === 'alto' && k1.d < 0.42 && t1 - b1 > 6 && t1 - b1 < 10.5 && mid > 2.5 && mid < 7.5) name = Math.abs(mid - 6) < Math.abs(mid - 4) ? 'tenor' : 'alto';
+    }
+    if (globalThis.__clefLog) globalThis.__clefLog.push({ top: +top.toFixed(2), bot: +bot.toFixed(2), cls: k.cls, d: +k.d.toFixed(3), name, bassDots });
     if (name) {
       clef = name; end = Math.max(x1, ...dots.map((q) => q.x1)) + sp * 0.2;
       i = comps.findIndex((q) => q.x0 >= end - sp * 0.1); if (i < 0) i = comps.length;
@@ -2038,6 +2064,16 @@ function readHeader(s, comps, ctx, prev, heads) {
     const firstNote = heads.filter((hd) => hd.left > end && (hd.stem || (hd.hollow && hd.wRow > sp * 1.35)) && !inAcc(hd)).reduce((m, hd) => Math.min(m, hd.left), Infinity);
     if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ inAccDbg: heads.filter((hd) => hd.left > end && hd.left < end + sp * 8).map((hd) => [hd.left, hd.right, Math.round(hd.cy), inAcc(hd), comps.filter((c) => Math.min(hd.right, c.x1) - Math.max(hd.left, c.x0) > 0).map((c) => [c.x0, c.x1, c.y0, c.y1, +(c.h / sp).toFixed(2), signLike(c)])]) });
     if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ firstNote, end, heads: heads.filter((hd) => hd.left > end).slice(0, 3).map((hd) => [hd.left, hd.p, hd.kind, hd.stem && [hd.stem.len / sp, hd.stem.back / sp], hd.wRow / sp]) });
+    // a bar line straight after the clef (a repeat that starts the line: ‖:) ends the place where a
+    // key can be — its thick and thin strokes and its dots are never flats or sharps
+    let repX = Infinity;
+    if (globalThis.__repKey ?? 1) {
+      const CK0 = ctx.Cb || C, ya0 = Math.round(s.top), yb0 = Math.round(s.bottom), need = (yb0 - ya0) * 0.9;
+      for (let x = Math.round(end); x < Math.min(w, end + sp * 5, firstNote - sp * 0.3); x++) {
+        let run = 0, best = 0; for (let y = ya0 - 1; y <= yb0 + 1; y++) { if (y >= 0 && y < ctx.h && CK0[y * w + x]) { run++; if (run > best) best = run; } else run = 0; }
+        if (best >= need) { repX = x; break; }
+      }
+    }
     let bestFirst = 9, keyFirst = null;
     for (const a of [1, -1]) {
       let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null;
@@ -2045,9 +2081,13 @@ function readHeader(s, comps, ctx, prev, heads) {
         const k = look(a, p, cur, cnt ? cur + sp * 1.5 : Math.max(cur + sp * 1.5, Math.min(cur + sp * 2.6, firstNote - sp * 1.6)));
         if (!cnt && k && (!keyHint[a] || k.d < keyHint[a])) keyHint[a] = k.d;
         if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ a, p, cur, k: k && { d: +k.d.toFixed(3), x0: k.x0, ld: k.ld, lm: k.lm, mg: k.margin } });
+        if (globalThis.__keyLog) globalThis.__keyLog.push({ y: Math.round(s.top), a, p, cur: Math.round(cur), firstNote: Math.round(firstNote), k: k && { d: +k.d.toFixed(3), x0: k.x0, x1: k.x1, m: +(k.margin || 0).toFixed(2), loose: !!k.loose } });
+        if (k && k.x1 > repX) break;
         if (!k || !(k.d <= 0.38 || (k.d <= 0.48 && k.margin >= 0.1 && (!cnt || k.d <= firstD + 0.06)))) break;
         // (one beside the other, not on top of each other)
         if (cnt >= 1 && k.x0 - prevX < sp * 0.6) break;
+        // (nor a piece of the sign before: most of it inside that one)
+        if (cnt >= 1 && (globalThis.__keyOverlap ?? 1) && k.x1 - lx < sp * 0.45) break;
         // evenly spaced
         if (cnt >= 2 && Math.abs((k.x0 - prevX) - step) > step * 0.45) break;
         if (cnt >= 1) step = cnt === 1 ? k.x0 - prevX : step;
