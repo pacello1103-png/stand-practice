@@ -46,6 +46,8 @@ const BODY = {
   cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1], ['peaking', 3000, -4, 0.8]],
   violin: [['peaking', 3500, -9, 0.6], ['highshelf', 7000, -5], ['peaking', 1800, -2, 1]],
   viola: [['lowshelf', 350, 2], ['peaking', 3200, -6, 0.6], ['highshelf', 7000, -3]],
+  cello_solo: [['peaking', 400, 4.5, 0.7], ['peaking', 3500, -5, 0.8], ['highshelf', 7000, -2]],
+  viola_solo: [['peaking', 3200, -4, 0.7], ['highshelf', 7000, -2]],
   // (the grand was recorded close to its strings: heard from the hall, its top is softer)
   piano: [['highshelf', 2500, -4], ['highshelf', 7000, -4]],
 };
@@ -163,6 +165,13 @@ export class Sampler {
   async sampleFor(sid, midi, kind = 'sus', vel = 0.7) {
     const I = await loadIndex();
     // a real recording of this way of playing, at the nearest strength
+    // a real solo cello or viola, every note recorded (in place of the section recordings)
+    const SOLO = { cello: 'vc_solo', viola: 'va_solo' };
+    if (kind === 'sus' && SOLO[sid] && I.n[SOLO[sid]] && !this.plain && (globalThis.__solo ?? 1)) {
+      const list = I.n[SOLO[sid]]; let best = list[0];
+      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      return this.load(SOLO[sid], best, 'f', kind);
+    }
     const set = realSet(sid, kind);
     if (set && I.n[set] && I.n[set].length && !this.plain) {
       const list = I.n[set]; let best = list[0];
@@ -217,7 +226,7 @@ export class Sampler {
       const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}.mp3`, import.meta.url))
         .then((r) => { if (!r.ok) throw new Error('missing sample'); return r.arrayBuffer(); })
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
-        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, atkT: (await loadIndex()).AT || null }));
+        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, oneLayer: /_solo$/.test(sid), tc: (((await loadIndex()).T || {})[sid] || {})[m] || 0, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, atkT: (await loadIndex()).AT || null }));
       p.catch(() => this.buffers.delete(key));
       this.buffers.set(key, p);
     }
@@ -247,7 +256,8 @@ export class Sampler {
       // lack (fitted against recordings of real players, see BODY)
       let node = ch.input;
       ch.body = [];
-      for (const [type, f, gdb, q] of (globalThis.__bodyEq || BODY)[sid] || []) {
+      const bk = (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
+      for (const [type, f, gdb, q] of (globalThis.__bodyEq || BODY)[bk] || []) {
         const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gdb; if (q) b.Q.value = q;
         node.connect(b); node = b; ch.body.push(b);
       }
@@ -285,7 +295,7 @@ export class Sampler {
     const src = ctx.createBufferSource(); src.buffer = sample.buf;
     // no two notes quite the same: a touch of pitch and level variation, as with a real player
     const human = (opts.human ?? (Math.random() - 0.5) * 4) + (opts.tune || 0);
-    const cents = (midi - sample.midi) * 100 + 1200 * Math.log2(this.tuning / 440) + human;
+    const cents = (midi - sample.midi) * 100 + 1200 * Math.log2(this.tuning / 440) + human + (sample.tc || 0);
     src.playbackRate.value = Math.pow(2, cents / 1200);
     // (a real recording played short, or plucked: it rings as recorded)
     const decaying = DECAYING.has(sid) || sample.kind === 'pizz' || sample.kind === 'spic';
@@ -296,7 +306,8 @@ export class Sampler {
     // (a real soft or loud recording already has its own colour: only a little more shaping)
     // (the grand piano's three recordings already have the colour of each strength)
     const ownColour = sample.set === 'grand';
-    tone.frequency.value = ownColour ? 20000 : real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
+    // (one loud recording only: softer is also darker, as with the general sounds, a little less so)
+    tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
     // quick sweep up from a warm sound), and the top is kept smooth.
     const bowed = BOWED.has(sid) && !real;
@@ -357,12 +368,12 @@ export class Sampler {
     offset = Math.max(offset, skip);
     if (opts.legato && !decaying) hold = Math.max(hold, dur + 0.05);
     // vibrato: comes in after the start of the note, like a player's
-    if (opts.vib && !decaying && !real && !sample.ownVib && dur > 0.3) {   // (the real strings play their own vibrato)
+    if (opts.vib && !decaying && (!real || sample.oneLayer) && !sample.ownVib && dur > 0.3) {   // (the real strings play their own vibrato)
       const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2 + Math.random() * 0.8;
       const depth = ctx.createGain(); depth.gain.value = 0;
       // more intense playing, wider vibrato; quiet long notes keep it narrow
-      const amt = src.playbackRate.value * (Math.pow(2, (opts.vib * (0.55 + vel * 0.65)) / 1200) - 1);
-      lfo.frequency.value = 4.9 + vel * 1.0 + Math.random() * 0.4;
+      const amt = src.playbackRate.value * (Math.pow(2, (opts.vib * (globalThis.__vibDepth ?? 1) * (0.55 + vel * 0.65)) / 1200) - 1);
+      lfo.frequency.value = (globalThis.__vibRate ?? 4.9) + vel * 1.0 + Math.random() * 0.4;
       depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(0, t + Math.min(0.35, dur * 0.3)); depth.gain.linearRampToValueAtTime(amt, t + Math.min(0.9, dur * 0.7));
       lfo.connect(depth).connect(src.playbackRate);
       lfo.start(t); lfo.stop(t + dur + 1.5);

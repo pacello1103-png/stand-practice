@@ -2,6 +2,7 @@
 import { getCtx, master, ensureRunning, wantAudio, freshSound } from './audio.js';
 
 const LOOKAHEAD = 0.12;      // seconds scheduled ahead
+
 const TICK_MS = 25;          // scheduler wake-up
 
 // ---------- click sounds, synthesised once per sample rate ----------
@@ -124,6 +125,8 @@ export class Metronome {
     const g = ctx.createGain(); g.gain.value = GAINS[level];
     src.connect(g).connect(this._out());
     src.start(time);
+    // (kept until it has sounded: stopping silences the clicks already scheduled ahead)
+    src._t = time; (this._sched || (this._sched = new Set())).add(src); src.onended = () => this._sched && this._sched.delete(src);
     // (when each click sounds, so the tuner can leave it out: the microphone hears it too)
     const c = globalThis.__clicks || (globalThis.__clicks = []);
     c.push({ ctx, t: time, d: src.buffer.duration }); if (c.length > 8) c.shift();
@@ -139,7 +142,8 @@ export class Metronome {
     this._ctx = ctx;
     if (!this._wired) { this._wired = true; window.addEventListener('stand-audio-new', () => { if (this.running) this._resync(getCtx()); }); }
     this.running = true;
-    this._beatCount = 0;
+    // (started again where it was, e.g. coming back to Stand: a tempo ramp carries on from that bar)
+    this._beatCount = Math.max(0, opts.fromBeat | 0);
     this._sub = 0;
     this._countIn = opts.countInBars ? opts.countInBars * this.beats : 0;
     this._onCountIn = opts.onCountInDone || null;
@@ -169,6 +173,7 @@ export class Metronome {
   stop(silent) {
     clearInterval(this._timer); this._timer = null;
     this.running = false; wantAudio(false, 'metro');
+    if (this._sched) { const now = getCtx().currentTime; for (const s of this._sched) { try { s.stop(now); } catch {} } this._sched.clear(); }
     this._queue = [];
     if (!silent && this.onStop) this.onStop();
   }
@@ -182,15 +187,23 @@ export class Metronome {
   _tick() {
     const ctx = getCtx();
     if (this.running && (this._ctx !== ctx || this._next > ctx.currentTime + 5)) this._resync(ctx);
-    // fell behind (the sound system stalled): carry on from now instead of a burst of clicks
-    if (this.running && this._next < ctx.currentTime - 0.25) this._next = ctx.currentTime + 0.05;
+    // fell behind (the sound system stalled, or the page slept): no burst of clicks, and the beat
+    // keeps its place: whole beats are passed over in time, so the tempo and the bar stay as they were
+    if (this.running && this._next < ctx.currentTime - 0.25 && ctx.state === 'running') {
+      let guard = 0;
+      while (this._next < ctx.currentTime + 0.03 && guard++ < 100000) this._advance(true);
+    }
     // a suspended or interrupted sound system plays nothing: wake it, and do not replay the time that passed
     if (this.running && ctx.state !== 'running') {
       const now = performance.now();
       if (!this._wakeAt || now - this._wakeAt > 400) { this._wakeAt = now; ctx.resume().catch(() => {}); }
       if (this._next < ctx.currentTime) this._next = ctx.currentTime + 0.1;
     }
-    while (this.running && this._next < ctx.currentTime + LOOKAHEAD) {
+    while (this.running && this._next < ctx.currentTime + LOOKAHEAD) this._advance(false);
+  }
+  // one subdivision on: played (or, falling behind, only counted)
+  _advance(silent) {
+    {
       const inCountIn = this._countIn > 0;
       const bc = this._beatCount;
       const bpm = inCountIn ? this.countInBpm : this._tempoAt(bc);
@@ -201,7 +214,8 @@ export class Metronome {
       const muted = !inCountIn && this.gap.on && (bar % (this.gap.play + this.gap.mute)) >= this.gap.play;
       const acc = this.accents[beatInBar] ?? 1;
 
-      if (this._sub === 0) {
+      if (silent) { /* passed over in time */ }
+      else if (this._sub === 0) {
         if (!muted && acc > 0) this._play(this._next, acc === 2 ? 0 : 1);
         this._queue.push({ time: this._next, beat: beatInBar, acc, bpm, muted, countIn: inCountIn });
       } else if (!muted && acc > 0) {
@@ -228,6 +242,8 @@ export class Metronome {
 
   _drain() {
     const now = getCtx().currentTime;
+    // (beats that passed while the page could not draw: no burst of flashes afterwards)
+    while (this._queue.length && this._queue[0].time < now - 0.3 && !this._queue[0].countInDone) this._queue.shift();
     while (this._queue.length && this._queue[0].time <= now + 0.005) {
       const ev = this._queue.shift();
       if (ev.countInDone) { const f = this._onCountIn; this._onCountIn = null; if (f) f(ev.time); if (!this.running && this.onStop) this.onStop(); continue; }

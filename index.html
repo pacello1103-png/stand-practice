@@ -1051,9 +1051,12 @@
           <div class="fw-bars" aria-hidden="true"><span>Bar before the last</span><span>Last bar</span><i id="followAtMark"></i></div>
           <input type="range" id="followAt" min="0" max="100" step="5" value="50" aria-label="When the page turns, from the bar before the last to the last notes">
           <p class="hint" id="followWhenHint"></p></div>
+        <!-- following the eyes is set aside (the listening is enough, and it slowed the winks): kept, hidden -->
+        <div id="eyesOpt" hidden>
         <label class="check"><input type="checkbox" id="followEyes"> Follow my eyes too <span class="beta-tag">Beta</span></label>
         <p class="hint">The front camera sees roughly where on the page you are looking, and Stand uses it as a hint alongside the sound, to keep its place and to find it again. When you play by heart or look away, it notices and goes by the sound alone. Look at a few dots once to set it up. Nothing is recorded or saved.</p>
         <div class="row-even"><button class="btn" id="eyesCal">Set up my eyes</button><span class="hint" id="eyesState"></span></div>
+        </div>
       </div>
     </section>
     <section class="sub-card" id="tapCard" hidden>

@@ -1223,6 +1223,8 @@ function rqPump() {
   RQ.q.sort((a, b) => a.prio - b.prio || a.t - b.t);
   // urgent work stops drawing that is no longer needed or not urgent (it is asked for again later)
   if (RQ.q.some((j) => j.prio === 0)) for (const r of RQ.running) if (r.prio > 0) r.ctl.abort();
+  // and the next turn's pages come before quiet drawing further ahead (which is asked again later)
+  if (RQ.q.some((j) => j.prio === 1)) for (const r of RQ.running) if (r.prio > 1 && r.retry) r.ctl.abort();
   for (const r of RQ.running) if (r.skip && r.skip()) r.ctl.abort();
   while (RQ.q.length) {
     const j = RQ.q[0];
@@ -1235,9 +1237,9 @@ function rqPump() {
   }
 }
 const newCtl = () => { const c = { aborted: false, fns: [], abort() { if (c.aborted) return; c.aborted = true; for (const f of c.fns) try { f(); } catch {} } }; return c; };
-function rqAdd(prio, fn, skip) {
+function rqAdd(prio, fn, skip, retry = false) {
   let job;
-  const p = new Promise((res, rej) => { job = { prio, fn, res, rej, skip, t: ++RQ.seq, ctl: newCtl() }; });
+  const p = new Promise((res, rej) => { job = { prio, fn, res, rej, skip, retry, t: ++RQ.seq, ctl: newCtl() }; });
   p.job = job; RQ.q.push(job);
   // urgent work starts at once; the rest a moment later, so urgent work asked for in the same
   // moment (the page on screen) is never stuck behind it
@@ -1440,7 +1442,7 @@ async function warmAhead(token) {
       rqAdd(2, async (ctl) => {
         const c = document.createElement('canvas');
         try { await doc.render(i, c, pw, ph, { ctl }); if (ctl.aborted) WARM.tried.delete(tag); } catch { WARM.tried.delete(tag); } finally { c.width = c.height = 0; }
-      }, () => V.doc !== doc || !!document.querySelector('.panel:not([hidden])')).catch(() => {});
+      }, () => V.doc !== doc || !!document.querySelector('.panel:not([hidden])'), true).catch(() => {});
     }
   }
 }
@@ -1557,11 +1559,14 @@ const follow = {
 // are; mapped onto the pages on show, the follower takes it as a hint. While it runs it also sees
 // winks (with both eyes in view), in place of the iPad's own face tracking, which needs the same
 // camera.
+const EYES_ON = !!globalThis.__eyesOn;
 const eyes = {
   gaze: null, wink: null, running: false,
   orient() { return innerWidth > innerHeight ? 'land' : 'port'; },
   cal() { const c = S.eyesCal && S.eyesCal[this.orient()]; return c && Math.abs(c.w - innerWidth) < 40 && Math.abs(c.h - innerHeight) < 40 ? c : null; },
-  get wanted() { return !!(follow.wanted && S.followEyes && this.cal() && Gaze.supported()); },
+  // (set aside: the listening turns well by itself, and while the camera was used for the eyes the
+  // winks were judged here, more slowly than by the iPad. EYES_ON brings it back.)
+  get wanted() { return !!(EYES_ON && follow.wanted && S.followEyes && this.cal() && Gaze.supported()); },
   async sync() {
     if (this.wanted && !this.running) {
       this.running = true;
@@ -4307,10 +4312,12 @@ stage.addEventListener('pointerdown', (e) => {
   }
   // touch
   // the hand resting on the screen while writing never turns the page: no touch counts while the
-  // Pencil is down, nor for half a second after it lifts, and a
-  // wide contact (the side of the hand) is never a finger
-  const wide = Math.max(e.width || 0, e.height || 0) > 48;
-  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (wide && (V.inking || t - lastPenUp < 4000))) { info.palm = true; return; }
+  // Pencil is down, nor for half a second after it lifts. A finger always turns pages, with the
+  // markings open too (and in the notebook); only a contact as big as a palm, just after writing,
+  // is taken for the hand. (A finger on the iPad can measure 50 px or more: a smaller limit took
+  // fingers for the hand, so pages did not turn and the finger could not draw.)
+  const big = Math.max(e.width || 0, e.height || 0) > 110;
+  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (big && t - lastPenUp < 1500)) { info.palm = true; return; }
   const n = touches().length;
   if (n >= 2 && V.perform) { GS = { kind: 'wait' }; return; }
   if (n >= 2) {
@@ -5931,15 +5938,18 @@ function updateTunerButtons() {
 $('#tunerToggle').addEventListener('click', () => (tuner.active ? stopTuner() : startTuner()));
 // Leaving the app turns the microphone off (the tuner and the drone's ear); coming back turns them
 // on again. If iOS takes the microphone away, they open it again.
-const MICPAUSE = { tuner: false, ear: false };
+const MICPAUSE = { tuner: false, ear: false, metro: null };
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     if (recState) return;                      // a recording keeps going
+    // the metronome pauses too (it would hold the sound of other apps), and comes back where it was
+    if (metro.running) { MICPAUSE.metro = { beat: Math.floor((metro._beatCount || 0) / metro.beats) * metro.beats }; metro.stop(true); }
     MICPAUSE.tuner = tuner.active; if (tuner.active) { tuner.stop(); tuner.onReading(null); }
     MICPAUSE.ear = !!keyEar.ear; if (keyEar.ear) keyEar.ear.stop();
   } else {
     if (MICPAUSE.tuner && !TU.userStopped && (openPanel === 'tuner' || TU.mini)) startTuner().then(updateTunerButtons);
     if (MICPAUSE.ear && keyEar.ear) keyEar.ear.start();
+    if (MICPAUSE.metro) { const m = MICPAUSE.metro; MICPAUSE.metro = null; if (!metro.running) startMetro({ fromBeat: m.beat }); }
     MICPAUSE.tuner = MICPAUSE.ear = false;
     updateTunerButtons();
   }
@@ -8269,7 +8279,8 @@ async function runGo(idx, atEnd = false) {
     const nx = RUN.items[idx + 1];
     if (nx && V.doc && V.score && nx.sid === V.score.id) {
       const k = nx.orig !== undefined ? mappedOf(nx.orig) : clamp(nx.a - 1, 0, V.doc.pages - 1);
-      if (k >= 0) { const ids = [k]; pageBox(ids).forEach((b) => renderPage(k, innerW(k, b[0]), innerH(k, b[1]), 1, 2)); }
+      // (as the next turn: the part on show is often a single page, so this is the very next page)
+      if (k >= 0) { const ids = [k]; pageBox(ids).forEach((b) => renderPage(k, innerW(k, b[0]), innerH(k, b[1]), 1, 1)); }
     }
   } finally { RUN.busy = false; }
 }
@@ -8280,7 +8291,7 @@ function prewarmRun(it) {
   if (RUNPRE && RUNPRE.sid === it.sid) return;
   dropRunPre();
   const open = (async () => {
-    await new Promise((r) => setTimeout(r, 900));   // (after the part now on show is drawn)
+    await new Promise((r) => setTimeout(r, 250));   // (after the part now on show is drawn)
     const score = await db.get('scores', it.sid); if (!score) return null;
     const file = await db.get('files', score.fileId); if (!file) return null;
     scoreFile(score, file);
@@ -8301,10 +8312,17 @@ function prewarmRun(it) {
       jobs = pageBox(ids).map((b, j) => ({ i: ids[j], ...pageKey(ids[j], innerW(ids[j], b[0]), innerH(ids[j], b[1])) }));
     } finally { Object.assign(V, keep); }
     for (const j of jobs) {
-      if (!RUNPRE || RUNPRE.sid !== it.sid) break;
-      const c = document.createElement('canvas');
-      await rqAdd(2, (ctl) => doc.render(j.i, c, j.pw, j.ph, { ctl, keep: true }), () => !RUN.on).catch(() => {});
-      c.width = c.height = 0;
+      // (stopped for the next page of the part on show, it is asked for again a moment later)
+      for (let tries = 0; tries < 20; tries++) {
+        if (!RUNPRE || RUNPRE.sid !== it.sid) break;
+        const c = document.createElement('canvas');
+        let stopped = false;
+        const r = runRange(), nearEnd = !r || V.page + (V.spread === 2 ? 1 : 0) >= r[1];
+        await rqAdd(nearEnd ? 1 : 2, (ctl) => doc.render(j.i, c, j.pw, j.ph, { ctl, keep: true }).finally(() => { stopped = ctl.aborted; }), () => !RUN.on, !nearEnd).catch(() => { stopped = true; });
+        c.width = c.height = 0;
+        if (!stopped) break;
+        await new Promise((res) => setTimeout(res, 400));
+      }
     }
     return o;
   })();
@@ -8353,8 +8371,8 @@ function runFlashPassage(it) {
     const f = el('div', 'pass-flash');
     const x0 = Math.min(s.x0, s.x1), x1 = Math.max(s.x0, s.x1), y0 = Math.min(s.y0, s.y1), y1 = Math.max(s.y0, s.y1);
     f.style.left = x0 * 100 + '%'; f.style.top = y0 * 100 + '%'; f.style.width = (x1 - x0) * 100 + '%'; f.style.height = (y1 - y0) * 100 + '%';
-    inner.append(f); setTimeout(() => f.remove(), 2600);
-  }, 450);
+    inner.append(f); setTimeout(() => f.remove(), 1600);
+  }, 120);
 }
 $('#runPrev').addEventListener('click', () => runGo(RUN.idx - 1));
 $('#runNext').addEventListener('click', () => runGo(RUN.idx + 1));
