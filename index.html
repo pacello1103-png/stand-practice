@@ -107,7 +107,13 @@ button { font: inherit; }
 /* one iPad and one iPhone, drawn the same everywhere: bezel and corners are fixed fractions of the
    device's own width (--w, measured by the script), so a small one is a true copy of a big one */
 .ipad { --w: 600px; width: 100%; padding: calc(var(--w) * .026); border-radius: calc(var(--w) * .052); background: var(--bezel); box-shadow: 0 40px 80px -36px rgba(10, 14, 30, .55), 0 0 0 1px rgba(255, 255, 255, .07) inset; }
-.ipad video { display: block; width: 100%; height: auto; aspect-ratio: 1180 / 820; object-fit: cover; border-radius: calc(var(--w) * .028); background: #fff; pointer-events: none; }
+.ipad, .phone { position: relative; }
+/* a faint reflection across the glass of every device */
+.ipad::after, .phone::after { content: ""; position: absolute; pointer-events: none; z-index: 2;
+  background: linear-gradient(118deg, rgba(255, 255, 255, .16) 0%, rgba(255, 255, 255, .05) 26%, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, 0) 78%, rgba(255, 255, 255, .06) 100%); }
+.ipad::after { inset: calc(var(--w) * .026); border-radius: calc(var(--w) * .028); }
+.phone::after { inset: calc(var(--w) * .042); border-radius: calc(var(--w) * .14); }
+.ipad video { display: block; width: 100%; height: auto; aspect-ratio: 1180 / 820; object-fit: cover; border-radius: calc(var(--w) * .028); background: #fff; pointer-events: none; position: relative; z-index: 1; }
 .ipad img { display: block; width: 100%; height: auto; aspect-ratio: 1400 / 973; object-fit: cover; object-position: 50% 0; border-radius: calc(var(--w) * .028); background: #eceef3; }
 .phone { --w: 240px; width: min(300px, 46%); padding: calc(var(--w) * .042); border-radius: calc(var(--w) * .18); background: var(--bezel); box-shadow: 0 40px 80px -36px rgba(10, 14, 30, .55), 0 0 0 1px rgba(255, 255, 255, .07) inset; }
 .phone img { display: block; width: 100%; height: auto; aspect-ratio: 600 / 1300; object-fit: contain; object-position: 50% 0; border-radius: calc(var(--w) * .14); background: #fff; }
