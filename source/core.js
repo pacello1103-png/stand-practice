@@ -32,8 +32,11 @@ drawer.addEventListener('mouseleave', () => hover(-1));
 function place() {
   if (phoneQ()) { [...els, cover].forEach((e) => { e.style.left = ''; e.style.width = ''; e.style.zIndex = ''; }); drawer.classList.remove('tight'); return; }
   const W = drawer.clientWidth, H = drawer.clientHeight;
-  const coverW = Math.min(560, Math.max(380, W * 0.38));
-  const strip = Math.max(70, (W - coverW - 34) / n);
+  let coverW = Math.min(560, Math.max(380, W * 0.38));
+  /* every folder keeps a strip wide enough for its name; on narrow screens the cover gives a little room */
+  const minStrip = 62;
+  if ((W - coverW - 34) / n < minStrip) coverW = Math.max(330, W - 34 - n * minStrip);
+  const strip = Math.max(52, (W - coverW - 34) / n);
   const fw = Math.min(600, W * 0.46);
   drawer.classList.toggle('tight', strip < 120);
   const step = Math.min(78, (H - THEME.tabH - 40 - H * 0.34) / (n - 1));

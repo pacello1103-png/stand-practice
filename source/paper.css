@@ -257,7 +257,7 @@ a.cta:active { transform: scale(.97); }
 .uhead { display: grid; gap: 14px; max-width: 760px; }
 .uhead h2 { margin: 0; font: 800 clamp(36px, 4.6vw, 66px)/.93 var(--display); font-stretch: 70%; text-transform: uppercase; text-wrap: balance; }
 .uhead p { margin: 0; opacity: .85; font-size: 16.5px; }
-.ugrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.ugrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 12px; }
 .ucard { position: relative; display: grid; align-content: start; gap: 10px; min-height: 190px; padding: 18px 18px 46px; border: 0; border-radius: 10px 14px 14px 10px; text-align: left; cursor: pointer;
   background: var(--c-bg) var(--grain); background-blend-mode: multiply; color: var(--c-ink); font: inherit;
   box-shadow: 0 18px 34px -24px rgba(0, 0, 0, .7), inset 1px 0 0 rgba(255, 255, 255, .25); transition: transform .45s var(--ease), box-shadow .45s var(--ease); }
