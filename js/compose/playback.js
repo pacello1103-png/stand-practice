@@ -43,6 +43,36 @@ export function playOrder(score, from = 0) {
   return i > 0 ? order.slice(i) : order;
 }
 
+// ---------- phrases (how a musician hears the line) ----------
+// From the melody (the staff with the most notes), where its phrases end: before a rest, on a
+// fermata, at the end of a slur on a longer note, or on a long note after shorter ones. Each phrase
+// then gets what players do without thinking, and only a little of it (the score stays the score):
+// a gentle arch of loudness towards its middle, a slight easing of the tempo into its last note, and
+// the smallest breath after it. Positions are counted in the order the bars are played.
+function phrasesOf(score, order, info) {
+  let best = null, most = -1;
+  for (const x of info) { let n = 0; for (const m of order) for (const ev of x.st.bars[m] || []) if (ev.notes && !ev.rest) n++; if (n > most) { most = n; best = x; } }
+  if (!best || most < 6) return [];
+  const evs = [];
+  order.forEach((m, k) => { const time = timeAt(score, m); let p = 0; for (const ev of best.st.bars[m] || []) { const len = ticksOf(ev, time); evs.push({ ev, k, pos: p, len, bar: barTicks(time) }); p += len; } });
+  const lens = evs.filter((q) => q.ev.notes && !q.ev.rest).map((q) => q.len).sort((a, b) => a - b);
+  const med = lens[lens.length >> 1] || 480;
+  const out = []; let start = 0;
+  for (let i = 0; i < evs.length; i++) {
+    const q = evs[i], nx = evs[i + 1];
+    if (!q.ev.notes || q.ev.rest) { if (i > start) { /* (a rest after notes: the phrase ended on the note before) */ } start = i + 1; continue; }
+    const arts = q.ev.art || [];
+    const restNext = !nx || (nx.ev.rest && nx.len >= Math.min(240, med));
+    const ferm = arts.some((a) => a === 'ferm' || a === 'fermS' || a === 'fermL' || a === 'breath' || a === 'caes');
+    const slurEndLong = q.ev.slur === 'end' && q.len >= med * 1.5;
+    const longAfterShort = q.len >= med * 2 && i > start + 3 && nx && nx.ev.notes && !nx.ev.rest && !q.ev.notes.some((n) => n.tie);
+    if (restNext || ferm || slurEndLong || longAfterShort) {
+      if (i - start >= 3) out.push({ a: { k: evs[start].k, pos: evs[start].pos }, e: { k: q.k, pos: q.pos, len: q.len }, breath: !restNext && !ferm && !q.ev.notes.some((n) => n.tie) });
+      start = i + 1;
+    }
+  }
+  return out;
+}
 const secPerTick = (tempo) => 60 / (tempo.bpm * (WHOLE / (tempo.beat || 4)) * (tempo.dotted ? 1.5 : 1));
 const SUSTAIN = /violin|viola|cello|^bass$|strings|choir|oohs|flute|piccolo|recorder|oboe|englishhorn|clarinet|bassoon|sax|horn|trumpet|trombone|tuba|brass|organ|accordion/;
 const VIBRATO = { violin: 14, viola: 13, cello: 12, bass: 8, strings: 9, choir: 9, oohs: 8, flute: 7, piccolo: 6, oboe: 8, englishhorn: 7, bassoon: 5, sopsax: 9, altosax: 10, tenorsax: 10, barisax: 8, horn: 4, trumpet: 5, trombone: 4 };
@@ -64,6 +94,19 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   const spans = score.spans || [];
   // ---- the time map: tempo, rit./accel., fermatas, caesuras, a closing ritardando
   const tempoSpans = spans.filter((q) => q.kind === 'rit' || q.kind === 'accel');
+  const PHR = expr && (globalThis.__phrasing ?? 1) ? phrasesOf(score, order, info) : [];
+  // (the last beat or so of each phrase eases a little; the bar's own beat is the unit)
+  const easeAt = (k, x, beatT) => {
+    let f = 1;
+    for (const ph of PHR) {
+      if (ph.e.k !== k) continue;
+      const from = Math.max(0, ph.e.pos - beatT), to = ph.e.pos + ph.e.len;
+      if (x < from || x >= to) continue;
+      const w = Math.min(1, (x - from) / Math.max(1, ph.e.pos + Math.min(ph.e.len, beatT) - from));
+      f = Math.min(f, 1 - (globalThis.__phrEase ?? 0.06) * w);
+    }
+    return f;
+  };
   const lastM = fullOrder[fullOrder.length - 1];
   const STEP = 30;
   let factor = 1;   // speed relative to the written tempo
@@ -82,6 +125,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       if (ev.art.includes('caes')) caes = Math.max(caes, 0.4);
     }
     if (extra) fermatas.push({ m, extra });
+    // the smallest breath after a phrase that runs straight into the next (a player's breath, a new bow)
+    for (const ph of PHR) if (ph.breath && ph.e.k === k && ph.e.pos + ph.e.len >= total - 1) caes = Math.max(caes, globalThis.__phrBreath ?? 0.035);
     const cum = [0];
     let acc = 0;
     for (let x = 0; x < total; x += STEP) {
@@ -98,6 +143,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           }
         }
         if (expr && m === lastM && k === order.length - 1) f *= 1 - 0.16 * Math.pow(x / total, 1.6);
+        if (PHR.length) f *= easeAt(k, x, WHOLE / time[1]);
       }
       acc += STEP * secPerTick(tempo) / f;
       cum.push(acc);
@@ -211,6 +257,19 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         f.phraseEnd = end;
       }
     }
+    // each phrase rises a little towards its middle and settles at its end (on top of the written
+    // dynamics: a soft phrase stays soft, it only breathes)
+    if (expr && PHR.length) {
+      const A = globalThis.__phrArch ?? 0.06;
+      const spans2 = PHR.map((ph) => { const ka = ph.a.k, ke = ph.e.k; return { t0: tAt(ka, ph.a.pos), t1: tAt(ke, Math.min(barMap[ke].total, ph.e.pos + ph.e.len)) }; });
+      for (const f of flat) {
+        if (!f.ev.notes || f.ev.rest) continue;
+        const ph = spans2.find((q) => f.t >= q.t0 - 1e-6 && f.t < q.t1);
+        if (!ph) continue;
+        const pr = Math.max(0, Math.min(1, (f.t - ph.t0) / Math.max(0.05, ph.t1 - ph.t0)));
+        f.vel = Math.max(0.05, Math.min(1, f.vel * (1 + A * Math.sin(Math.PI * Math.pow(pr, 0.8)) - A * 0.4 * Math.max(0, pr - 0.85) / 0.15)));
+      }
+    }
     // pedal: piano notes ring on to the end of the pedal
     const peds = spans.filter((q) => q.kind === 'ped' && part.staves.some((x) => x.id === q.st));
     const pedEnd = (f) => { for (const pd of peds) { if ((f.m > pd.a.m || (f.m === pd.a.m && f.pos >= pd.a.pos)) && (f.m < pd.b.m || (f.m === pd.b.m && f.pos <= pd.b.pos))) { const k = order.indexOf(pd.b.m); if (k >= 0) { const bf = flat.find((q) => q.m === pd.b.m && q.pos >= pd.b.pos) || null; return bf ? bf.t + bf.dur : tAt(k, barMap[k].total); } } } return null; };
@@ -230,6 +289,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     }
     // ---- second pass: notes, with ties joined and ornaments written out
     const open = new Map();
+    let drift = 0;
     const add = (n) => notes.push(n);
     for (const f of flat) {
       const ev = f.ev;
@@ -263,7 +323,10 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           if (!n.tie) open.delete(n.s);
           return;
         }
-        const h = humanize ? rnd() : 0;
+        // (the small unevenness of a player is not random from note to note: it drifts, and each
+        // instrument of an ensemble drifts on its own)
+        if (humanize && ni === 0) drift = drift * 0.65 + rnd() * 0.7;
+        const h = humanize ? drift : 0;
         const t0 = Math.max(0, f.t + gOff + h * (expr ? 0.008 : 0.012) + (roll ? ni * 0.045 : 0));
         let v = Math.max(0.05, Math.min(1, f.vel * (1 + (humanize ? rnd() * 0.05 : 0))));
         const head = n.head || ev.head;
@@ -273,6 +336,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         let pm = midi;
         if (harmBelow && ni === 0 && sorted.length > 1) pm = midi + 24;
         if (head === 'ghost') v *= 0.5;
+        // a chord on a keyboard or a harp: its top note sings out a little over the others
+        if (expr && keyed && sorted.length > 1 && !inst.unpitched) v *= ni === sorted.length - 1 ? 1.07 : 0.95;
         if (head === 'x' && !inst.unpitched) v *= 0.75;
         const base = { part: part.id, sid: sidF, midi: pm, t: t0, dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
         if (glissFrom.has(f) && ni === sorted.length - 1 && !inst.unpitched) { base.glissTo = glissFrom.get(f); base.dur = dur + 0.03; base.legato = true; }

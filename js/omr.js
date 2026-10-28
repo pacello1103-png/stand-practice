@@ -371,6 +371,8 @@ function makeStaff(samples, b, w, h, T, gaps = false) {
 }
 // the height of staff position p (0 = bottom line, 2 = next line up...) at x
 const yAt = (s, p, x) => { const xi = Math.max(0, Math.min(s.L[0].length - 1, Math.round(x))); const top = s.L[0][xi], bot = s.L[4][xi]; return bot - (p * (bot - top)) / 8; };
+// a C clef's line, from the middle of its shape (in steps above the bottom line)
+const cLine = (mid) => (mid < 1 ? 'soprano' : mid < 3 ? 'mezzo' : mid < 5 ? 'alto' : 'tenor');
 const pAt = (s, y, x) => { const xi = Math.max(0, Math.min(s.L[0].length - 1, Math.round(x))); const top = s.L[0][xi], bot = s.L[4][xi]; return ((bot - y) * 8) / (bot - top); };
 
 // Take staff lines (and ledger lines) away where nothing crosses them.
@@ -1475,7 +1477,7 @@ function readStaff(s, ctx, header) {
       let name = null;
       if (k.cls === 'treble' && top > 8.6 && bot < 1.2 && (y1 - y0) > sp * 3.4) name = 'treble';
       else if (k.cls === 'bass' && top > 5 && bot > 0.5) name = 'bass';
-      else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = Math.abs(mid - 6) < Math.abs(mid - 4) ? 'tenor' : 'alto'; }
+      else if (k.cls === 'alto') { const mid = (top + bot) / 2; name = cLine(mid); }
       if (!name) continue;
       for (const q of all) used.add(q);
       for (const q of parts) if (q.w < sp * 0.7 && q.h < sp * 0.7) used.add(q);
@@ -1913,7 +1915,7 @@ function readHeader(s, comps, ctx, prev, heads) {
     else if (bassDots || (k.cls === 'bass' && k.d < 0.4 && top < 9.8 && bot > 0.6)) name = 'bass';
     else if (top > 7.4 && top < 9.8 && bot > -1.2 && bot < 0.8) name = k.cls === 'bass' && k.d < 0.3 ? 'bass' : 'alto';
     else if (top > 9.6 && top < 11.8 && bot > 1.2 && bot < 2.8) name = 'tenor';
-    else if (k.d < 0.33) name = k.cls;
+    else if (k.d < 0.33) name = k.cls === 'alto' ? cLine((top + bot) / 2) : k.cls;
     // a C clef run together with a low (or high) note just after it, by its ledger lines: the clef's
     // own shape alone tells on which line it sits (alto on the middle line, tenor on the fourth)
     if (!name && k.cls === 'alto' && k.d < 0.45 && (globalThis.__cClefAlone ?? 1)) {
@@ -1924,7 +1926,7 @@ function readHeader(s, comps, ctx, prev, heads) {
       const k1 = yb > ya ? classify(shapeOf(C, w, xa, ya, xb, yb, sp), ['treble', 'bass', 'alto']) : { cls: '', d: 9 };
       const t1 = P(ya, (xa + xb) / 2), b1 = P(yb, (xa + xb) / 2), mid = (t1 + b1) / 2;
       if (globalThis.__clefLog) globalThis.__clefLog.push({ alone: [+t1.toFixed(2), +b1.toFixed(2), k1.cls, +(+k1.d).toFixed(3)] });
-      if (k1.cls === 'alto' && k1.d < 0.42 && t1 - b1 > 6 && t1 - b1 < 10.5 && mid > 2.5 && mid < 7.5) name = Math.abs(mid - 6) < Math.abs(mid - 4) ? 'tenor' : 'alto';
+      if (k1.cls === 'alto' && k1.d < 0.42 && t1 - b1 > 6 && t1 - b1 < 10.5 && mid > -1.5 && mid < 7.5) name = cLine(mid);
     }
     if (globalThis.__clefLog) globalThis.__clefLog.push({ top: +top.toFixed(2), bot: +bot.toFixed(2), cls: k.cls, d: +k.d.toFixed(3), name, bassDots });
     if (name) {
@@ -1987,7 +1989,7 @@ function readHeader(s, comps, ctx, prev, heads) {
         let name = null;
         if (k.cls === 'treble' && k.d < 0.42 && tp > 9.4 && bt < -0.9) name = 'treble';
         else if (k.cls === 'bass' && k.d < 0.42 && tp > 7 && tp < 9.8 && bt > -1.2) name = 'bass';
-        else if (k.cls === 'alto' && k.d < 0.42) name = Math.abs((tp + bt) / 2 - 6) < Math.abs((tp + bt) / 2 - 4) ? 'tenor' : 'alto';
+        else if (k.cls === 'alto' && k.d < 0.42) name = cLine((tp + bt) / 2);
         // (a bass clef read without its two dots: the dots just after it, either side of its line)
         if (!name && k.cls === 'bass' && k.d < 0.6 && tp > 6.5 && tp < 10 && bt > (globalThis.__clefDotBt ?? 0.5) && bt < 4.5) {
           const dotAt = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) for (let xx = x1 + 1; xx <= Math.round(x1 + sp * 1.0); xx++) if (C[yy * w + xx]) n++; return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
@@ -2012,9 +2014,11 @@ function readHeader(s, comps, ctx, prev, heads) {
   }
   const clefName = clef || (prev && prev.clef) || null;
   // key signature: sharps or flats in a row, each at its place in the usual order
-  const off = { treble: 0, bass: -2, alto: -1, tenor: 1 }[clefName || 'treble'] ?? 0;
+  const off = { treble: 0, bass: -2, alto: -1, tenor: 1, soprano: 2, mezzo: -3 }[clefName || 'treble'] ?? 0;
   const ORDER = { 1: [8, 5, 9, 6, 3, 7, 4].map((p) => p + off), '-1': [4, 7, 3, 6, 2, 5, 1].map((p) => p + off) };
   if (clefName === 'tenor') ORDER[1] = [2, 6, 3, 7, 4, 8, 5];
+  // (with the rarer C clefs engravers differ on which octave each sign takes: both are looked at)
+  if (clefName === 'soprano' || clefName === 'mezzo') for (const a of [1, -1]) ORDER[a] = ORDER[a].map((p) => [p, p >= 5 ? p - 7 : p + 7].filter((q) => q >= -1 && q <= 10));
   // each sharp or flat is looked for where it should be, so ones that touch still count
   const look = (a, p, from, to) => {
     let bestK = null;
@@ -2077,8 +2081,12 @@ function readHeader(s, comps, ctx, prev, heads) {
     let bestFirst = 9, keyFirst = null;
     for (const a of [1, -1]) {
       let cur = end - sp * 0.3, cnt = 0, lx = end, firstD = 9, prevX = 0, step = 0, nLoose = 0, exact = 0, lxExact = end, firstSign = null;
-      for (const p of ORDER[a]) {
-        const k = look(a, p, cur, cnt ? cur + sp * 1.5 : Math.max(cur + sp * 1.5, Math.min(cur + sp * 2.6, firstNote - sp * 1.6)));
+      for (const pp of ORDER[a]) {
+        let k = null, p = Array.isArray(pp) ? pp[0] : pp;
+        for (const q of Array.isArray(pp) ? pp : [pp]) {
+          const kq = look(a, q, cur, cnt ? cur + sp * 1.5 : Math.max(cur + sp * 1.5, Math.min(cur + sp * 2.6, firstNote - sp * 1.6)));
+          if (kq && (!k || kq.d < k.d)) { k = kq; p = q; }
+        }
         if (!cnt && k && (!keyHint[a] || k.d < keyHint[a])) keyHint[a] = k.d;
         if (ctx.dbg) (ctx.trace = ctx.trace || []).push({ a, p, cur, k: k && { d: +k.d.toFixed(3), x0: k.x0, ld: k.ld, lm: k.lm, mg: k.margin } });
         if (globalThis.__keyLog) globalThis.__keyLog.push({ y: Math.round(s.top), a, p, cur: Math.round(cur), firstNote: Math.round(firstNote), k: k && { d: +k.d.toFixed(3), x0: k.x0, x1: k.x1, m: +(k.margin || 0).toFixed(2), loose: !!k.loose } });
