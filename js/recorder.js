@@ -169,7 +169,74 @@ export const ROOMS = {
   church: { decay: 3.6, pre: 0.035, damp: 0.38, label: 'Church' },
 };
 
+// The room's sound, made the way a real hall behaves: a dense, smooth tail in which each part of
+// the sound dies at its own pace (the low notes ring longest, the top of the sound fades first, as
+// measured in concert halls), early reflections from the nearest walls, and a slightly different
+// tail in each ear so the room surrounds the listener.
+export function impulseData(sr, room) {
+  const len = Math.ceil(sr * (room.decay * 1.35 + room.pre));
+  const out = [new Float32Array(len), new Float32Array(len)];
+  // (band centres and how long each rings, relative to the room's decay)
+  const BANDS = [[63, 1.15], [125, 1.12], [250, 1.06], [500, 1.0], [1000, 1.0], [2000, 0.9], [4000, 0.74], [8000, 0.5], [14000, 0.35]];
+  for (let ch = 0; ch < 2; ch++) {
+    let seed = 7 + ch * 7919;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2147483648 - 1; };
+    const noise = new Float32Array(len); for (let i = 0; i < len; i++) noise[i] = rnd();
+    const pre = Math.round(room.pre * sr) + ch * 11;
+    const d = out[ch];
+    for (const [fc, rel] of BANDS) {
+      // a band-pass (RBJ, one octave wide) over the same noise
+      const w0 = 2 * Math.PI * Math.min(fc, sr * 0.45) / sr, bw = 1.0, al = Math.sin(w0) * Math.sinh(Math.log(2) / 2 * bw * w0 / Math.sin(w0));
+      const b0 = al, b2 = -al, a0 = 1 + al, a1 = -2 * Math.cos(w0), a2 = 1 - al;
+      let x1 = 0, x2 = 0, y1 = 0, y2 = 0, u1 = 0, u2 = 0, z1 = 0, z2 = 0;
+      const rt = room.decay * rel * (fc > 4000 ? 1 - room.damp * 0.5 : 1);
+      // (the brightest bands a little softer from the start too, as air and seats absorb them)
+      // (each band as strong as the others: a natural, not a hissing, tail; the top a little softer)
+      const tilt = Math.sqrt(1000 / fc) * (fc > 2000 ? Math.pow(2000 / fc, 0.35) : 1);
+      for (let i = pre; i < len; i++) {
+        const x = noise[i];
+        const y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+        x2 = x1; x1 = x; y2 = y1; y1 = y;
+        const z = (b0 * y + b2 * u2 - a1 * z1 - a2 * z2) / a0;   // (twice: steeper sides)
+        u2 = u1; u1 = y; z2 = z1; z1 = z;
+        const t = (i - pre) / sr;
+        d[i] += z * Math.exp((-6.9 * t) / rt) * tilt;
+      }
+    }
+    // the tail grows dense over the first few tens of milliseconds
+    for (let i = pre; i < len; i++) { const t = (i - pre) / sr; d[i] *= 1 - Math.exp(-t / 0.018); }
+    // early reflections: walls, floor and ceiling, getting denser and softer, different in each ear
+    let rs = 31 + ch * 17; const rr = () => { rs = (rs * 1103515245 + 12345) & 0x7fffffff; return rs / 0x7fffffff; };
+    const span = 18 + room.decay * 22;
+    let e0 = 0; for (let i = pre; i < Math.min(len, pre + sr * 0.2); i++) e0 += d[i] * d[i];
+    const scale = Math.sqrt(e0 / (sr * 0.2)) * 6;
+    for (let r = 0; r < 18; r++) {
+      const ms = 4 + Math.pow(rr(), 1.3) * span;
+      const gg = 0.55 * Math.exp(-ms / (span * 0.7)) * (0.6 + rr() * 0.4) * scale;
+      const i = pre + Math.round(ms * sr / 1000);
+      for (let q = -2; q <= 2; q++) if (i + q < len && i + q > 0) d[i + q] += gg * (rr() < 0.5 ? -1 : 1) * (1 - Math.abs(q) * 0.3) * 0.5;
+    }
+  }
+  // normalise energy so all rooms sit at a similar level
+  // (as much room in the middle of the sound as the earlier, brighter room had: the room changes
+  // its colour, not how present it is)
+  let e = 0; for (const d of out) for (let i = 0; i < len; i++) e += d[i] * d[i];
+  const g = (globalThis.__verbLevel ?? 0.56) / Math.sqrt(e / 2);
+  for (const d of out) for (let i = 0; i < len; i++) d[i] *= g;
+  return out;
+}
+const IR_CACHE = new Map();
 export function makeImpulse(ctx, room) {
+  if (globalThis.__oldVerb) return makeImpulseOld(ctx, room);
+  // (made once per room and sample rate: an export or a change of room does not make it again)
+  const key = ctx.sampleRate + ':' + room.decay + ':' + room.pre + ':' + room.damp + ':' + (globalThis.__verbLevel ?? '');
+  let data = IR_CACHE.get(key);
+  if (!data) { data = impulseData(ctx.sampleRate, room); IR_CACHE.set(key, data); }
+  const ir = ctx.createBuffer(2, data[0].length, ctx.sampleRate);
+  ir.getChannelData(0).set(data[0]); ir.getChannelData(1).set(data[1]);
+  return ir;
+}
+function makeImpulseOld(ctx, room) {
   const sr = ctx.sampleRate;
   const len = Math.ceil(sr * (room.decay * 1.25 + room.pre));
   const ir = ctx.createBuffer(2, len, sr);

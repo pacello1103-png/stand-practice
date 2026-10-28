@@ -73,6 +73,7 @@ function phrasesOf(score, order, info) {
   }
   return out;
 }
+const BOWED_SET = /violin|viola|cello|^bass$|strings/;
 const secPerTick = (tempo) => 60 / (tempo.bpm * (WHOLE / (tempo.beat || 4)) * (tempo.dotted ? 1.5 : 1));
 const SUSTAIN = /violin|viola|cello|^bass$|strings|choir|oohs|flute|piccolo|recorder|oboe|englishhorn|clarinet|bassoon|sax|horn|trumpet|trombone|tuba|brass|organ|accordion/;
 const VIBRATO = { violin: 14, viola: 13, cello: 12, bass: 8, strings: 9, choir: 9, oohs: 8, flute: 7, piccolo: 6, oboe: 8, englishhorn: 7, bassoon: 5, sopsax: 9, altosax: 10, tenorsax: 10, barisax: 8, horn: 4, trumpet: 5, trombone: 4 };
@@ -250,7 +251,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         const strong = f.pos === 0 ? 0.06 : (f.time[0] % 2 === 0 && f.pos === barTicks(f.time) / 2) ? 0.03 : f.pos % beat === 0 ? 0.0 : -0.03;
         const top = Math.max(...f.ev.notes.map((n) => midiOf(n.s, n.a)));
         mean = mean === null ? top : mean * 0.8 + top * 0.2;
-        const contour = Math.max(-0.06, Math.min(0.06, (top - mean) * 0.012));
+        const CT = globalThis.__contour ?? 0.016, CM = CT * 5;
+        const contour = Math.max(-CM, Math.min(CM, (top - mean) * CT));
         const next = flat[i + 1];
         const end = !next || !next.ev.notes || next.ev.rest || f.ev.slur === 'end';
         f.vel = Math.max(0.05, Math.min(1, f.vel * (1 + strong + contour) * (end && f.dur < 1.2 ? 0.94 : 1)));
@@ -260,7 +262,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     // each phrase rises a little towards its middle and settles at its end (on top of the written
     // dynamics: a soft phrase stays soft, it only breathes)
     if (expr && PHR.length) {
-      const A = globalThis.__phrArch ?? 0.06;
+      const A = globalThis.__phrArch ?? 0.1;
       const spans2 = PHR.map((ph) => { const ka = ph.a.k, ke = ph.e.k; return { t0: tAt(ka, ph.a.pos), t1: tAt(ke, Math.min(barMap[ke].total, ph.e.pos + ph.e.len)) }; });
       for (const f of flat) {
         if (!f.ev.notes || f.ev.rest) continue;
@@ -352,7 +354,10 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
             // the note it comes from (for a little slide between them, as players make)
             const pv = flat[flat.indexOf(f) - 1].ev; if (pv && pv.notes && pv.notes.length === 1 && ev.notes.length === 1) base.from = midiOf(pv.notes[0].s, pv.notes[0].a);
           }
-          if (!f.slurred && !art && dur > 0.12) base.dur = dur * (dur < 0.4 ? 0.86 : 0.93);
+          // separate bows (or tonguings) without a slur: the sound hardly stops between notes, only
+          // the change of bow is heard (players keep the line; the old 13% gap sounded like a keyboard)
+          const DT = globalThis.__detache ?? (BOWED_SET.test(sid) ? [0.97, 0.99] : [0.9, 0.95]);
+          if (!f.slurred && !art && dur > 0.12) base.dur = dur * (dur < 0.4 ? DT[0] : DT[1]);
           if (VIBRATO[sid] && dur > 0.32 && art !== 'stacc' && art !== 'stacciss') base.vib = VIBRATO[sid];
           // long notes breathe: a little swell, then ease off
           if (dur > 0.9 && !f.env && !f.hpEnd) base.env = [[t0 + dur * 0.45, 1.12], [t0 + dur * 0.95, f.phraseEnd ? 0.8 : 0.96]];
@@ -494,7 +499,7 @@ export async function renderAudio(score, onProgress) {
   const fade = Math.round(sr * 0.25);
   for (let i = 0; i < fade && end - 1 - i >= 0; i++) { const g = i / fade; L[end - 1 - i] *= g; R[end - 1 - i] *= g; }
   // as loud as it can be without ever clipping: the loudest moment at -1 dB
-  const gain = peak > 0 ? Math.min(4, 0.891 / peak) : 1;
+  const gain = globalThis.__noNorm ? 1 : peak > 0 ? Math.min(4, 0.891 / peak) : 1;
   const l = L.subarray(0, end), r = R.subarray(0, end);
   if (gain !== 1) for (let i = 0; i < end; i++) { l[i] *= gain; r[i] *= gain; }
   return encodeWav([l, r], sr, long ? 16 : 24);

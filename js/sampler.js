@@ -20,7 +20,7 @@ export const SOUND_LABELS = {
 };
 // Sounds that ring and fade by themselves (no loop): they keep ringing after a short note
 // only as long as a real player would let them.
-const DECAYING = new Set(['piano', 'epiano', 'harpsichord', 'celesta', 'pizz', 'harp', 'guitar', 'steelguitar', 'eguitar', 'ebass', 'jazzbass',
+const DECAYING = new Set(['piano', 'grand', 'epiano', 'harpsichord', 'celesta', 'pizz', 'harp', 'guitar', 'steelguitar', 'eguitar', 'ebass', 'jazzbass',
   'banjo', 'timpani', 'marimba', 'vibraphone', 'xylophone', 'glockenspiel', 'bells', 'woodblock', 'drum']);
 // natural release after the note ends (seconds)
 // instruments that can slide between slurred notes (strings, voices, trombone, winds a little)
@@ -39,6 +39,16 @@ const RELEASE = { piano: 0.35, epiano: 0.4, harpsichord: 0.25, organ: 0.18, acco
 export const DEFAULT_PAN = { violin: -0.45, viola: 0.15, cello: 0.35, bass: 0.55, strings: -0.2, tremolo: -0.2, pizz: -0.2, flute: -0.15, piccolo: -0.2,
   oboe: 0.1, englishhorn: 0.12, clarinet: -0.1, bassoon: 0.15, horn: -0.4, trumpet: 0.25, trombone: 0.4, tuba: 0.5, harp: -0.6, timpani: 0.3, piano: 0, choir: 0 };
 
+// Body EQ for the sampled instruments: [type, Hz, dB, Q]
+// (cello: Starker, Cassadó and a 1995 recording of the 3rd Suite's Sarabande; violin: Shaham's
+// Siciliana and Ricci's Sarabande; viola: between the two)
+const BODY = {
+  cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1], ['peaking', 3000, -4, 0.8]],
+  violin: [['peaking', 3500, -9, 0.6], ['highshelf', 7000, -5], ['peaking', 1800, -2, 1]],
+  viola: [['lowshelf', 350, 2], ['peaking', 3200, -6, 0.6], ['highshelf', 7000, -3]],
+  // (the grand was recorded close to its strings: heard from the hall, its top is softer)
+  piano: [['highshelf', 2500, -4], ['highshelf', 7000, -4]],
+};
 export const DEFAULT_MIX = () => ({ vol: 0.8, pan: null, low: 0, high: 0, bright: 0.5, attack: 0, release: 1, reverb: 0.35, mute: false, solo: false });
 
 const ROOMS = {
@@ -107,6 +117,13 @@ function evenGain(I, sid, m, layer, rings) {
     const vals = Object.entries(R).filter(([k]) => !k.endsWith('_p')).map(([, v]) => v).sort((a, b) => a - b);
     ref = vals.length ? vals[vals.length >> 1] : r; MED.set(sid, ref);
   }
+  // (the grand piano: its three strengths as loud as each other, the register only half evened, as
+  // a piano's treble is lighter by nature)
+  if (sid === 'grand') {
+    const rf = R[m + '_f'] || r;
+    const k = Math.pow(ref / rf, 0.5) * (rf / r);
+    return Math.max(0.4, Math.min(9, k));
+  }
   const ringing = DECAYING.has(sid) || rings;
   const k = Math.pow(ref / r, ringing ? 0.5 : 0.9);
   // (a soft recording speaks more slowly: a little more of it, so it is even as the note begins)
@@ -126,7 +143,7 @@ export class Sampler {
     this.out = ctx.createGain(); this.out.gain.value = 1.25;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.25;
-    this.out.connect(comp).connect(dest);
+    if (globalThis.__noComp) this.out.connect(dest); else this.out.connect(comp).connect(dest);
     this.verb = ctx.createConvolver();
     this.verbIn = ctx.createGain(); this.verbIn.gain.value = this.roomMix;
     this.verbIn.connect(this.verb).connect(this.out);
@@ -161,7 +178,30 @@ export class Sampler {
       const layer = L.includes('p') && vel < 0.52 ? 'p' : L.includes('f') ? 'f' : L[0];
       return this.load(set, best, layer, kind);
     }
+    // the grand piano: a real concert grand recorded at three strengths, blended by the dynamic
+    const LAYERED = { piano: 'grand' };
+    if (LAYERED[sid] && I.n[LAYERED[sid]] && !this.plain && (globalThis.__grand ?? 1)) {
+      const set2 = LAYERED[sid], list = I.n[set2]; let best = list[0];
+      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      const L = I.L[set2];
+      // (soft below about p, loud above about f, and blended across each boundary)
+      const B = [0.47, 0.73], W = 0.07;
+      for (let i = 0; i < B.length; i++) {
+        if (Math.abs(vel - B[i]) < W) {
+          const [a, b] = await Promise.all([this.load(set2, best, L[i], 'sus'), this.load(set2, best, L[i + 1], 'sus')]);
+          return Object.assign(Object.create(b), { pair: a, w: (vel - (B[i] - W)) / (2 * W) });
+        }
+      }
+      const li = vel < B[0] ? 0 : vel < B[1] ? 1 : 2;
+      return this.load(set2, best, L[li], 'sus');
+    }
     if (kind === 'pizz' && REAL[sid]) sid = 'pizz';
+    // real winds and brass (University of Iowa recordings), in place of the general sound set
+    const WIND = { flute: 'w_flute', oboe: 'w_oboe', clarinet: 'w_clarinet', bassoon: 'w_bassoon', horn: 'w_horn', trumpet: 'w_trumpet' };
+    if (WIND[sid] && I.n[WIND[sid]] && !this.plain && (globalThis.__iowaW ?? 1)) {
+      const lst = I.n[WIND[sid]];
+      if (midi >= lst[0] - 2 && midi <= lst[lst.length - 1] + 3) sid = WIND[sid];
+    }
     const index = I.n;
     if (!index[sid] || !index[sid].length) sid = FALLBACK[sid] && index[FALLBACK[sid]] ? FALLBACK[sid] : 'piano';
     const list = index[sid];
@@ -177,7 +217,7 @@ export class Sampler {
       const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}.mp3`, import.meta.url))
         .then((r) => { if (!r.ok) throw new Error('missing sample'); return r.arrayBuffer(); })
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
-        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer }));
+        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, atkT: (await loadIndex()).AT || null }));
       p.catch(() => this.buffers.delete(key));
       this.buffers.set(key, p);
     }
@@ -186,7 +226,7 @@ export class Sampler {
   // Load every sample a list of notes needs, before playing starts.
   async prepare(list) {
     const jobs = new Map();
-    for (const { sid, midi, kind, vel } of list) jobs.set(sid + ':' + midi + ':' + (kind || '') + ':' + (vel < 0.52 ? 'p' : 'f'), this.sampleFor(sid, midi, kind || 'sus', vel ?? 0.7).catch(() => null));
+    for (const { sid, midi, kind, vel } of list) jobs.set(sid + ':' + midi + ':' + (kind || '') + ':' + Math.round((vel ?? 0.7) * 20), this.sampleFor(sid, midi, kind || 'sus', vel ?? 0.7).catch(() => null));
     await Promise.all(jobs.values());
   }
 
@@ -203,7 +243,15 @@ export class Sampler {
       ch.gain = ctx.createGain();
       ch.pan = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
       ch.send = ctx.createGain();
-      ch.input.connect(ch.low).connect(ch.high).connect(ch.bright).connect(ch.gain).connect(ch.pan).connect(this.out);
+      // the instrument's body: the warmth recordings of the real instrument have and the samples
+      // lack (fitted against recordings of real players, see BODY)
+      let node = ch.input;
+      ch.body = [];
+      for (const [type, f, gdb, q] of (globalThis.__bodyEq || BODY)[sid] || []) {
+        const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gdb; if (q) b.Q.value = q;
+        node.connect(b); node = b; ch.body.push(b);
+      }
+      node.connect(ch.low).connect(ch.high).connect(ch.bright).connect(ch.gain).connect(ch.pan).connect(this.out);
       ch.gain.connect(ch.send).connect(this.verbIn);
       this.channels.set(id, ch);
     }
@@ -246,7 +294,9 @@ export class Sampler {
     // softer notes are darker as well as quieter, like a real instrument
     const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
     // (a real soft or loud recording already has its own colour: only a little more shaping)
-    tone.frequency.value = real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
+    // (the grand piano's three recordings already have the colour of each strength)
+    const ownColour = sample.set === 'grand';
+    tone.frequency.value = ownColour ? 20000 : real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
     // quick sweep up from a warm sound), and the top is kept smooth.
     const bowed = BOWED.has(sid) && !real;
@@ -256,7 +306,34 @@ export class Sampler {
       tone.frequency.setTargetAtTime(top, t + 0.01, opts.art === 'acc' || opts.art === 'marc' ? 0.025 : 0.06);
     }
     const g = ctx.createGain(); g.gain.value = 0;
-    src.connect(tone).connect(g).connect(ch.input);
+    // A real recording's own start: the soft ones take up to half a second to reach their held sound
+    // (the player easing the bow in), the loud ones overshoot it at first. In a line of notes both
+    // sounded wrong (a dip, or an accent on every note): unless the note is accented, the slow start
+    // is skipped and the overshoot evened out, so the next note arrives at once, at its level.
+    let cg = null;
+    const accentedNote = opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'stacc' || opts.art === 'stacciss';
+    let skip = 0;
+    const AT = sample.atkT;
+    if (real && sample.atk && AT && !accentedNote && !DECAYING.has(sid) && (globalThis.__atkFix ?? 1)) {
+      const lv = sample.atk[1], st = sample.atk[0];
+      // (start where the recording is within 9 dB of its held sound, at most 0.45 s in)
+      let i0 = lv.findIndex((v) => v >= -9); if (i0 < 0) i0 = lv.length - 2;
+      skip = Math.min(0.45, st + Math.max(0, AT[i0] - 0.005));
+      // then even out what is left of its start: the note reaches its level in about 50 ms
+      const RISE = globalThis.__atkRise ?? 0.05;
+      cg = ctx.createGain();
+      let first = true;
+      for (let i = i0; i < lv.length; i++) {
+        const tt = AT[i] - AT[i0];
+        const target = -9 + 9 * Math.min(1, tt / RISE);
+        const c = Math.max(-8, Math.min(9, target - lv[i]));
+        const gv = Math.pow(10, c / 20);
+        if (first) { cg.gain.setValueAtTime(gv, t); first = false; } else cg.gain.linearRampToValueAtTime(gv, t + tt);
+      }
+      const lastT = AT[lv.length - 1] - AT[i0];
+      cg.gain.linearRampToValueAtTime(1, t + lastT + 0.12);
+    }
+    if (cg) src.connect(tone).connect(cg).connect(g).connect(ch.input); else src.connect(tone).connect(g).connect(ch.input);
     // (real recordings, now all as loud as each other: the dynamic gives the whole range, from a
     // true pp to ff, in even steps of about 3.5 dB from one dynamic to the next)
     let level = (sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
@@ -266,20 +343,21 @@ export class Sampler {
     // long notes start gently and grow (a bow settling, a breath filling); short ones speak at once
     const accented = opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'stacc' || opts.art === 'stacciss';
     const shape = !decaying && !accented && !connect;
-    const lenAtk = shape ? (dur > 1.2 ? 0.075 : dur > 0.6 ? 0.045 : dur > 0.25 ? 0.02 : 0.006) * (1.15 - vel * 0.5) : 0;
+    const lenAtk = shape ? (dur > 1.2 ? 0.075 : dur > 0.6 ? 0.045 : dur > 0.25 ? 0.02 : 0.006) * (1.15 - vel * 0.5) * (real ? (globalThis.__lenAtkF ?? 0.4) : 1) : 0;
     const atk = Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
     let hold = dur;
     if (opts.art === 'stacc') hold = Math.min(dur, Math.max(0.07, dur * 0.42));
     else if (opts.art === 'stacciss') hold = Math.min(dur, Math.max(0.05, dur * 0.25));
     else if (opts.art === 'ten' || opts.art === 'legato') hold = dur * 1.02;
-    else hold = Math.max(0.05, dur * 0.94);
+    else hold = Math.max(0.05, dur * (BOWED.has(sid) || BLOWN.has(sid) ? (globalThis.__holdF ?? 1) : 0.94));
     // a sharp, bright edge for accents
     let offset = 0;
     if ((opts.art === 'stacc' || opts.art === 'acc' || opts.art === 'marc') && !decaying && !bowed) offset = 0.02;
     if (connect) offset = Math.min(0.09, (sample.buf.duration || 1) * 0.1);
+    offset = Math.max(offset, skip);
     if (opts.legato && !decaying) hold = Math.max(hold, dur + 0.05);
     // vibrato: comes in after the start of the note, like a player's
-    if (opts.vib && !decaying && !real && dur > 0.3) {   // (the real strings play their own vibrato)
+    if (opts.vib && !decaying && !real && !sample.ownVib && dur > 0.3) {   // (the real strings play their own vibrato)
       const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2 + Math.random() * 0.8;
       const depth = ctx.createGain(); depth.gain.value = 0;
       // more intense playing, wider vibrato; quiet long notes keep it narrow
@@ -319,7 +397,7 @@ export class Sampler {
       for (const [et, ev] of opts.env) if (et > t + atk && et < t + hold) {
         g.gain.linearRampToValueAtTime(level * ev, et);
         // louder is brighter: the tone opens up in a crescendo and closes in a diminuendo
-        tone.frequency.linearRampToValueAtTime(Math.min(20000, (900 + Math.pow(Math.min(1, vel * ev), 1.7) * 17000)), et);
+        if (!ownColour) tone.frequency.linearRampToValueAtTime(Math.min(20000, (900 + Math.pow(Math.min(1, vel * ev), 1.7) * 17000)), et);
       }
     }
     if ((opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'fp') && !decaying && hold > 0.25) {
@@ -342,7 +420,7 @@ export class Sampler {
     if (SECTION.has(sid) && !opts.tune && !opts.single) this.noteOn(ch, sample, midi, t + 0.012 + Math.random() * 0.01, dur, vel * 0.8, { ...opts, tune: (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 4), single: true });
     const v = { src, g, end: end + rel * 3 };
     this.voices.add(v);
-    src.onended = () => { this.voices.delete(v); try { g.disconnect(); tone.disconnect(); } catch {} };
+    src.onended = () => { this.voices.delete(v); try { g.disconnect(); tone.disconnect(); if (cg) cg.disconnect(); } catch {} };
     return v;
   }
   stopAll(fade = 0.08) {
