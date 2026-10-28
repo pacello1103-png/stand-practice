@@ -81,7 +81,7 @@ function extra(c) {
 }
 const frame = (c, cls = '') => c.phone
   ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${fmt(U.onIphone, { x: c.name })}" decoding="async"></div>`
-  : `<div class="dev ipad ${cls}"><img src="${img(c.shot)}" alt="${c.name}" decoding="async"></div>`;
+  : `<div class="dev ipad ${cls}">${c.vid ? vidHTML(c.vid) : `<img src="${img(c.shot)}" alt="${c.name}" decoding="async">`}</div>`;
 
 function fill(i) {
   const f = F[i], next = F[(i + 1) % n];
@@ -124,8 +124,22 @@ function fill(i) {
   THEME.tone(body.querySelector('.nextcard'), next, (i + 1) % n);
   body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
   body.querySelectorAll('[data-to]').forEach((b) => b.addEventListener('click', () => toCh(+b.dataset.to)));
-  active = -1; watch(); setActive(0); fitTitles(); if (typeof sizeDevs === 'function') sizeDevs(body);
+  active = -1; watch(); setActive(0); fitTitles(); watchVids(body); if (typeof sizeDevs === 'function') sizeDevs(body);
 }
+/* recordings play while they can be seen, and rest otherwise */
+const stillMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const vidSeen = new WeakMap();
+function vidCheck(v) {
+  const hiddenDev = v.closest('.media .dev.before, .media .dev.after, [hidden]');
+  const sh = document.getElementById('sheet');
+  const behindSheet = sh && !sh.hidden && !sh.contains(v);
+  const shouldPlay = !stillMotion && vidSeen.get(v) && !hiddenDev && !behindSheet && !document.hidden;
+  if (shouldPlay && v.paused) { const pr = v.play(); if (pr) pr.catch(() => {}); }
+  else if (!shouldPlay && !v.paused) v.pause();
+}
+const vidIO = 'IntersectionObserver' in window ? new IntersectionObserver((es) => es.forEach((e) => { vidSeen.set(e.target, e.isIntersecting); vidCheck(e.target); }), { threshold: 0.25 }) : null;
+function watchVids(root = document) { root.querySelectorAll('video.vid').forEach((v) => { if (v.dataset.w) return; v.dataset.w = '1'; if (vidIO) vidIO.observe(v); else { vidSeen.set(v, true); vidCheck(v); } }); }
+document.addEventListener('visibilitychange', () => document.querySelectorAll('video.vid').forEach(vidCheck));
 /* big titles shrink until their longest word fits the column (long names in some languages) */
 function fitTitles() {
   if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => { if (!sheet.hidden) fitTitles(); });
@@ -148,6 +162,7 @@ function setActive(k) {
   body.querySelectorAll('.ch').forEach((c, j) => c.classList.toggle('now', j === k));
   body.querySelectorAll('.media .dev').forEach((d, j) => { d.classList.toggle('on', j === k); d.classList.toggle('before', j < k); d.classList.toggle('after', j > k); });
   body.querySelectorAll('.tiles button').forEach((b, j) => b.classList.toggle('now', j === k));
+  body.querySelectorAll('.media .dev video').forEach((v) => vidCheck(v));
   barC.classList.remove('show');
   requestAnimationFrame(() => { barC.textContent = f.ch[k].name; barC.classList.add('show'); });
 }
@@ -182,7 +197,7 @@ function unlock() {
   document.body.classList.remove('locked'); document.body.style.top = '';
   scrollTo(0, savedY); requestAnimationFrame(() => { if (Math.abs(scrollY - savedY) > 2) scrollTo(0, savedY); });
 }
-function show() { lock(); sheet.hidden = false; sheet.scrollTop = 0; }
+function show() { lock(); sheet.hidden = false; sheet.scrollTop = 0; document.querySelectorAll('video.vid').forEach(vidCheck); }
 /* the folder is a history step, so the iPhone back swipe or the browser Back button closes it instead of leaving the site */
 let pushed = false;
 try { history.scrollRestoration = 'manual'; } catch {}
@@ -220,7 +235,7 @@ async function closeFolder(fromHistory = false) {
   }
   origin = null;
   sheet.hidden = true; sheet.classList.remove('in', 'scrolled', 'leaving'); sheet.getAnimations().forEach((a) => a.cancel());
-  unlock(); hover(-1);
+  unlock(); hover(-1); document.querySelectorAll('video.vid').forEach(vidCheck);
   document.querySelectorAll('.pull').forEach((e) => e.classList.remove('pull'));
   els.forEach((e) => e.classList.remove('lift', 'shift'));
   io && io.disconnect(); ioR && ioR.disconnect();
@@ -284,6 +299,7 @@ function sizeDevs(root = document) {
   });
 }
 sizeDevs();
+watchVids();
 const start = F.findIndex((f) => '#' + f.id === location.hash);
 if (start >= 0) { cur = start; show(); fill(start); sheet.classList.add('in'); }
 matchMedia(PHONE_MQ).addEventListener?.('change', () => { hover(-1); place(); });

@@ -10,7 +10,7 @@ const F = [
         h: 'Free public-domain scores in seconds.',
         p: 'Search the IMSLP library by composer and piece. Stand marks the best edition for your instrument, and it lands in your library, ready to read and mark. For editions worth owning, it links to Henle, Bärenreiter and other publishers.',
         steps: ['Type “Bach cello suite”', 'Choose your instrument', 'Tap a result'] },
-      { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score',
+      { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score', vid: 'turn',
         h: 'Six ways to turn the page.',
         p: 'Two pages side by side in landscape, one in portrait, or a landscape page turned sideways across an upright screen. Turn them in whatever way suits the moment.',
         grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing, and your eyes (beta)'], ['Half page', 'The next lines, early'], ['Metronome', 'Every 2 to 16 bars']] },
@@ -33,7 +33,7 @@ const F = [
   { id: 'mark', icon: 'pen', title: 'Mark', shot: '07_marked',
     lead: 'Write on the music with the Apple Pencil, the way you would with a pencil on paper.',
     ch: [
-      { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar',
+      { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar', vid: 'pen',
         h: 'The first touch never writes.',
         p: 'Touch the score with the Pencil and the tools open, nothing more. Your next stroke writes. Your finger still turns pages and zooms, and your hand can rest on the glass, so you never write by accident.',
         grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type it, or write it with the Pencil'], ['Eraser', 'Your markings only'], ['Score eraser', 'Removes a printed slur, keeps the staff'], ['Two colours', 'Black and red, one tap away'], ['Note', 'A see-through sheet on top'], ['Steady hand', 'Calmer, straighter lines']] },
@@ -59,7 +59,7 @@ const F = [
         h: 'A tempo log for every hard spot.',
         p: 'Loop the bars, give the passage a type, a start tempo and a target. Log the tempo you managed each day: the bar fills toward the target and a small graph shows your best, day by day.',
         grid: [['Melodic', 'Sing it clean, then speed'], ['Technical', '+5 bpm when it is clean'], ['Shift', 'Slowly and in rhythm'], ['Rhythm', 'The rhythm alone first'], ['Bowing & breath', 'The pattern on its own'], ['What you missed', 'Passages left alone too long']] },
-      { id: 'session', icon: 'jump', name: 'Practice session', shot: '26_study_running',
+      { id: 'session', icon: 'jump', name: 'Practice session', shot: '26_study_running', vid: 'sess',
         h: 'All your passages, one page turn apart.',
         p: 'Give each passage a priority. Stand starts with the high ones and the ones furthest from their target. Turning the page goes to the next passage, in any score, with the whole page shown.',
         chips: ['High · Medium · Low · Skip', 'High priority twice', 'Across all your scores'] },
@@ -90,7 +90,7 @@ const F = [
   { id: 'listen', icon: 'fork', title: 'Tune & Record', short: 'Tune', shot: '11_tuner',
     lead: 'Hear exactly where you are: in tune, in time, and on video.',
     ch: [
-      { id: 'tuner', icon: 'fork', name: 'Tuner', shot: '11_tuner',
+      { id: 'tuner', icon: 'fork', name: 'Tuner', shot: '11_tuner', vid: 'tune',
         h: 'A tuner that learns your intonation.',
         p: 'The needle shows the cents and the note turns green when you are in tune. Over time it learns which notes you tend to play sharp or flat.',
         grid: [['Reference A', 'For example 442 Hz'], ['Equal', 'Like the piano'], ['Just', 'Pure thirds and fifths'], ['Pythagorean', 'Pure fifths'], ['Tendency', 'Sharp or flat lately'], ['Small tuner', 'Over the score']] },
@@ -149,7 +149,7 @@ const F = [
         h: 'A notebook with a cover of its own.',
         p: 'Give it a title and choose one of 29 original covers: records, flowers, paint, torn paper, a cassette. Each cover carries the title the way it belongs, around a record label or in a tear of paper.',
         chips: ['29 original covers', 'Your title on the cover', 'White or warm paper', 'Add pages any time'] },
-      { id: 'layouts', icon: 'layout', name: 'Ready-made pages', shot: '67_layouts',
+      { id: 'layouts', icon: 'layout', name: 'Ready-made pages', shot: '67_layouts', vid: 'nb',
         h: 'Tap a page, type your words.',
         p: 'More than 30 pages laid out with care, in families that go together. Change any word, colour or photo, and add as many pages as you like.',
         grid: [['Concerts', 'Programmes, posters, tickets'], ['Career', 'CV, biography, repertoire'], ['Practice', 'Journal, lesson notes, goals'], ['For sharing', 'Magazine cover, mood board']] },
@@ -176,6 +176,8 @@ const F = [
     ] },
 ];
 
+/* screen recordings from the app: muted, looping, played only while on screen */
+const vidHTML = (n, pre = '') => `<video class="vid" src="${pre}vid/${n}.mp4" poster="${pre}vid/${n}.webp" muted playsinline loop preload="metadata" aria-hidden="true" disablepictureinpicture></video>`;
 /* App Store: paste the link here on launch day and the buttons become "Download on the App Store". */
 const APP_STORE_URL = '';
 const ctaHTML = () => APP_STORE_URL
@@ -186,19 +188,19 @@ const ctaHTML = () => APP_STORE_URL
 const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['more', 'Only your tools on the home screen'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
 /* each highlight opens a folder at a chapter: [folder id, chapter id] */
 const HIGH = [
-  { k: 'Read', to: ['read', 'turns'], shot: '19_perform', phone: null,
+  { k: 'Read', to: ['read', 'turns'], shot: '19_perform', vid: 'turn', phone: null,
     h: 'Turn the page without letting go of the bow.',
     p: 'Wink, press a pedal, tap the page, or let Stand follow your playing. Half-page turns show what is coming, so you are never caught at the bottom of the page.' },
-  { k: 'Practise', to: ['practise', 'passages'], shot: '26_study_running', phone: 'p_10_passages_panel',
+  { k: 'Practise', to: ['practise', 'passages'], shot: '26_study_running', vid: 'sess', phone: 'p_10_passages_panel',
     h: 'Practise the hard bars, not the whole piece again.',
     p: 'Loop the bars that need work, give them a target tempo and log what you managed each day. A practice session takes you from one passage to the next, across all your scores.' },
-  { k: 'Tune & Record', to: ['listen', 'video'], shot: '63_video_over_score', phone: 'p_11_tuner',
+  { k: 'Tune & Record', to: ['listen', 'video'], shot: '63_video_over_score', vid: 'tune', phone: null,
     h: 'Hear where you are. See how you play.',
     p: 'A tuner that learns which notes you play sharp or flat. Film yourself while you read, watch it next to the music, slower, and put the score on the video to share.' },
   { k: 'Write', to: ['write', 'capture'], shot: '49_picker_chosen', phone: null,
     h: 'From the printed page to your own score.',
     p: 'Choose lines on a scan or a PDF and Stand reads the notes into the composer. Arrange them for more than 100 instruments and print the parts, each in its own key.' },
-  { k: 'Notebook', to: ['notebook', 'programme'], shot: '68_programme', phone: null,
+  { k: 'Notebook', to: ['notebook', 'programme'], shot: '68_programme', vid: 'nb', phone: null,
     h: 'Programmes, posters and CVs, made on your stand.',
     p: 'Ready-made pages for your concert programme and programme notes, a poster and tickets, your CV and biography, and a practice journal. Photos in words and shapes, gold details and 29 original covers.' },
 ];

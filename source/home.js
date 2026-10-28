@@ -29,7 +29,7 @@
           <button class="hopen" data-open="${h.to[0]}" data-ch="${h.to[1]}">${fmt(U.openF, { x: title(h.to[0]) })}<svg aria-hidden="true"><use href="#i-chev-r"/></svg></button>
         </div>
         <div class="hpics${h.phone ? ' two' : ''}" aria-hidden="true">
-          <div class="dev ipad"><img src="img/s_${h.shot}.webp" alt="" loading="lazy" decoding="async"></div>
+          <div class="dev ipad">${h.vid ? vidHTML(h.vid) : `<img src="img/s_${h.shot}.webp" alt="" loading="lazy" decoding="async">`}</div>
           ${h.phone ? `<div class="dev phone"><img src="img/${h.phone}.webp" alt="" loading="lazy" decoding="async"></div>` : ''}
         </div>
       </article>`).join('')}
