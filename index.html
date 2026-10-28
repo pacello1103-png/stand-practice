@@ -623,7 +623,7 @@ const F = [
         h: 'Plan your week in half hours.',
         p: 'Paint the half hours you want to practise. Past weeks show green for done and red for missed, and a reminder arrives when practice begins.',
         chips: ['At the start, 10 or 30 min before', 'Carries on week after week', 'On iPad and iPhone'] },
-      { id: 'iphone', icon: 'phone', name: 'iPhone', phone: 'phone_home',
+      { id: 'iphone', icon: 'phone', name: 'iPhone', phone: 'phone_bar',
         h: 'Your practice in your pocket.',
         p: 'The iPhone shows today, the week and each piece from your iPad, and keeps your iPad scores to read on the go. Away from the stand it has the tuner, harmonics, drone, metronome, scales, repetitions, a practice timer and recording, and it works as the iPad’s camera.',
         chips: ['Your iPad scores, to read', 'Practice time through iCloud', 'Camera for iPad'] },
@@ -729,7 +729,7 @@ const ctaHTML = () => APP_STORE_URL
 const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['more', 'Only your tools on the home screen'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
 /* each highlight opens a folder at a chapter: [folder id, chapter id] */
 const HIGH = [
-  { k: 'Read', to: ['read', 'turns'], shot: '19_perform', vid: 'turn', phone: null,
+  { k: 'Read', to: ['read', 'turns'], shot: '19_perform', vid: 'turn', phone: 'm_phone_read',
     h: 'Turn the page without letting go of the bow.',
     p: 'Wink, press a pedal, tap the page, or let Stand follow your playing. Half-page turns show what is coming, so you are never caught at the bottom of the page.' },
   { k: 'Practise', to: ['practise', 'passages'], shot: '26_study_running', vid: 'sess', phone: 'p_10_passages_panel',
