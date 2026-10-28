@@ -91,6 +91,27 @@ function makeLoop(buf, midi) {
   return { start: s / sr, end: e / sr };
 }
 
+// Every recorded note played at an even loudness: recordings differ (one note of a set twice as
+// loud as its neighbour, the soft recordings five to ten times quieter than the loud ones), which
+// made sudden jumps from one note to the next, and from mp to mf where the soft recording gives way
+// to the loud one. Each is brought to the loudness of the set's typical loud note; how loud a note
+// is then comes only from the music (its dynamic), and the soft recording only gives its colour.
+// (Ringing instruments only half way: their high notes are meant to be lighter.)
+const MED = new Map();
+const XF = [0.4, 0.66];   // (the velocities over which the soft and loud recordings blend)
+function evenGain(I, sid, m, layer, rings) {
+  const R = I.R && I.R[sid]; if (!R) return layer === 'p' ? ((I.P || {})[sid] || 1) : 1;
+  const r = R[m + (layer ? '_' + layer : '')]; if (!r) return layer === 'p' ? ((I.P || {})[sid] || 1) : 1;
+  let ref = MED.get(sid);
+  if (ref === undefined) {
+    const vals = Object.entries(R).filter(([k]) => !k.endsWith('_p')).map(([, v]) => v).sort((a, b) => a - b);
+    ref = vals.length ? vals[vals.length >> 1] : r; MED.set(sid, ref);
+  }
+  const ringing = DECAYING.has(sid) || rings;
+  const k = Math.pow(ref / r, ringing ? 0.5 : 0.9);
+  // (a soft recording speaks more slowly: a little more of it, so it is even as the note begins)
+  return Math.max(0.4, Math.min(layer === 'p' ? 9 : 3, k * (layer === 'p' ? (globalThis.__pBoost ?? 1.25) : 1)));
+}
 export class Sampler {
   constructor() {
     this.buffers = new Map();   // "sid:midi" -> Promise<{buf, loop}>
@@ -130,6 +151,13 @@ export class Sampler {
       const list = I.n[set]; let best = list[0];
       for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
       const L = (I.L && I.L[set]) || ['f'];
+      // between mp and mf both recordings sound together, the soft one giving way to the loud one
+      // little by little (no sudden change of colour)
+      if (L.includes('p') && L.includes('f') && vel > XF[0] && vel < XF[1]) {
+        const [a, b] = await Promise.all([this.load(set, best, 'p', kind), this.load(set, best, 'f', kind)]);
+        const w = (vel - XF[0]) / (XF[1] - XF[0]);
+        return Object.assign(Object.create(b), { pair: a, w });
+      }
       const layer = L.includes('p') && vel < 0.52 ? 'p' : L.includes('f') ? 'f' : L[0];
       return this.load(set, best, layer, kind);
     }
@@ -149,7 +177,7 @@ export class Sampler {
       const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}.mp3`, import.meta.url))
         .then((r) => { if (!r.ok) throw new Error('missing sample'); return r.arrayBuffer(); })
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
-        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * (layer === 'p' ? (((await loadIndex()).P || {})[sid] || 1) : 1), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer }));
+        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer }));
       p.catch(() => this.buffers.delete(key));
       this.buffers.set(key, p);
     }
@@ -199,10 +227,16 @@ export class Sampler {
   // opts: { art: 'stacc'|'ten'|'acc'|'marc'|'legato', env: [[time, level]] (for hairpins) }
   noteOn(ch, sample, midi, t, dur, vel = 0.7, opts = {}) {
     if (!sample) return null;
+    // two recordings blended (soft and loud): each played, their levels sharing the note (equal power)
+    if (sample.pair && !opts.blend) {
+      const hu = (Math.random() - 0.5) * 4;   // (the two in tune with each other)
+      this.noteOn(ch, sample.pair, midi, t, dur, vel, { ...opts, blend: Math.cos(sample.w * Math.PI / 2), human: hu });
+      opts = { ...opts, blend: Math.sin(sample.w * Math.PI / 2), human: hu };
+    }
     const ctx = this.ctx, sid = ch.sid, mix = ch.mix || DEFAULT_MIX();
     const src = ctx.createBufferSource(); src.buffer = sample.buf;
     // no two notes quite the same: a touch of pitch and level variation, as with a real player
-    const human = (Math.random() - 0.5) * 4 + (opts.tune || 0);
+    const human = (opts.human ?? (Math.random() - 0.5) * 4) + (opts.tune || 0);
     const cents = (midi - sample.midi) * 100 + 1200 * Math.log2(this.tuning / 440) + human;
     src.playbackRate.value = Math.pow(2, cents / 1200);
     // (a real recording played short, or plucked: it rings as recorded)
@@ -223,7 +257,9 @@ export class Sampler {
     }
     const g = ctx.createGain(); g.gain.value = 0;
     src.connect(tone).connect(g).connect(ch.input);
-    let level = (0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06);
+    // (real recordings, now all as loud as each other: the dynamic gives the whole range, from a
+    // true pp to ff, in even steps of about 3.5 dB from one dynamic to the next)
+    let level = (sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
     if (opts.art === 'acc' || opts.art === 'marc') level = Math.min(1.15, level * 1.3);
     // a connected (slurred) note starts past the sample's attack and fades in: no new bow or tongue
     const connect = !!opts.connect && !decaying;

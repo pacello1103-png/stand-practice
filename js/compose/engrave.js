@@ -222,48 +222,67 @@ export function layoutScore(score, opts = {}) {
     });
   }
 
-  // ---- vertical: each staff's extent in this system, then the gaps between staves
+  // ---- vertical: the same distances everywhere, as engraved music has them
+  // Between the staves of one system and between the systems the distance is one standard (or the
+  // one chosen in Layout), the same on every line and every page; it only grows (for the whole
+  // score, so it stays even) when notes far above or below would otherwise touch the next staff.
+  // Distances in staff spaces, from the bottom line of one staff to the top line of the next.
   const pages = [];
   let page = null, y = 0;
   const newPage = () => { page = { n: pages.length, systems: [], W, H }; pages.push(page); y = margin.t + (pages.length === 1 ? titleHeight(score, spMm, opts) : 0); };
   newPage();
-  // Gaps in staff spaces, as engraved music has them: between the staves of one instrument (the
-  // piano's two) 6, between instruments 7; between systems about 9 for one staff (a part: some ten to
-  // twelve lines to a page) and about 12 for several, so each system stands clearly on its own
-  const staffGapSame = 6.2, staffGapOther = 7.0;
-  const sysGapOf = (n) => (n > 1 ? 7.5 : 4.5);
-  let pageNext = false;
-  for (const sy of systems) {
-    // which staves show on this system (empty staves can be hidden in big scores)
+  const userStaff = +L.staffGap > 0 ? +L.staffGap : 0, userSys = +L.sysGap > 0 ? +L.sysGap : 0;
+  const staffGapSame = userStaff ? Math.max(3, userStaff - 0.8) : 6.2, staffGapOther = userStaff || 7.0;
+  // which staves show on each system (empty staves can be hidden in big scores), and how far
+  // each reaches above and below
+  const plan = systems.map((sy) => {
     let shown = info;
     if (L.hideEmpty && opts.partIndex === undefined && !sy.first) {
       shown = info.filter((s) => sy.measures.some((mm) => { for (let m = mm.m; m <= mm.end; m++) if ((s.st.bars[m] || []).some((e) => !e.rest)) return true; return false; }));
       if (!shown.length) shown = [info[0]];
     }
-    const ext = shown.map((s) => staffExtent(score, s, sy, concert));
-    let sh = 0;
-    const tops = [];
-    shown.forEach((s, i) => {
-      if (i === 0) { tops.push(0); return; }
-      const prev = shown[i - 1];
-      const base = prev.pi === s.pi ? staffGapSame : staffGapOther;
-      // what hangs below one staff and what reaches above the next never touch: low notes of a
-      // cello and high notes of the piano, dynamics, slurs and words each keep their room
-      const need = ext[i - 1].below + ext[i].above + 0.6;
-      sh = tops[i - 1] + 4 + Math.max(base, need);
-      tops.push(sh);
-    });
+    return { shown, ext: shown.map((s) => staffExtent(score, s, sy, concert)) };
+  });
+  // the gap above each staff (by staff), the same in every system: the standard, or more if notes
+  // somewhere in the score need it (only a little: an odd high note may come close)
+  // (chosen by you: exactly that; the standard: a space and a half more at most)
+  const GROW = userStaff || userSys ? 0 : 1.5;
+  const gapAbove = new Map();
+  for (const { shown, ext } of plan) shown.forEach((s, i) => {
+    if (!i) return;
+    const base = shown[i - 1].pi === s.pi ? staffGapSame : staffGapOther;
+    const need = ext[i - 1].below + ext[i].above + 0.6;
+    const g = Math.max(base, Math.min(need, base + GROW));
+    gapAbove.set(s.k, Math.max(gapAbove.get(s.k) || 0, g));
+  });
+  // the distance from one system to the next: one for the whole score
+  const nMax = Math.max(...plan.map((q) => q.shown.length));
+  const sysBase = userSys || (nMax > 1 ? 11 : 8.5);
+  let sysGap = sysBase;
+  for (let i = 1; i < plan.length; i++) {
+    const a = plan[i - 1].ext, b = plan[i].ext;
+    sysGap = Math.max(sysGap, Math.min(a[a.length - 1].below + b[0].above + 1, sysBase + GROW));
+  }
+  let pageNext = false;
+  for (const [si, sy] of systems.entries()) {
+    const { shown, ext } = plan[si];
+    const tops = [0];
+    for (let i = 1; i < shown.length; i++) tops.push(tops[i - 1] + 4 + (gapAbove.get(shown[i].k) || staffGapOther));
     const height = tops[tops.length - 1] + 4;
+    // (room above the first system of a page for what stands over it: a tempo, words)
     const above = Math.max(2.5, ext[0].above + (sy.measures.some((mm) => score.measures[mm.m].tempo || score.measures[mm.m].text || score.measures[mm.m].rehearsal) ? 3 : 0.5));
     const below = Math.max(2, ext[ext.length - 1].below);
-    if (page.systems.length && (y + above + height + below > H - margin.b || pageNext)) newPage();
+    const firstOnPage = !page.systems.length;
+    const topHere = firstOnPage ? y + above : y + sysGap;
+    if (!firstOnPage && (topHere + height + below > H - margin.b || pageNext)) newPage();
     pageNext = sy.brk === 'page';
-    const top = y + above;
+    const top = page.systems.length ? topHere : y + above;
     page.systems.push({ ...sy, top, staves: shown.map((s, i) => ({ ...s, y: top + tops[i] })), height, above, below, concert });
-    y = top + height + below + sysGapOf(shown.length);
+    y = top + height;
   }
   // spread the systems down the page when the page is mostly full
-  for (const pg of pages) {
+  // (only when asked for: the distances stay the same on every page otherwise)
+  for (const pg of L.justify ? pages : []) {
     if (pg.systems.length < 2) continue;
     const last = pg.systems[pg.systems.length - 1];
     const bottom = last.top + last.height + last.below;
@@ -274,7 +293,7 @@ export function layoutScore(score, opts = {}) {
     if (last.brk === 'page' && full < 0.85) continue;
     if (pg === pages[pages.length - 1] && full < 0.8) continue;
     // (a little more room between the systems, never so much that they float apart)
-    const add = Math.min(free / (pg.systems.length - 1), pg.systems[0].staves.length > 1 ? 5 : 3);
+    const add = Math.min(free / (pg.systems.length - 1), pg.systems[0].staves.length > 1 ? 3 : 2);
     pg.systems.forEach((s, i) => { const d = add * i; s.top += d; s.staves.forEach((st) => { st.y += d; }); });
   }
   return { pages, W, H, spMm, margin, score, opts: L, concert, partIndex: opts.partIndex };

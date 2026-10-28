@@ -11,7 +11,7 @@ import { paintCover, COVER_PHOTOS, PHOTO_CATS, photoById } from './covers.js';
 import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage, PAGE_W as NB_PW, PAGE_H as NB_PH } from './notebook.js';
 import { usableFiles, filesAsPictures } from './addpages.js';
 import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
-import { openDocument, sizesKey, makeThumb, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
+import { openDocument, sizesKey, makeThumb, looksBlack, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
@@ -220,6 +220,12 @@ function hidePanel() {
   if (openPanel === 'app' && tapTest.on) { tapTest.on = false; $('#tapTest').textContent = 'Test'; $('#tapLast').textContent = ''; sendTap(); }
   openPanel = null;
 }
+// a window opened in a screen (Layout, Capture, Sound in Compose; Pages, Settings in a score…)
+// closes with that screen when you go back home
+for (const id of ['#score', '#compose', '#studio']) {
+  const scr = $(id); if (!scr) continue;
+  new MutationObserver(() => { if (scr.hidden && openPanel) hidePanel(); }).observe(scr, { attributes: true, attributeFilter: ['hidden'] });
+}
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-panel]'); if (b) { showPanel(b.dataset.panel, b.dataset.tab); return; }
   if (e.target.closest('[data-close]')) hidePanel();
@@ -278,11 +284,11 @@ function renderGrid() {
     const b = el('button', 'card');
     const th = el('div', 'thumb');
     if (s.thumb) {
-      if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
-      th.style.backgroundImage = `url(${thumbURLs.get(s.id)})`;
+      th.style.backgroundImage = `url(${thumbURL(s)})`;
       // no white paper showing at the edges of a dark cover
       th.classList.add('has-pic');
     }
+    else if (canRemakeThumb(s) && !thumbChecked.has(s.id)) { thumbChecked.add(s.id); fixThumb(s); }
     th.append(el('span', 'badge', s.pages + (s.pages === 1 ? ' page' : ' pages')));
     b.append(th, el('div', 'ttl', s.title), el('div', 'cmp', s.kind === 'comp' ? (s.composer ? s.composer + ' · ' : '') + 'Your composition' : s.composer || (s.seconds > 59 ? fmtMinutes(s.seconds) + ' practised' : 'Not practised yet')));
     if (LIB.sel.has(s.id)) b.classList.add('picked');
@@ -307,24 +313,28 @@ function renderGrid() {
 // folder (or on "Library" at the top of a folder) to move them there.
 const LD = { on: null };
 function libDragSource(card, id) {
-  let start = null, holdT = 0;
+  let start = null, holdT = 0, armT = 0, armed = false;
   card.addEventListener('pointerdown', (e) => {
-    start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    start = { x: e.clientX, y: e.clientY, id: e.pointerId }; armed = false;
     // a finger: held still a moment on a chosen score, then it moves (else the list scrolls)
-    clearTimeout(holdT);
+    clearTimeout(holdT); clearTimeout(armT);
     if (e.pointerType === 'touch' && LIB.editing && LIB.sel.has(id)) holdT = setTimeout(() => { if (start && !LD.on) { beginLibDrag(e, card); LD.on.ghost.style.left = start.x + 'px'; LD.on.ghost.style.top = start.y + 'px'; if (navigator.vibrate) try { navigator.vibrate(8); } catch {} } }, 320);
+    // held on a score not chosen yet: the hold chooses it (Select starts) and, without lifting the
+    // finger, moving then carries it straight away
+    else if (e.pointerType === 'touch' && !LIB.editing) armT = setTimeout(() => { if (start && LIB.editing && LIB.sel.has(id)) armed = true; }, 600);
   });
   card.addEventListener('pointermove', (e) => {
     if (!start || LD.on || e.pointerId !== start.id) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) >= 10) clearTimeout(holdT);
+    if (armed && Math.hypot(e.clientX - start.x, e.clientY - start.y) >= 10) { armed = false; beginLibDrag(e, card); if (navigator.vibrate) try { navigator.vibrate(8); } catch {} return; }
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) >= 10) { clearTimeout(holdT); clearTimeout(armT); }
     if (e.pointerType === 'touch') return;   // (a finger drags after holding)
     if (!LIB.editing || !LIB.sel.has(id)) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 10) return;
     beginLibDrag(e, card);
   });
-  card.addEventListener('pointerup', () => { start = null; clearTimeout(holdT); });
-  card.addEventListener('pointercancel', () => { start = null; clearTimeout(holdT); });
-  card.addEventListener('touchmove', (e) => { if (LD.on) e.preventDefault(); }, { passive: false });
+  card.addEventListener('pointerup', () => { start = null; armed = false; clearTimeout(holdT); clearTimeout(armT); });
+  card.addEventListener('pointercancel', () => { start = null; armed = false; clearTimeout(holdT); clearTimeout(armT); });
+  card.addEventListener('touchmove', (e) => { if (LD.on || armed) e.preventDefault(); }, { passive: false });
 }
 function beginLibDrag(e, card) {
   const ids = [...LIB.sel];
@@ -386,6 +396,52 @@ const FOLDER_IDEAS = ['Etudes', 'Pieces', 'Orchestra', 'Concertos', 'Chamber mus
 async function loadFolders() { FOLD.list = (await getSetting('folders', [])) || []; }
 const saveFolders = () => setSetting('folders', FOLD.list);
 const folderOf = (id) => FOLD.list.find((f) => f.id === id);
+// A cover that cannot show (its picture lost by the iPad, or drawn black when a heavy page did not
+// draw) is made again, quietly, one at a time.
+const thumbChecked = new Set();
+let thumbFixing = Promise.resolve();
+const canRemakeThumb = (s) => !!s.fileId && s.kind !== 'comp' && s.kind !== 'paper' && !s.preview;
+function thumbURL(s) {
+  if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
+  const u = thumbURLs.get(s.id);
+  if (!thumbChecked.has(s.id) && canRemakeThumb(s)) {
+    thumbChecked.add(s.id);
+    const im = new Image();
+    im.onload = () => { if (looksBlack(im)) fixThumb(s); };
+    im.onerror = () => fixThumb(s);
+    im.src = u;
+  }
+  return u;
+}
+const loadsWell = (blob) => new Promise((res) => {
+  if (!blob) { res(false); return; }
+  const u = URL.createObjectURL(blob), im = new Image();
+  im.onload = () => { const ok = !looksBlack(im); URL.revokeObjectURL(u); res(ok); };
+  im.onerror = () => { URL.revokeObjectURL(u); res(false); };
+  im.src = u;
+});
+function fixThumb(s) {
+  thumbFixing = thumbFixing.then(async () => {
+    // (never while a score is open: its pages come first)
+    for (let i = 0; i < 120 && !$('#score').hidden; i++) await new Promise((r) => setTimeout(r, 1000));
+    const fresh = await db.get('scores', s.id).catch(() => null); if (!fresh) return;
+    let thumb = (await loadsWell(fresh.thumb)) ? fresh.thumb : null;
+    if (!thumb) {
+      const file = await db.get('files', fresh.fileId).catch(() => null);
+      if (!file || (file.kind !== 'pdf' && file.kind !== 'images')) return;
+      let base = null;
+      try { base = await openDocument(file, fresh.sizes); thumb = await makeThumb(mapDoc(base, fresh.pageMap, fresh.cuts, fresh.glue)); }
+      catch (e) { console.warn('cover', e); }
+      finally { try { base && base.destroy(); } catch {} }
+      if (!thumb) return;
+      fresh.thumb = thumb; await db.put('scores', fresh);
+    }
+    const mine = scores.find((x) => x.id === s.id); if (mine) mine.thumb = thumb;
+    if (thumbURLs.has(s.id)) { URL.revokeObjectURL(thumbURLs.get(s.id)); thumbURLs.delete(s.id); }
+    thumbURLs.set(s.id, URL.createObjectURL(thumb));
+    for (const th of document.querySelectorAll(`.card[data-sid="${s.id}"] .thumb`)) { th.style.backgroundImage = `url(${thumbURLs.get(s.id)})`; th.classList.add('has-pic'); }
+  }).catch(() => {});
+}
 function folderCard(f) {
   const n = scores.filter((s) => s.folder === f.id).length;
   const b = el('button', 'card folder');
@@ -1462,6 +1518,8 @@ const follow = {
       halfWanted: () => !!(S.halfTurn && V.spread === 1 && !V.inking),
       gaze: () => eyes.onPage(),
       when: () => followAt(),
+      // (only a clarinet — or an instrument of your own — may sound other than written)
+      fixedShift: () => (S.instrument === 'clarinet' || S.instrument === 'other' ? null : 0),
       // each page read once for good (until the score is changed): opening it again costs nothing
       store: {
         key: (i) => (V.score ? `follow:${V.score.id}:${pagesStamp(V.score)}:${i}` : null),
@@ -1601,7 +1659,8 @@ async function ecCamera() {
     const [cls, txt] = ecJudge(smp);
     const st = $('#eyeCalState'); st.textContent = txt; st.className = 'eyecal-state ' + cls; $('#eyeCalCam').className = 'eyecal-cam ' + cls;
     // while the dots run: say so at once when the eyes are lost
-    if ($('#eyeCal').classList.contains('running')) { const lost = !smp.see; $('#eyeCalLive').hidden = !lost; if (lost) $('#eyeCalLive').textContent = smp.face ? 'One eye is hidden: turn a little towards the iPad' : 'I can’t see your face'; }
+    // (no words to read while looking at the dots: the dot turns amber, and waits)
+    if ($('#eyeCal').classList.contains('running')) { $('#eyeCalLive').hidden = true; $('#eyeCalDot').classList.toggle('lost', !smp.see); }
   });
   return true;
 }
@@ -1615,7 +1674,7 @@ async function openEyeCal() {
   hidePanel();
   const o = $('#eyeCal'); o.hidden = false; o.classList.remove('running', 'result'); $('#eyeCalSeen').hidden = true; $('#eyeCalLive').hidden = true; $('#eyeCalMarks').innerHTML = '';
   EC.phase = 'intro';
-  ecSet('Set up your eyes', '<ol><li>Put the iPad exactly where it stands when you play: straight ahead or to the side, both work.</li><li>Sit or stand as you play, with your instrument if you can.</li><li>Follow each dot with your eyes until it is gone. Move your head only as you do when you read.</li></ol><small>Then a short check shows where Stand sees you looking. It takes about half a minute.</small>', 'Start');
+  ecSet('Set up your eyes', '<ol><li>Put the iPad exactly where it stands when you play: straight ahead or to the side, both work.</li><li>Sit or stand as you play, with your instrument if you can.</li><li>Follow each dot with your eyes until it is gone. Move your head only as you do when you read.</li><li>At the end the dot stays in the middle and a small arrow appears beside it: keep your eyes on the dot and turn your head a little that way.</li></ol><small>Then a short check shows where Stand sees you looking. It takes about half a minute.</small>', 'Start');
   $('#eyeCalState').textContent = 'Starting the camera…'; $('#eyeCalState').className = 'eyecal-state'; $('#eyeCalCam').className = 'eyecal-cam';
   EC.ready = ecCamera();
   const ok = await EC.ready;
@@ -1649,19 +1708,21 @@ async function ecDots() {
   }
   // Then the head moves while the eyes stay on one dot: so how the head turns is learned apart from
   // where the eyes look (else turning the head moved the point as if the eyes had moved)
-  const say = el('div', 'eyecal-live eyecal-say'); say.style.top = '28%'; $('#eyeCal').append(say);
-  const heads = ['Keep looking at the dot, and turn your head a little to the left', 'Now a little to the right', 'Now tilt it a little up', 'And a little down'];
+  // No words to read meanwhile (reading them took the eyes off the dot): a small arrow beside the
+  // dot shows which way to turn the head; the eyes stay on the dot.
+  dot.classList.remove('shrink'); dot.style.left = 0.5 * W + 'px'; dot.style.top = 0.5 * H + 'px';
+  dot.classList.add('pulse'); await ecWait(1400); dot.classList.remove('pulse');
+  const heads = ['left', 'right', 'up', 'down'];
   for (let k = 0; k < heads.length && EC.on; k++) {
-    say.textContent = heads[k];
-    dot.classList.remove('shrink'); dot.style.left = 0.5 * W + 'px'; dot.style.top = 0.5 * H + 'px';
-    await ecWait(1100);
-    void dot.offsetWidth; dot.classList.add('shrink');
+    dot.classList.remove('shrink'); dot.dataset.head = heads[k];
+    await ecWait(700);
     // (each its own place in the set-up, a hair apart, so they are not merged into one)
-    cur = { px: 0.5 * W + (k + 1) * 0.001, py: 0.5 * H, from: performance.now() + 350, good: 0 };
-    await ecWait(1300);
+    cur = { px: 0.5 * W + (k + 1) * 0.001, py: 0.5 * H, from: performance.now() + 300, good: 0 };
+    await ecWait(1600);
     cur = null;
+    delete dot.dataset.head; await ecWait(250);
   }
-  say.remove();
+  delete dot.dataset.head; dot.classList.remove('lost', 'pulse');
   off(); $('#eyeCal').classList.remove('running'); $('#eyeCalLive').hidden = true;
   return samples;
 }
@@ -7284,7 +7345,7 @@ $('#nbPapers').addEventListener('click', () => { NB.touched = true; });
 $('#nbCreate').addEventListener('click', async () => {
   const file = { id: uid(), ...nbFile(+$('#nbPages').value) };
   const doc = await openDocument(file);
-  const thumb = await makeThumb(doc);
+  const thumb = await makeThumb(doc, { dark: true });   // (a notebook's cover may well be dark)
   const score = { id: uid(), fileId: file.id, title: file.title, composer: file.cover && file.cover.sub ? file.cover.sub : 'Notebook', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, kind: 'paper', folder: FOLD.current || undefined };
   await db.put('files', file); await db.put('scores', score);
   $('#nbTitle').value = ''; $('#newNotebook').hidden = true;
@@ -8306,8 +8367,7 @@ async function loadSets() { SETS.list = (await getSetting('sets', [])) || []; }
 const saveSets = () => setSetting('sets', SETS.list);
 function coverOf(sid) {
   const s = scores.find((x) => x.id === sid); if (!s || !s.thumb) return '';
-  if (!thumbURLs.has(s.id)) thumbURLs.set(s.id, URL.createObjectURL(s.thumb));
-  return `url(${thumbURLs.get(s.id)})`;
+  return `url(${thumbURL(s)})`;
 }
 const partPages = (it) => (it.a === it.b ? `Page ${it.a}` : `Pages ${it.a}–${it.b}`);
 function renderSets() {

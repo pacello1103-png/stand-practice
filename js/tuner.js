@@ -396,6 +396,7 @@ const TANPURA = { slow: 5.2, medium: 4, fast: 2.8 };
 // how loud the drone is at full volume: it sits under your playing, so it needs to be clearly
 // heard (the limiter on the way out keeps it clean at the top)
 const DRONE_LEVEL = 2.0;
+const DRONE_MAKEUP = 3.0;   // (as loud as it can be, clean: measured)
 // The drone's own way out, made to carry on a small speaker: the lowest rumble the iPad cannot play
 // is taken away, the sound is kept dense (a slow compressor lifts the quiet parts of the wave)
 // and gently warmed (a soft saturation adds the overtones the ear uses to hear a low note), so
@@ -415,8 +416,12 @@ function droneBus(ctx, vol) {
   const air = ctx.createBiquadFilter(); air.type = 'highshelf'; air.frequency.value = 4000; air.gain.value = -5;
   // and the level is set for the note (droneTrim): full for the low notes, safe for the high ones
   const trim = ctx.createGain(); trim.gain.value = 0.5;
-  hp.connect(drive).connect(sh).connect(comp).connect(pres).connect(air).connect(makeup).connect(trim).connect(vol).connect(master());
-  return { input: hp, trim, drive };
+  // (no saturation any more: on a chord — a fifth, an octave — it made the notes rub against each
+  // other, a strange distortion; the compressor alone keeps the drone dense and full)
+  if (globalThis.__droneSat) hp.connect(drive).connect(sh).connect(comp);
+  else { drive.gain.value = 1; hp.connect(drive).connect(comp); makeup.gain.value = globalThis.__droneMk ?? DRONE_MAKEUP; }
+  comp.connect(pres).connect(air).connect(makeup).connect(trim).connect(vol).connect(master());
+  return { input: hp, trim, drive, clean: !globalThis.__droneSat };
 }
 // How loud a drone may be, by its pitch and its sound. The ear is far more sensitive to high notes
 // (most of all from 1 to 5 kHz) than to low ones, and each sound carries a different share of
@@ -458,7 +463,7 @@ export class Drone {
     // the level for this note (see droneTrim); high notes are also driven less, so they stay clean
     if (f0) {
       this.bus.trim.gain.setTargetAtTime(globalThis.__trimOne ? 1 : droneTrim(f0, this.sound), ctx.currentTime, 0.04);
-      this.bus.drive.gain.setTargetAtTime(f0 > 330 ? 1 : f0 > 200 ? 1.5 : 2, ctx.currentTime, 0.04);
+      if (!this.bus.clean) this.bus.drive.gain.setTargetAtTime(f0 > 330 ? 1 : f0 > 200 ? 1.5 : 2, ctx.currentTime, 0.04);
     }
     this.vol.gain.setTargetAtTime(volCurve(this.volume), ctx.currentTime, 0.05);
     return this.out;
@@ -505,8 +510,9 @@ export class Drone {
   // the notes of the chord; a low drone also sounds softly an octave up, so a small speaker (which
   // cannot play the low note itself) still gives it its full weight
   _voicesAt(f0, out, at, attack) {
-    const vs = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62, at, attack));
-    if (f0 < 190 && this.sound !== 'pure') vs.push(holdNote(out, f0 * 2, this.sound, 0.34, at, attack));
+    const sm = !globalThis.__droneSat;
+    const vs = this.ratios().map((k, i) => holdNote(out, f0 * k, this.sound, i === 0 || k === 0.5 ? 1 : 0.62, at, attack, sm));
+    if (f0 < 190 && this.sound !== 'pure') vs.push(holdNote(out, f0 * 2, this.sound, 0.34, at, attack, sm));
     return vs;
   }
   _stopVoices(fast) { const now = getCtx().currentTime; for (const v of this.voices) v.stop(now, fast ? 0.018 : 0.12); this.voices = []; }

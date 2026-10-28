@@ -4,6 +4,7 @@
 import { db } from './db.js';
 import { openDocument, mapDoc } from './score.js';
 import { analyse } from './omr.js';
+import { linesOf } from './picker-lines.js';
 import { cleanPhoto } from './review.js';
 
 const $ = (s) => document.querySelector(s);
@@ -89,47 +90,52 @@ async function showPage() {
   const w = Math.round(pw * k), h = Math.round(ph * k);
   const pg = $('#pkPage'); pg.style.width = w + 'px'; pg.style.height = h + 'px';
   const dpr = Math.min(2, devicePixelRatio || 1);
-  const c = $('#pkCanvas'); await PK.doc.render(PK.page, c, w * dpr, h * dpr);
+  // (drawn aside, then shown: turning quickly never draws two pages into one picture at once)
+  const page = PK.page, tmp = document.createElement('canvas');
   const d = $('#pkDraw'); d.width = w * dpr; d.height = h * dpr;
   drawSel();
   findLines();
+  try { await PK.doc.render(page, tmp, w * dpr, h * dpr); } catch (err) { console.warn(err); }
+  if (PK.doc && PK.page === page) { const c = $('#pkCanvas'); c.width = tmp.width; c.height = tmp.height; c.getContext('2d').drawImage(tmp, 0, 0); }
+  tmp.width = tmp.height = 0;
 }
 // ---------- the lines of music on the page ----------
+let LW = null, lwBroken = false, lwSeq = 0; const lwWait = new Map();
+function linesElsewhere(canvas) {
+  if (lwBroken || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.resolve(null);
+  if (!LW) {
+    try {
+      LW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
+      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) { lwBroken = true; w.res(null); } else w.res(d.lines); };
+      LW.onerror = () => { lwBroken = true; for (const w of lwWait.values()) { clearTimeout(w.t); w.res(null); } lwWait.clear(); try { LW.terminate(); } catch {} LW = null; };
+    } catch { lwBroken = true; return Promise.resolve(null); }
+  }
+  return createImageBitmap(canvas).then((page) => new Promise((res) => {
+    const id = ++lwSeq;
+    const t = setTimeout(() => { lwWait.delete(id); res(null); }, 30000);
+    lwWait.set(id, { res, t });
+    try { LW.postMessage({ id, page }, [page]); } catch { clearTimeout(t); lwWait.delete(id); lwBroken = true; res(null); }
+  }), () => null);
+}
 async function findLines() {
   const key = PK.doc.id + ':' + PK.page + ':' + (PK.source.scoreId || PK.source.file || '');
   const page = PK.page;
-  if (PK.linesCache.has(key)) { PK.lines = PK.linesCache.get(key); drawSel(); return; }
+  if (PK.linesCache.has(key)) { PK.lines = PK.linesCache.get(key); $('#pkFinding').hidden = true; $('#pkAll').hidden = !(PK.lines && PK.lines.length); drawSel(); drawTray(); return; }
   $('#pkFinding').hidden = false;
+  // (a moment first: turning through the pages quickly reads none of the pages passed by)
+  await new Promise((r) => setTimeout(r, 350));
+  if (PK.page !== page || !PK.doc) return;
   try {
     const [pw, ph] = PK.doc.sizes[page];
     const sc = Math.min(3, Math.max(1, 1700 / pw));
     const c = document.createElement('canvas');
     await PK.doc.render(page, c, pw * sc, ph * sc);
-    const A = await analyse(c);
+    if (PK.page !== page || !PK.doc) { c.width = c.height = 0; return; }
+    // read in a thread of its own (the page stays free to turn); here only if that cannot be had
+    let lines = await linesElsewhere(c);
+    if (!lines) { const A = await analyse(c); lines = linesOf(A); }
     c.width = c.height = 0;
-    if (PK.page !== page || !PK.doc) return;
-    const lines = [];
-    const W = A.w, H = A.h;
-    for (const sys of A.systems || []) {
-      const sts = sys.map((i) => A.staves[i]);
-      const s0 = sts[0], sp = s0.sp;
-      const top = Math.min(...sts.map((q) => q.top)), bot = Math.max(...sts.map((q) => q.bottom));
-      const x0 = Math.max(0, Math.min(...sts.map((q) => q.x0)) - sp * 0.6), x1 = Math.min(W, Math.max(...sts.map((q) => q.x1)) + sp * 0.6);
-      const heads = s0.heads || [];
-      const firstHead = heads.length ? Math.min(...heads.map((q) => q.x)) : s0.x0 + sp * 5;
-      const headEnd = Math.max(s0.x0 + sp * 2.5, firstHead - sp * 1.0);
-      const bars = (s0.bars || []).map((b) => b.x).filter((x) => x > headEnd + sp && x < s0.x1 - sp * 1.2).sort((a, b) => a - b);
-      lines.push({ y0: top - sp * 4.2, y1: bot + sp * 4.2, top, bot, x0, x1, headEnd, cuts: [headEnd, ...bars, s0.x1], W, H, sp });
-    }
-    // neighbouring lines share the white space between them
-    for (let i = 0; i < lines.length; i++) {
-      if (i > 0) lines[i].y0 = Math.max(lines[i].y0, (lines[i - 1].bot + lines[i].top) / 2);
-      if (i < lines.length - 1) lines[i].y1 = Math.min(lines[i].y1, (lines[i].bot + lines[i + 1].top) / 2);
-    }
-    for (let i = 0; i < lines.length; i++) {
-      const L = lines[i];
-      lines[i] = { y0: Math.max(0, L.y0) / H, y1: Math.min(H, L.y1) / H, x0: L.x0 / W, x1: L.x1 / W, cuts: L.cuts.map((x) => x / W) };
-    }
+    if (PK.page !== page || !PK.doc) { PK.linesCache.set(key, lines); return; }
     PK.linesCache.set(key, lines);
     PK.lines = lines;
   } catch (err) { console.error(err); PK.lines = []; }

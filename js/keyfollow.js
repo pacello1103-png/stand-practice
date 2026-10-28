@@ -75,7 +75,9 @@ export class KeyFollower {
     this.ev = new Array(12).fill(0); if (!this.post) this._resetPost();
   }
   _now() { return this.clock ? this.clock() : performance.now(); }
-  _sens() { const g = globalThis.__earSens; return Math.max(0, Math.min(1, g !== undefined ? g : this.sens)); }
+  // (the slider's middle hears a change of key sooner than before — tested: no false changes at
+  // that — and its ends still go from careful to very quick)
+  _sens() { const g = globalThis.__earSens; return Math.max(0, Math.min(1, g !== undefined ? g : 0.35 + 0.6 * this.sens)); }
   stop() {
     if (!this.on) return;
     this.on = false; clearInterval(this.timer);

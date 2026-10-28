@@ -78,6 +78,7 @@ export async function createComposition(opts) {
 }
 async function closeCompose() {
   player.stop(); syncPlay();
+  try { D.hidePanel(); } catch {}   // (Layout, Capture, Sound… close with Compose)
   await save(true);
   $('#compose').hidden = true; $('#library').hidden = false; document.body.classList.add('at-home');
   C.score = null; C.lay = null;
@@ -2147,6 +2148,12 @@ function wirePanels() {
   $('#lyOrient').addEventListener('change', (e) => edit(() => { C.score.layout.landscape = e.target.value === '1'; }, { keepSel: true }));
   $('#lyConcert').addEventListener('change', (e) => edit(() => { C.score.layout.concert = e.target.checked; }, { keepSel: true }));
   $('#lyHide').addEventListener('change', (e) => edit(() => { C.score.layout.hideEmpty = e.target.checked; }, { keepSel: true }));
+  // the distances between staves and between lines of music (the same everywhere)
+  for (const [id, k] of [['#lyStaffGap', 'staffGap'], ['#lySysGap', 'sysGap']]) {
+    $(id).addEventListener('input', (e) => { const v = +e.target.value, sp = (C.score.layout.staffMm || 7) / 4; $(id + 'Val').textContent = `${v} spaces · ${(v * sp).toFixed(1)} mm`; });
+    $(id).addEventListener('change', (e) => { edit(() => { C.score.layout[k] = +e.target.value; }, { keepSel: true }); renderLayout(); });
+  }
+  $('#lyGapStd').addEventListener('click', () => { edit(() => { delete C.score.layout.staffGap; delete C.score.layout.sysGap; }, { keepSel: true }); renderLayout(); });
   $('#lyAdd4').addEventListener('click', () => edit(() => M.addBars(C.score, 4)));
   $('#lyAdd16').addEventListener('click', () => edit(() => M.addBars(C.score, 16)));
   // ---- sound
@@ -2425,6 +2432,13 @@ function renderLayout() {
     box.append(b);
   }
   $('#lyStaffVal').textContent = C.score.layout.staffMm + ' mm';
+  // the distances: the standard unless chosen (shown in spaces and in millimetres on paper)
+  const L = C.score.layout, sp = (L.staffMm || 7) / 4, multi = C.score.parts.length > 1 || C.score.parts.some((p) => p.staves.length > 1);
+  const sg = +L.staffGap || 7, yg = +L.sysGap || (multi ? 11 : 8.5);
+  $('#lyStaffGap').value = sg; $('#lySysGap').value = yg;
+  $('#lyStaffGapVal').textContent = `${sg} spaces · ${(sg * sp).toFixed(1)} mm${L.staffGap ? '' : ' (standard)'}`;
+  $('#lySysGapVal').textContent = `${yg} spaces · ${(yg * sp).toFixed(1)} mm${L.sysGap ? '' : ' (standard)'}`;
+  $('#lyStaffGap').disabled = !multi;
 }
 function renderExport() {
   const box = $('#exPartList'); box.textContent = '';

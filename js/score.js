@@ -203,24 +203,27 @@ async function openDocumentOne(file, known) {
     const LIGHT_LONG = PHONE_UA ? 1900 : 2600, HEAVY_MS = 650, scanLike = file.data.byteLength / Math.max(1, pdf.numPages) > 90e3;
     // (one queue for the whole app: the same scan open twice — on the stand and for the iPhone —
     // never draws two of its pages at once either)
-    let heavy = !!(fid && HEAVY.fids.has(fid)), gone = false, lightening = false, lightHave = null;
+    let heavy = !!(fid && HEAVY.fids.has(fid)), gone = false, lightening = false, lightHave = null, cur = 0;
     const lightenAll = async () => {
       if (lightening || !fid || gone || HEAVY.lightening.has(fid)) return; lightening = true; HEAVY.lightening.add(fid);
       try {
         lightHave = lightHave || await lightKeys(fid);
-        for (let k = 0; k < pdf.numPages && !gone; k++) {
-          if (lightHave.has(k)) continue;
+        // the pages just after the one on the stand first (the ones you are about to turn to)
+        const nextK = () => { for (let d = 0; d < pdf.numPages; d++) { const k = (cur + d) % pdf.numPages; if (!lightHave.has(k)) return k; } return -1; };
+        for (let k = nextK(); k >= 0 && !gone; k = nextK()) {
           // (only when nothing else is being drawn: never two of these pages at once)
           for (let w8 = 0; (HEAVY.active > 0 || globalThis.__busyUntil > performance.now()) && w8 < 600 && !gone; w8++) await new Promise((r) => setTimeout(r, 250));
           if (gone) break;
           const pg = await pdf.getPage(k + 1); const v1 = pg.getViewport({ scale: 1 });
           const sc = LIGHT_LONG / Math.max(v1.width, v1.height);
           const c = document.createElement('canvas'); c.width = Math.round(v1.width * sc); c.height = Math.round(v1.height * sc);
+          let ok = false;
           try {
             HEAVY.active++;
-            await (HEAVY.chain = HEAVY.chain.then(() => pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise).catch(() => {}));
+            await (HEAVY.chain = HEAVY.chain.then(() => pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise).then(() => { ok = true; }).catch(() => {}));
           } finally { HEAVY.active--; }
-          const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+          // (a page that did not draw is never kept: it would show black from then on)
+          const b = ok && !looksBlack(c) ? await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86)) : null;
           c.width = c.height = 0; pg.cleanup();
           if (b && !gone) { await lightPut(fid, k, b); lightHave.add(k); }
           await new Promise((r) => setTimeout(r, 300));
@@ -240,6 +243,7 @@ async function openDocumentOne(file, known) {
       pages: pdf.numPages, sizes, pdf,
       async render(i, canvas, w, h, opts = {}) {
         const W = Math.round(w), H = Math.round(h);
+        if (Math.max(W, H) > 500) cur = i;   // (a page on the stand, not a small picture)
         // the light copy of a heavy scan, when its page is ready
         if (fid && (heavy || lightHave === null || lightHave.size)) {
           if (lightHave === null) lightHave = await lightKeys(fid);
@@ -287,6 +291,11 @@ async function openDocumentOne(file, known) {
         await task.promise;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
         if (key && (opts.keep || performance.now() - t0 > PIX_SLOW)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
+        // a heavy page just drawn big enough is its own light copy (no need to draw it twice)
+        if (heavy && fid && lightHave && !lightHave.has(i) && Math.max(W, H) >= LIGHT_LONG * 0.75 && !looksBlack(canvas)) {
+          lightHave.add(i);
+          canvas.toBlob((b) => { if (b && !gone) lightPut(fid, i, b).catch(() => lightHave.delete(i)); else lightHave.delete(i); }, 'image/jpeg', 0.86);
+        }
         // (only a scan is made light: its file holds large pictures; music drawn as lines stays sharp at any zoom)
         if (performance.now() - t0 > HEAVY_MS && !heavy && fid && scanLike) { heavy = true; HEAVY.fids.add(fid); setTimeout(lightenAll, 1500); }
         else if (heavy && !lightening) setTimeout(lightenAll, 1500);
@@ -333,12 +342,29 @@ async function openDocumentOne(file, known) {
   };
 }
 
-export async function makeThumb(doc) {
+// a picture that came out (almost) all black: the page did not really draw (out of memory, or
+// stopped half way), never something to keep
+export function looksBlack(src, w = 24, h = 32) {
+  try {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data; let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum / (d.length / 4) / 3 < 14;
+  } catch { return false; }
+}
+export async function makeThumb(doc, { dark = false } = {}) {
   const [pw, ph] = doc.sizes[0];
   const w = 360, h = Math.round((w * ph) / pw);
-  const c = document.createElement('canvas');
-  await doc.render(0, c, w, h);
-  return new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.82));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const c = document.createElement('canvas');
+    try { await doc.render(0, c, w, h); } catch { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }
+    if (!dark && looksBlack(c)) { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }
+    const b = await new Promise((res) => c.toBlob((x) => res(x), 'image/jpeg', 0.82));
+    c.width = c.height = 0;
+    return b;
+  }
+  return null;
 }
 
 // ---------- reading title and composer ----------

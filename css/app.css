@@ -1584,6 +1584,16 @@ body.touring #score.chrome-off .inkbar { opacity: 1; }
 .eyecal-dot.ring { background: transparent; box-shadow: 0 0 0 3px var(--accent-text), 0 0 0 10px var(--accent-soft); }
 .eyecal-dot.ring::after { background: var(--accent-text); }
 .eyecal-dot.shrink { animation: eyecalshrink 1.3s ease-in forwards; }
+/* eyes lost: the dot waits, amber (no words to read meanwhile) */
+.eyecal-dot.lost { background: #e0a020; box-shadow: 0 0 0 8px rgba(224,160,32,.25); }
+.eyecal-dot.pulse { animation: eyecalpulse .7s ease-in-out 2; }
+@keyframes eyecalpulse { 50% { transform: scale(1.35); } }
+/* which way to turn the head: an arrow beside the dot */
+.eyecal-dot[data-head]::before { content: ""; position: absolute; left: 50%; top: 50%; width: 0; height: 0; border: 11px solid transparent; }
+.eyecal-dot[data-head="left"]::before { margin: -11px 0 0 -58px; border-right: 16px solid var(--accent-text); border-left-width: 0; }
+.eyecal-dot[data-head="right"]::before { margin: -11px 0 0 42px; border-left: 16px solid var(--accent-text); border-right-width: 0; }
+.eyecal-dot[data-head="up"]::before { margin: -58px 0 0 -11px; border-bottom: 16px solid var(--accent-text); border-top-width: 0; }
+.eyecal-dot[data-head="down"]::before { margin: 42px 0 0 -11px; border-top: 16px solid var(--accent-text); border-bottom-width: 0; }
 @keyframes eyecalshrink { from { transform: scale(1); } to { transform: scale(0.35); } }
 .eyecal-seen { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; border: 3px solid #2fa36b; background: rgba(47,163,107,.12); pointer-events: none; transition: left .1s linear, top .1s linear, opacity .2s; z-index: 4; }
 .eyecal-seen.lost { opacity: .25; }

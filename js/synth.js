@@ -6,11 +6,14 @@ import { getCtx } from './audio.js';
 export const VOICES = { piano: 'Piano', organ: 'Organ', bow: 'Bow', pure: 'Soft' };
 
 const waveCache = new Map();
-function wave(ctx, name, amps) {
-  const key = name + ctx.sampleRate;
+// smooth: the same harmonics, each started at its own phase (Schroeder's): the sound is the same
+// to the ear, but the wave has no tall peaks, so it can be played louder without ever clipping
+// (used by the drone, which must be loud and stay clean)
+function wave(ctx, name, amps, smooth = false) {
+  const key = name + ctx.sampleRate + (smooth ? 's' : '');
   if (waveCache.has(key)) return waveCache.get(key);
   const n = amps.length + 1, re = new Float32Array(n), im = new Float32Array(n);
-  amps.forEach((a, i) => { im[i + 1] = a; });
+  amps.forEach((a, i) => { if (!smooth) { im[i + 1] = a; return; } const k = i + 1, ph = Math.PI * k * (k - 1) / amps.length; re[i + 1] = a * Math.sin(ph); im[i + 1] = a * Math.cos(ph); });
   const w = ctx.createPeriodicWave(re, im);
   waveCache.set(key, w);
   return w;
@@ -98,13 +101,13 @@ function noise(ctx) {
 const SAW = Array.from({ length: 48 }, (_, i) => 1 / (i + 1));
 export const VOICE_GAIN = { strings: 1, organ: 0.85, choir: 1.15, pure: 0.9, flute: 1.05, bow: 1.1, horn: 1.05 };
 const FLUTE = [1, 0.22, 0.04];
-export function holdNote(out, freq, voice = 'strings', level = 1, at, attack = 0.18) {
+export function holdNote(out, freq, voice = 'strings', level = 1, at, attack = 0.18, smooth = false) {
   const ctx = getCtx(), t = at ?? ctx.currentTime + 0.02;
   const g = ctx.createGain(); g.gain.value = 0; g.connect(out);
   const src = [];
   const osc = (f, waveName, amps, det = 0) => {
     const o = ctx.createOscillator();
-    if (amps) o.setPeriodicWave(wave(ctx, waveName, amps)); else o.type = 'sine';
+    if (amps) o.setPeriodicWave(wave(ctx, waveName, amps, smooth)); else o.type = 'sine';
     o.frequency.value = f; o.detune.value = det; o.start(t); src.push(o); return o;
   };
   if (voice === 'strings') {

@@ -59,9 +59,9 @@ const like = (f) => 0.04 + 0.96 * f * f;
 export class PageFollower {
   // render(i, canvas, w, h) draws page i; pages() is the number of pages; turn() turns;
   // onState(text, hearing); half() is where a half-page turn splits the screen (or null)
-  constructor({ render, pages, turn, onState, half, halfWanted, gaze, gazeOff, when, store }) {
+  constructor({ render, pages, turn, onState, half, halfWanted, gaze, gazeOff, when, store, fixedShift }) {
     // when(): where to turn, 0 (as the bar before the last begins) .. 0.5 (as the last bar begins) .. 1 (with the last notes)
-    Object.assign(this, { store: store || null, render, pages, turnFn: turn, onState, half: half || (() => null), halfWanted: halfWanted || null, gaze: gaze || null, gazeOff: gazeOff || null, whenRaw: when || (() => 0.5) });
+    Object.assign(this, { fixedShift: fixedShift || null, store: store || null, render, pages, turnFn: turn, onState, half: half || (() => null), halfWanted: halfWanted || null, gaze: gaze || null, gazeOff: gazeOff || null, whenRaw: when || (() => 0.5) });
     // how far the eyes are to be believed: how often they have agreed with the playing lately
     this.trust = 0.5;
     this.cache = new Map(); this.on = false; this.page = 0; this.last = 0;
@@ -104,11 +104,11 @@ export class PageFollower {
     this.page = first; this.last = last;
     // after our own turn we know where we are: the top of the new page
     this.start0 = forward ? 'top' : 'any';
-    this.post = null; this.sinceTurn = 0; this._gen = (this._gen || 0) + 1;
+    this.post = null; this.sinceTurn = 0; this._gen = (this._gen || 0) + 1; this._lastBest = undefined; if (this.vstate) for (const q of Object.values(this.vstate)) { q.post = null; q._lastBest = undefined; q.goRun = 0; }
     if (this.endT) { clearTimeout(this.endT); this.endT = 0; }
     this.prepare();
   }
-  reset() { this.cache.clear(); this.post = null; this.shift = null; this.shiftScore.clear(); this.heard = 0; }
+  reset() { this.cache.clear(); this.post = null; this.shift = null; this.shiftScore.clear(); this.heard = 0; this.vstate = null; this.variant = null; }
   async prepare() {
     for (let i = this.page; i <= Math.min(this.pages() - 1, this.last + 1); i++) await this.notesOf(i);
   }
@@ -118,7 +118,7 @@ export class PageFollower {
     const p = (async () => {
       // read before, for this score as it is now: nothing to read again
       const kept = this.store ? await this.store.get(i).catch(() => null) : null;
-      if (kept && Array.isArray(kept.seq) && kept.at) return kept;
+      if (kept && Array.isArray(kept.seq) && kept.at && kept.v === 2) return kept;   // (read by an older Stand: read again, once)
       const c = document.createElement('canvas');
       await this.render(i, c, 1600, 2263);
       let r = null;
@@ -151,7 +151,10 @@ export class PageFollower {
     }
     let s = 0;
     // a jump (starting again, a repeat) lands anywhere, or where the eyes are
-    const jumpAt = (j) => (gz ? JUMP * ((1 - gz.w) / n + (gz.w * gz.K[j]) / gz.sumK) : JUMP / n);
+    // (but never straight into the place where the page turns, or past it: that place is reached
+    // note by note. A phrase that comes back there must not pull the playing ahead and turn early)
+    const cut = this._jumpCut ?? -1;
+    const jumpAt = (j) => (gz ? JUMP * ((1 - gz.w) / n + (gz.w * gz.K[j]) / gz.sumK) : JUMP / n) * (cut >= 0 && j >= cut ? (globalThis.__jumpCutK ?? 0.04) : 1);
     for (let j = 0; j < n; j++) {
       let l = like(fit(obs, seq[j], sh));
       if (gz) l *= 1 - gz.w + gz.w * gz.K[j];
@@ -204,37 +207,70 @@ export class PageFollower {
     }
     this.trust += (ok - this.trust) * 0.08;
   }
+  // Scores with a solo part over the piano (a cello sonata, a concerto's piano score): the soloist
+  // plays only the top line, the pianist only the piano. Both readings are followed side by side,
+  // and the one the playing fits better is the one that turns the pages.
   async _heard(obs) {
     const pages = [], gen = this._gen;
     const lastIdx = Math.min(this.pages() - 1, this.last + 1);
     for (let i = this.page; i <= lastIdx; i++) pages.push({ i, ...(await this.notesOf(i)) });
     // (stopped, turned or moved while the pages were being read: this note belongs to before)
     if (gen !== this._gen) return;
-    const seq = []; let firstNext = Infinity, turnAt = -1, barAt = -1;
-    pages.forEach((pg, k) => {
+    this.heard++; this.sinceTurn++;
+    // an instrument that sounds as written (cello, violin, flute, piano…): no interval to look for
+    // (looking for one, a run of notes could be taken for the music a fourth away, and followed so)
+    if (this.shift === null && this.fixedShift) { const f = this.fixedShift(); if (f !== null && f !== undefined) this.shift = f; }
+    // the pace of the playing (time from one note to the next), for turning with the last notes
+    if (obs.t !== undefined) { if (this.lastObsT !== undefined) { const d = obs.t - this.lastObsT; if (d > 80 && d < 2500) this.ioi = this.ioi ? this.ioi * 0.85 + d * 0.15 : d; } this.lastObsT = obs.t; }
+    const solo = pages.some((pg) => pg.solo && pg.solo.length);
+    if (!solo) { this.variant = 'all'; this._heardV(obs, pages, 'all', true); return; }
+    const KEYS = ['post', 'seqKey', '_lastBest', '_lastConf', 'goRun', '_jumpCut'];
+    const V = this.vstate = this.vstate || { all: { score: 0.5 }, solo: { score: 0 } };
+    if (!this.variant) this.variant = 'all';
+    const mine = {}; for (const k of KEYS) mine[k] = this[k];
+    const evs = {};
+    for (const v of ['all', 'solo']) {
+      const st = V[v];
+      for (const k of KEYS) this[k] = st[k];
+      evs[v] = this._heardV(obs, pages, v, v === this.variant);
+      for (const k of KEYS) st[k] = this[k];
+      st.score = st.score * 0.94 + Math.log((evs[v] || 0) + 1e-9);
+    }
+    // the other reading takes over only when it is clearly better for a while
+    const other = this.variant === 'all' ? 'solo' : 'all';
+    if (this.shift !== null && V[other].score > V[this.variant].score + (globalThis.__varMargin ?? 2.5)) this.variant = other;
+    for (const k of KEYS) this[k] = V[this.variant][k];
+    void mine;
+  }
+  _heardV(obs, pages, v, act) {
+    const seq = []; let firstNext = Infinity, turnAt = -1, barAt = -1, jumpCut = -1;
+    pages.forEach((pg0) => {
+      // (the solo reading: the top line alone, where the page has one over a piano)
+      const pg = v === 'solo' && pg0.solo && pg0.solo.length ? { ...pg0, seq: pg0.solo, at: pg0.soloAt, turnAt: pg0.soloAt ? pg0.soloAt.bar : pg0.turnAt } : pg0;
       const off = seq.length;
       if (pg.i > this.last && firstNext === Infinity) firstNext = off;
-      if (pg.i === this.last && pg.turnAt >= 0) { turnAt = off + (this.turnIndex(pg.at, this.when()) ?? pg.turnAt); barAt = off + ((pg.at && pg.at.bar) ?? pg.turnAt); }
+      if (pg.i === this.last && pg.turnAt >= 0) { turnAt = off + (this.turnIndex(pg.at, this.when()) ?? pg.turnAt); barAt = off + ((pg.at && pg.at.bar) ?? pg.turnAt); jumpCut = off + Math.max(0, Math.min((pg.at && pg.at.prev) ?? pg.turnAt, pg.turnAt) - 2); }
       for (const e of pg.seq) seq.push({ ...e, pg: pg.i });
     });
     if (firstNext === Infinity) firstNext = seq.length;
+    this._jumpCut = jumpCut;
     // (a page on show with no notes found, a title page or one that could not be read: it turns
     // once the playing is in the next one)
     if (turnAt < 0 && firstNext < seq.length) turnAt = firstNext;
-    if (!seq.length) return;
-    const key = pages.map((p) => p.i + ':' + p.seq.length).join('|');
-    if (!this.post || this.seqKey !== key) { this.post = { p: this._start(seq, firstNext), alt: new Map() }; this.seqKey = key; }
-    this.heard++; this.sinceTurn++;
-    // the pace of the playing (time from one note to the next), for turning with the last notes
-    if (obs.t !== undefined) { if (this.lastObsT !== undefined) { const d = obs.t - this.lastObsT; if (d > 80 && d < 2500) this.ioi = this.ioi ? this.ioi * 0.85 + d * 0.15 : d; } this.lastObsT = obs.t; }
+    if (!seq.length) return 0;
+    const key = v + pages.map((p) => p.i + ':' + p.seq.length).join('|');
+    if (!this.post || this.seqKey !== key) { this._lastBest = undefined; this.post = { p: this._start(seq, firstNext), alt: new Map() }; this.seqKey = key; }
     const gz = this._gazeK(seq);
+    let evNow = 0;
     // the interval of a transposing instrument: try the others alongside, until one is clearly best
+    if (this.shift !== null && this.post.alt.size) { const st = this.post.alt.get(this.shift); if (st) this.post.p = st.p; this.post.alt.clear(); }
     if (this.shift === null) {
       const cands = obs.mono ? SHIFTS : [0];
       for (const sh of cands) {
         let st = this.post.alt.get(sh);
         if (!st) st = { p: sh === 0 ? this.post.p : this._start(seq, firstNext), score: 0 };
         const r = this._step(st.p, obs, seq, sh, gz);
+        if (sh === 0) evNow = r.ev;
         st.p = r.p; st.score = st.score * 0.92 + Math.log(r.ev + 1e-12) + (sh === 0 ? 0.25 : 0);
         this.post.alt.set(sh, st);
       }
@@ -244,7 +280,7 @@ export class PageFollower {
         // music in its written key is far more likely: another interval must be clearly better,
         // and better than every other interval too (a wrong interval would turn at the wrong time)
         const margin = arr.length > 1 ? arr[0][1].score - arr[1][1].score : 99;
-        if ((arr[0][0] === 0 && margin > 1) || (arr[0][0] !== 0 && arr[0][1].score > z.score + 3 && margin > 2.5 && this.heard >= 12)) { this.shift = arr[0][0]; this.post.p = arr[0][1].p; this.post.alt.clear(); }
+        if (act && ((arr[0][0] === 0 && margin > 1) || (arr[0][0] !== 0 && arr[0][1].score > z.score + 3 && margin > 2.5 && this.heard >= 12))) { this.shift = arr[0][0]; this.post.p = arr[0][1].p; this.post.alt.clear(); }
       }
       if (this.shift === null) {
         // until the interval is known, show the best guess, but never turn on it
@@ -252,24 +288,38 @@ export class PageFollower {
         this.post.p = arr[0][1].p; this.guessing = obs.mono;
       } else this.guessing = false;
     } else {
-      this.post.p = this._step(this.post.p, obs, seq, this.shift, gz).p;
+      // Music repeats itself: the same phrase further on fits the playing as well as the place
+      // being played, and a wrong note could make the follower leap there (and turn the page bars
+      // too early). While it is sure where the playing is, other places far from it fade away
+      // (and come back as soon as the playing really is there).
+      const pp = this.post.p, lb = this._lastBest, lc = this._lastConf || 0;
+      // (going back is rarer still — a repeat — and needs the playing to say so for a few notes)
+      if (lb !== undefined && lc > (globalThis.__fadeConf ?? 0.45) && lb < pp.length) {
+        const k = globalThis.__farFade ?? 0.45, kb = globalThis.__backFade ?? 0.3;
+        let s2 = 0; for (let j = 0; j < pp.length; j++) { if (j > lb + 8) pp[j] *= k; else if (j < lb - 6) pp[j] *= kb; s2 += pp[j]; }
+        if (s2 > 0) for (let j = 0; j < pp.length; j++) pp[j] /= s2;
+      }
+      const r = this._step(this.post.p, obs, seq, this.shift, gz);
+      this.post.p = r.p; evNow = r.ev;
     }
     const p = this.post.p;
     let best = 0; for (let j = 1; j < p.length; j++) if (p[j] > p[best]) best = j;
     // how sure: the probability near the best place
     let conf = 0; for (let j = Math.max(0, best - 2); j <= Math.min(p.length - 1, best + 2); j++) conf += p[j];
+    this._lastBest = best; this._lastConf = conf;
+    if (!act) return evNow;   // (the other reading only keeps up)
     this._trustUpdate(gz, seq[best], conf);
-    if (window.__followDbg) window.__followDbg.push([Math.round(obs.t), obs.mono ? obs.pc : 'c', best, +conf.toFixed(2), seq[best] && seq[best].pcs.join('.'), this.shift, gz ? +gz.w.toFixed(2) : 0, +this.trust.toFixed(2)]);
-    if (conf < 0.3 || this.heard < 3) { this.onState && this.onState('Listening', true); return; }
+    if (window.__followDbg) window.__followDbg.push([Math.round(obs.t), obs.mono ? obs.pc : 'c', best, +conf.toFixed(2), seq[best] && seq[best].pcs.join('.'), this.shift, gz ? +gz.w.toFixed(2) : 0, +this.trust.toFixed(2), v]);
+    if (conf < 0.3 || this.heard < 3) { this.onState && this.onState('Listening', true); return evNow; }
     const n = seq[best];
     this.onState && this.onState(`Bar ${n.bar + 1}${pages.length > 2 || this.last > this.page ? ` · p. ${n.pg + 1}` : ''}`, true);
-    if (this.last >= this.pages() - 1 && n.pg <= this.last) return;            // the last page: nothing to turn
+    if (this.last >= this.pages() - 1 && n.pg <= this.last) return evNow;            // the last page: nothing to turn
     // right after a turn, wait for some playing on the new page (a page is never over in a few notes)
     const minAfter = Math.max(3, Math.min(8, Math.floor(firstNext / 3)));
-    if (performance.now() - this.turnedAt < 1800 || this.sinceTurn < minAfter || (this.shift === null && this.guessing)) return;
+    if (performance.now() - this.turnedAt < 1800 || this.sinceTurn < minAfter || (this.shift === null && this.guessing)) return evNow;
     // a page is not over before a good part of its notes have been played (music repeats itself: the
     // same phrase on the last line can seem to be heard long before it comes)
-    if ((globalThis.__followMinPlay ?? 1) && turnAt > 0 && this.sinceTurn < turnAt * 0.6) return;
+    if ((globalThis.__followMinPlay ?? 1) && turnAt > 0 && this.sinceTurn < turnAt * 0.6) return evNow;
     // mass at or past the turning point (the next page counts too: a late turn is still a turn)
     // (turning on the last line or with the last notes: a note or two before the place counts too,
     // the playing being heard a little late at the end of a page)
@@ -305,5 +355,6 @@ export class PageFollower {
       this.turnedAt = performance.now(); this.sinceTurn = 0;
       this.turnFn();
     }
+    return evNow;
   }
 }
