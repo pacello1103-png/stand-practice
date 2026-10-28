@@ -470,7 +470,10 @@ export class InkLayer {
     if (v) this._baseLater();
     if (this.onItems) this.onItems();
   }
-  resize(w, h) { const had = !!this.view; this.view = null; this._dropBase(); if (had || this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
+  // Back to the whole page: the canvas also goes back to covering the whole page. (It was left placed
+  // over the part that was on screen, so after a zoom the page's markings were squeezed into that part,
+  // in the wrong place and blurred, until the next sharpening.)
+  resize(w, h) { const had = !!this.view; this.view = null; this._dropBase(); if (had) this.canvas.style.cssText = ''; if (had || this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.redraw(); } }
   setView(view, w, h) { const pw = this.view ? null : [this.canvas.width, this.canvas.height]; this.view = view; if (pw) this.pageSize = pw; this.canvas.width = Math.max(1, Math.round(w)); this.canvas.height = Math.max(1, Math.round(h)); this.redraw(); this._base(); }
   // Zoomed in, the sharp canvas holds only the part on screen. Under it, the whole page's markings
   // at a lower sharpness (the part the sharp canvas covers left empty), so while you pinch out or

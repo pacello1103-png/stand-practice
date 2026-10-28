@@ -1381,6 +1381,7 @@ async function layout(fade) {
         if (!sharp || !e || token !== layoutToken) return;
         sharp.className = 'art'; e.inner.replaceChild(sharp, art); e.art = sharp;
         e.layer.resize(sharp.width, sharp.height);
+        if (Z.s > 1.05) { clearTimeout(Z.inkT); Z.inkT = setTimeout(sharpenInk, 30); }
         if (!INCACHE.has(art)) freeCanvas(art);
       }, () => {});
       const ink = el('canvas', 'ink'); ink.width = art.width; ink.height = art.height;
@@ -1931,6 +1932,8 @@ async function sharpen() {
       art.className = 'art';
       p.inner.replaceChild(art, p.art); p.art = art;
       p.layer.resize(art.width, art.height);
+      // (each page's markings made sharp again at once, not only after every page is drawn)
+      if (want > 1) sharpenInk();
     }
   }
   sharpenInk();
@@ -4317,7 +4320,14 @@ stage.addEventListener('pointerdown', (e) => {
   // is taken for the hand. (A finger on the iPad can measure 50 px or more: a smaller limit took
   // fingers for the hand, so pages did not turn and the finger could not draw.)
   const big = Math.max(e.width || 0, e.height || 0) > 110;
-  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (big && t - lastPenUp < 1500)) { info.palm = true; return; }
+  info.t = t; info.small = !big;
+  if (penDown || t - lastPenUp < (V.inking ? 500 : 350) || (big && t - lastPenUp < 1500)) {
+    // two fingers put down together just after writing are a pinch to zoom, not the hand: the first
+    // was set aside only because the Pencil had just lifted (with the Pencil down, it stays the hand)
+    const other = !penDown && !big && [...PT.values()].find((q) => q !== info && q.type === 'touch' && q.palm && q.soon && q.small && t - q.t < 250);
+    if (!other) { info.palm = true; info.soon = !penDown && !big; return; }
+    other.palm = false;
+  }
   const n = touches().length;
   if (n >= 2 && V.perform) { GS = { kind: 'wait' }; return; }
   if (n >= 2) {
