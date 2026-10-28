@@ -35,15 +35,6 @@
       </article>`).join('')}
     </section>
 
-    <section class="tools" aria-labelledby="toolsH">
-      <div class="tl">
-        <span class="hk"><i></i>${U.allin}</span>
-        <h2 id="toolsH">${U.toolsH}</h2>
-        <p>${U.toolsP}</p>
-      </div>
-      <ul class="tgrid">${TOOLS.map(([i, t], k) => `<li class="rise" style="--i:${k}">${icon(i)}<span>${t}</span></li>`).join('')}</ul>
-    </section>
-
     <section class="private" aria-labelledby="privH">
       <h2 id="privH">${U.privH}</h2>
       <div>
