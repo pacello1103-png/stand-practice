@@ -11,7 +11,7 @@
           <span class="hk"><i></i>${String(k + 1).padStart(2, '0')} · ${h.k}</span>
           <h2>${h.h}</h2>
           <p>${h.p}</p>
-          <button class="hopen" data-open="${h.to[0]}" data-ch="${h.to[1]}">Open the ${title(h.to[0])} folder<svg aria-hidden="true"><use href="#i-chev-r"/></svg></button>
+          <button class="hopen" data-open="${h.to[0]}" data-ch="${h.to[1]}">${fmt(U.openF, { x: title(h.to[0]) })}<svg aria-hidden="true"><use href="#i-chev-r"/></svg></button>
         </div>
         <div class="hpics${h.phone ? ' two' : ''}" aria-hidden="true">
           <div class="dev ipad"><img src="img/s_${h.shot}.webp" alt="" loading="lazy" decoding="async"></div>
@@ -22,31 +22,31 @@
 
     <section class="tools" aria-labelledby="toolsH">
       <div class="tl">
-        <span class="hk"><i></i>All in one</span>
-        <h2 id="toolsH">One stand instead of ten apps.</h2>
-        <p>Everything you practise with, in one place and on the same score. No switching apps in the middle of a phrase.</p>
+        <span class="hk"><i></i>${U.allin}</span>
+        <h2 id="toolsH">${U.toolsH}</h2>
+        <p>${U.toolsP}</p>
       </div>
       <ul class="tgrid">${TOOLS.map(([i, t]) => `<li>${icon(i)}<span>${t}</span></li>`).join('')}</ul>
     </section>
 
     <section class="private" aria-labelledby="privH">
-      <h2 id="privH">No account.<br>No ads.<br>No tracking.</h2>
+      <h2 id="privH">${U.privH}</h2>
       <div>
-        <p>Your scores, markings, recordings and practice log stay on your device. Sound and camera pictures are analysed on the device and never sent anywhere.</p>
-        <a class="plink" href="privacy.html">Read the privacy policy<svg aria-hidden="true"><use href="#i-chev-r"/></svg></a>
+        <p>${U.privP}</p>
+        <a class="plink" href="privacy.html">${U.privLink}<svg aria-hidden="true"><use href="#i-chev-r"/></svg></a>
       </div>
     </section>
 
     <section class="faq" aria-labelledby="faqH">
-      <h2 id="faqH">Questions</h2>
+      <h2 id="faqH">${U.faqH}</h2>
       <div class="qs">${FAQ.map(([q, a]) => `<details><summary>${q}<span class="pm" aria-hidden="true"></span></summary><p>${a}</p></details>`).join('')}</div>
     </section>
 
     <section class="final" aria-labelledby="finalH">
       <div class="fbig" aria-hidden="true">Stand</div>
       <div class="ftx">
-        <h2 id="finalH">The music stand that practises with you.</h2>
-        <div class="cta-row">${ctaHTML()}<span class="ctanote">For iPad and iPhone</span></div>
+        <h2 id="finalH">${U.h1}</h2>
+        <div class="cta-row">${ctaHTML()}<span class="ctanote">${U.finalNote}</span></div>
       </div>
     </section>`;
   host.querySelectorAll('[data-tone]').forEach((el) => THEME.tone(el, F.find((f) => f.id === el.dataset.tone)));

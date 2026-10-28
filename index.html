@@ -64,10 +64,11 @@ button { font: inherit; }
 
 .sbody { max-width: 1240px; margin: 0 auto; padding-left: max(22px, env(safe-area-inset-left, 0px)); padding-right: max(22px, env(safe-area-inset-right, 0px)); }
 .hero { min-height: calc(100vh - 66px); min-height: calc(100svh - 66px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 56px; padding-block: 30px 40px; position: relative; }
-.htext { display: grid; justify-items: start; gap: 22px; min-width: 0; }
+.htext { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 22px; min-width: 0; }
 .hdev { min-width: 0; transform: translateY(40px) scale(.94) rotate(-1.5deg); }
 .sheet.in .hdev.in { transform: translateY(calc(var(--p, 0) * -160px)) rotate(-1.5deg); transition: opacity .9s .25s var(--ease), transform 1.1s .2s var(--ease); }
-.hero h2 { margin: 0; }
+.hero h2 { margin: 0; max-width: 100%; justify-self: stretch; overflow-wrap: normal; }
+.nextcard b { display: block; max-width: 100%; }
 .hero .lead { margin: 0; max-width: 30ch; text-wrap: pretty; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 10px; width: 100%; margin-top: 10px; }
 .tiles button { display: flex; align-items: center; gap: 12px; min-height: 62px; padding: 12px 16px; border: 0; border-radius: var(--tile-r, 16px); background: var(--tile-bg); color: var(--tile-ink); box-shadow: var(--tile-sh); cursor: pointer; text-align: left; font-weight: 600; font-size: 15px; transition: transform .35s var(--ease), background .25s, box-shadow .3s; }
@@ -405,6 +406,23 @@ a.cta:active { transform: scale(.97); }
   .folder:not(.cover) { z-index: 1; }
 }
 
+/* language picker in the header */
+.topr { display: inline-flex; align-items: center; gap: 14px; min-width: 0; }
+.lang { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px 6px 9px; border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(243, 239, 230, .35); cursor: pointer; }
+.lang:hover { box-shadow: inset 0 0 0 1px rgba(243, 239, 230, .7); }
+.lang svg { width: 15px; height: 15px; flex: none; }
+.lang select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: inherit; font: 500 12px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 0 14px 0 0; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 4px top 55%, right 0 top 55%; background-size: 4px 4px; background-repeat: no-repeat; }
+.lang select:focus-visible { outline: none; }
+.lang:focus-within { outline: 2px solid currentColor; outline-offset: 3px; }
+.lang option { color: #1f1e1b; background: #f3efe6; text-transform: none; }
+.foot nav small { flex-basis: 100%; text-align: right; opacity: .7; font-size: 12.5px; }
+@media (max-width: 520px) { #topNote { display: none; } }
+@media (max-width: 760px) { .foot nav small { text-align: left; } }
+@media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
+  .folder .name { white-space: normal; line-height: .95; }
+}
+
 </style>
 </head>
 <body>
@@ -449,16 +467,17 @@ a.cta:active { transform: scale(.97); }
 <symbol id="i-sync" viewBox="0 0 24 24"><path d="M3 12h3l2-5 3 10 3-8 2 3h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"/></g></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
 </svg>
 <div class="wrap">
-  <header class="top"><b>Stand</b><span class="mono">For iPad and iPhone</span></header>
+  <header class="top"><b>Stand</b><span class="topr"><span class="mono" id="topNote">For iPad and iPhone</span><label class="lang"><svg aria-hidden="true"><use href="#i-globe"/></svg><select id="langSel" aria-label="Language"><option>English</option></select></label></span></header>
   <main class="drawer" id="drawer" aria-label="What Stand does"></main>
   <section class="also" id="also" aria-label="Also in Stand"></section>
   <div class="more" id="more"></div>
   <footer class="foot">
-    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. For iPad and iPhone, iPadOS and iOS 15 or later. The scores on this page are J. S. Bach: the Minuet in G (BWV Anh. 114), arranged for cello, and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007), engraved from public-domain editions (Bach-Gesellschaft; Schirmer, 1916) transcribed by the Mutopia Project. Music font: Bravura (SIL Open Font License).</p>
-    <nav aria-label="More"><a href="privacy.html">Privacy policy</a><a href="terms.html">Terms of use</a><a href="privacy.html#support">Support</a><span>&copy; 2026 Stand</span></nav>
+    <p id="footP">Stand keeps your scores, markings, recordings and practice log on your device and works offline.</p>
+    <nav aria-label="More"><a href="privacy.html" id="lkPriv">Privacy policy</a><a href="terms.html" id="lkTerms">Terms of use</a><a href="privacy.html#support" id="lkSupport">Support</a><span>&copy; 2026 Stand</span><small id="legalNote"></small></nav>
   </footer>
 </div>
 <section class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle">
@@ -487,16 +506,16 @@ const F = [
         steps: ['Type “Bach cello suite”', 'Choose your instrument', 'Tap a result'] },
       { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score',
         h: 'Six ways to turn the page.',
-        p: 'Two pages side by side in landscape, one in portrait. Turn them in whatever way suits the moment.',
-        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing (beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
+        p: 'Two pages side by side in landscape, one in portrait, or a landscape page turned sideways across an upright screen. Turn them in whatever way suits the moment.',
+        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing, and your eyes (beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
       { id: 'thisscore', icon: 'more', name: 'This score', shot: '03_more',
         h: 'Each score set up the way you read it.',
         p: 'Half-page turns show the top of the next page while you finish this one, so you never wait for a turn.',
         grid: [['Half-page turns', 'See what comes next'], ['Repeats and jumps', 'D.C., repeats, codas'], ['Bookmarks', 'Jump to a movement'], ['Paper', 'White, warm or night'], ['Bigger music', 'No white margins'], ['Export PDF', 'With or without markings']] },
       { id: 'pages', icon: 'pages', name: 'Pages', shot: '04_pages',
         h: 'Fix the edition, not just read it.',
-        p: 'Crop a page to the music you need, cut it between systems, or move lines up so the page turn falls in a better place. Delete a page with one tap, and Undo is right there.',
-        chips: ['Crop', 'Cut between systems', 'Move lines up', 'Delete and undo'] },
+        p: 'Crop a page to the music you need, cut it between systems, or move lines up so the page turn falls in a better place. Add pages from a file, turn a page the right way up, and take pages out: nothing is lost until you say so.',
+        chips: ['Crop', 'Cut between systems', 'Move lines up', 'Add pages', 'Turn a page', 'Put all back'] },
       { id: 'sets', icon: 'set', name: 'Sets', shot: '23_set_editor',
         h: 'A whole concert in one reading order.',
         p: 'Choose pages from different scores for an audition, an exam or a concert. After the last page of one piece, the next score opens at the right page. No new PDF to make.',
@@ -511,7 +530,7 @@ const F = [
       { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar',
         h: 'The first touch never writes.',
         p: 'Touch the score with the Pencil and the tools open, nothing more. Your next stroke writes. Your finger still turns pages and zooms, and your hand can rest on the glass, so you never write by accident.',
-        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type it, or write it with the Pencil'], ['Eraser', 'Your markings only'], ['Score eraser', 'Removes a printed slur, keeps the staff'], ['Two colours', 'Black and red, one tap away']] },
+        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type it, or write it with the Pencil'], ['Eraser', 'Your markings only'], ['Score eraser', 'Removes a printed slur, keeps the staff'], ['Two colours', 'Black and red, one tap away'], ['Note', 'A see-through sheet on top'], ['Steady hand', 'Calmer, straighter lines']] },
       { id: 'symbols', icon: 'finger', name: 'Symbols', shot: '06_symbols',
         h: 'Symbols in one tap.',
         p: 'Choose a symbol, then tap the music where it goes.',
@@ -548,7 +567,7 @@ const F = [
       { id: 'scales', icon: 'scales', name: 'Scales', shot: '16_scale_tempo',
         h: 'Scales in long notes, or fast.',
         p: 'Any key, major, minors and modes, with its own tempo. Each note lasts 4, 3, 2 or 1 beats, or goes 2 to 4 per beat, with a clean click and a drone underneath.',
-        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal or just tuning', 'One bar count-in'] },
+        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal, just or Pythagorean', 'Piano, organ or bow sound', 'One bar count-in'] },
       { id: 'log', icon: 'chart', name: 'Practice log', shot: '27_practice',
         h: 'See what you really practised.',
         p: 'Time counts by itself while a score is open or a tool is running. The ring on the home screen fills up toward your daily goal.',
@@ -574,7 +593,7 @@ const F = [
         p: 'Play a natural harmonic and Stand names it. Hear the series of any string, and see how far each overtone is from the piano: the 5th harmonic is 14 cents flat, the 7th 31 cents flat.' },
       { id: 'drone', icon: 'drone', name: 'Drone', shot: '12_drone',
         h: 'A drone that follows the music.',
-        p: 'A steady note in pure intervals, so every beat you hear is your own intonation. When the music changes key, the drone can follow.',
+        p: 'A steady note in pure intervals, so every beat you hear is your own intonation. Organ, soft, bow or horn sound, with the fifth or the octave if you like. When the music changes key, the drone can follow.',
         grid: [['I tap', 'Stays until you change it'], ['It listens', 'Follows when the key really changes'], ['My list', 'Your notes, in your order'], ['All keys', 'Moves on every 2 to 16 bars']] },
       { id: 'record', icon: 'mic', name: 'Record', shot: '61_recording',
         h: 'Record while you read.',
@@ -599,7 +618,7 @@ const F = [
     ch: [
       { id: 'composer', icon: 'compose', name: 'Composer', shot: '40_composer',
         h: 'Write with the Pencil, hear it played.',
-        p: 'Notes land where you touch the staff. Two voices on a staff, slurs and hairpins across bars, endings and repeats, and Play with sampled instruments.',
+        p: 'Notes land where you touch the staff. Two voices on a staff, slurs and hairpins across bars, endings and repeats, and Play with sampled orchestral instruments.',
         chips: ['Whole note to 32nd', 'Voice 1 / Voice 2', 'Tuplets 2–11', 'Transpose by interval or key', 'Opens MusicXML'] },
       { id: 'instruments', icon: 'instruments', name: 'Instruments', shot: '43_instruments',
         h: 'More than 100 instruments, each in its own key.',
@@ -609,9 +628,9 @@ const F = [
         h: 'Engraved the way it should be.',
         p: 'Staff size, paper and orientation, empty staves hidden, and staves that never collide. Choose the room and the tuning, from A = 415 to 443.' },
       { id: 'export', icon: 'share', name: 'Export', shot: '44_export',
-        h: 'Score, parts and MusicXML.',
+        h: 'Score, parts, MusicXML and MIDI.',
         p: 'Everything a band or an orchestra needs, from one score.',
-        grid: [['Score', 'PDF, each in its own key'], ['All parts', 'Transposed, multi-bar rests'], ['Concert pitch', 'For the conductor'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio', 'WAV'], ['On my stand', 'Read and mark it']] },
+        grid: [['Score', 'PDF, each in its own key'], ['All parts', 'Transposed, multi-bar rests'], ['Concert pitch', 'For the conductor'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio and MIDI', 'WAV and MIDI files'], ['On my stand', 'Read and mark it']] },
       { id: 'capture', icon: 'capture', name: 'Read music', shot: '50_capture_result',
         h: 'From the printed page to notes.',
         p: 'Choose lines in a PDF, a scan or a photo. Stand reads the notes, rhythms, rests, accidentals, clef, key and time, and pastes them into any instrument and bar.',
@@ -625,11 +644,11 @@ const F = [
 /* App Store: paste the link here on launch day and the buttons become "Download on the App Store". */
 const APP_STORE_URL = '';
 const ctaHTML = () => APP_STORE_URL
-  ? `<a class="cta" href="${APP_STORE_URL}" target="_blank" rel="noopener">Download on the App Store</a>`
-  : `<span class="cta">Coming soon to the App Store</span>`;
+  ? `<a class="cta" href="${APP_STORE_URL}" target="_blank" rel="noopener">${U.dl}</a>`
+  : `<span class="cta">${U.soon}</span>`;
 
 /* ---------- the home page below the folders ---------- */
-const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
+const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['more', 'Only your tools on the home screen'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
 /* each highlight opens a folder at a chapter: [folder id, chapter id] */
 const HIGH = [
   { k: 'Read', to: ['read', 'turns'], shot: '19_perform', phone: null,
@@ -647,13 +666,464 @@ const HIGH = [
 ];
 const TOOLS = [['lib', 'Score reader'], ['pen', 'Pencil markings'], ['passage', 'Practice planner'], ['metro', 'Metronome'], ['fork', 'Tuner'], ['drone', 'Drone'], ['video', 'Recorder and video'], ['chart', 'Practice log'], ['compose', 'Notation'], ['paper', 'Notebooks']];
 const FAQ = [
-  ['Which devices does Stand run on?', 'iPad and iPhone with iPadOS or iOS 15 or later. The iPad is the music stand; the iPhone keeps your practice, your scores to read and the tools in your pocket, and can film for the iPad. Winking to turn pages needs an iPad with Face ID.'],
+  ['Which devices does Stand run on?', 'iPad and iPhone with iPadOS or iOS 15 or later. The iPad is the music stand; the iPhone keeps your practice, your scores to read and the tools in your pocket, and can film for the iPad. Winking to turn pages uses the front camera and works best on an iPad with Face ID.'],
   ['Do I need an account or the internet?', 'No account, ever. Stand works offline. The internet is only used when you ask for something online, such as finding a score on IMSLP or opening a recording on YouTube, Spotify or Apple Music.'],
   ['Where are my scores kept?', 'On your device, in Stand and in a Stand folder in the Files app (Scores, Recordings, Backups). Back up everything to a single file whenever you like, for example in iCloud Drive, and restore it on a new iPad.'],
   ['Can I use my page-turn pedal?', 'Yes. Bluetooth page-turn pedals work out of the box. You can also wink, tap the edge of the page, knock on the stand, let the metronome turn every few bars, or let Stand follow your playing.'],
   ['Will my markings change the PDF?', 'Never. Markings sit on their own layer. Hide them with one tap, or export the score with them or as a clean copy.'],
   ['Is it for my instrument?', 'Stand is made for every musician who reads music: strings, winds, brass, keyboards, guitar, voice. The tuner, drone, harmonics and scales are especially at home with string players, and the composer knows more than 100 instruments.'],
 ];
+
+/* ---------- languages ----------
+   UI: the words around the content. TR: the content (folders, chapters, home page), laid over the English in content.js.
+   Each chapter is [name, heading, text, extras], extras replacing its chips, steps or squares in the same order.
+   The page picks ?lang=…, then the last choice, then the browser's language, then English. */
+const LANGS = [['en', 'English'], ['pt', 'Português'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'], ['it', 'Italiano']];
+
+const UI = {
+  en: {
+    title: 'Stand · The music stand that practises with you', top: 'For iPad and iPhone', lang: 'Language',
+    folder: 'Folder', eyebrow: 'Folder {i} of {n} · {k} things inside', open: 'Open',
+    hintWide: 'Open a folder to see inside', hintPhone: 'Tap a folder to see inside',
+    h1: 'The music stand that practises with you.',
+    coverP: 'Read and mark your scores, turn pages hands-free, practise the hard bars, tune, film yourself and write your own music. One app, on iPad and iPhone.',
+    note: 'No account · Offline · Private', soon: 'Coming soon to the App Store', dl: 'Download on the App Store',
+    scroll: 'Scroll', next: 'Next folder', prev: 'Previous folder', close: 'Close',
+    endcta: 'Everything in this folder, and the four others, in one app.', openF: 'Open the {x} folder',
+    allin: 'All in one', toolsH: 'One stand instead of ten apps.',
+    toolsP: 'Everything you practise with, in one place and on the same score. No switching apps in the middle of a phrase.',
+    privH: 'No account.<br>No ads.<br>No tracking.',
+    privP: 'Your scores, markings, recordings and practice log stay on your device. Sound and camera pictures are analysed on the device and never sent anywhere.',
+    privLink: 'Read the privacy policy', faqH: 'Questions', finalNote: 'For iPad and iPhone',
+    foot: 'Stand keeps your scores, markings, recordings and practice log on your device and works offline. For iPad and iPhone, iPadOS and iOS 15 or later. The scores in the pictures are by J. S. Bach: the Minuet in G (BWV Anh. 114), arranged for cello, and the Préludes of the Cello Suites No. 1 (BWV 1007) and No. 3 (BWV 1009), engraved from public-domain editions (Bach-Gesellschaft; Schirmer, 1916) transcribed by the Mutopia Project. Music font: Bravura (SIL Open Font License).',
+    privacy: 'Privacy policy', terms: 'Terms of use', support: 'Support', legal: '',
+    drawerLabel: 'What Stand does', alsoLabel: 'Also in Stand', onIphone: '{x} on iPhone',
+  },
+  pt: {
+    title: 'Stand · A estante que estuda contigo', top: 'Para iPad e iPhone', lang: 'Língua',
+    folder: 'Pasta', eyebrow: 'Pasta {i} de {n} · {k} coisas lá dentro', open: 'Abrir',
+    hintWide: 'Abre uma pasta para ver o que tem', hintPhone: 'Toca numa pasta para ver o que tem',
+    h1: 'A estante que estuda contigo.',
+    coverP: 'Lê e anota as tuas partituras, vira as páginas sem mãos, estuda os compassos difíceis, afina, filma-te e escreve a tua própria música. Uma só app, no iPad e no iPhone.',
+    note: 'Sem conta · Sem internet · Privado', soon: 'Brevemente na App Store', dl: 'Descarregar na App Store',
+    scroll: 'Desliza', next: 'Pasta seguinte', prev: 'Pasta anterior', close: 'Fechar',
+    endcta: 'Tudo o que está nesta pasta, e nas outras quatro, numa só app.', openF: 'Abrir a pasta {x}',
+    allin: 'Tudo num só sítio', toolsH: 'Uma estante em vez de dez apps.',
+    toolsP: 'Tudo aquilo com que estudas, num só sítio e sobre a mesma partitura. Sem trocar de app a meio de uma frase.',
+    privH: 'Sem conta.<br>Sem anúncios.<br>Sem rastreio.',
+    privP: 'As tuas partituras, anotações, gravações e registo de estudo ficam no teu dispositivo. O som e a imagem da câmara são analisados no próprio dispositivo e nunca são enviados.',
+    privLink: 'Ler a política de privacidade', faqH: 'Perguntas', finalNote: 'Para iPad e iPhone',
+    foot: 'O Stand guarda as tuas partituras, anotações, gravações e registo de estudo no teu dispositivo e funciona sem internet. Para iPad e iPhone, iPadOS e iOS 15 ou posterior. As partituras nas imagens são de J. S. Bach: o Minueto em Sol (BWV Anh. 114), arranjado para violoncelo, e os Prelúdios das Suites para violoncelo n.º 1 (BWV 1007) e n.º 3 (BWV 1009), gravados a partir de edições de domínio público (Bach-Gesellschaft; Schirmer, 1916) transcritas pelo Mutopia Project. Fonte musical: Bravura (SIL Open Font License).',
+    privacy: 'Política de privacidade', terms: 'Termos de utilização', support: 'Apoio', legal: 'A política de privacidade e os termos estão em inglês.',
+    drawerLabel: 'O que o Stand faz', alsoLabel: 'Também no Stand', onIphone: '{x} no iPhone',
+  },
+  es: {
+    title: 'Stand · El atril que estudia contigo', top: 'Para iPad y iPhone', lang: 'Idioma',
+    folder: 'Carpeta', eyebrow: 'Carpeta {i} de {n} · {k} cosas dentro', open: 'Abrir',
+    hintWide: 'Abre una carpeta para ver qué hay dentro', hintPhone: 'Toca una carpeta para ver qué hay dentro',
+    h1: 'El atril que estudia contigo.',
+    coverP: 'Lee y anota tus partituras, pasa páginas sin manos, estudia los compases difíciles, afina, grábate y escribe tu propia música. Una sola app, en iPad y iPhone.',
+    note: 'Sin cuenta · Sin conexión · Privado', soon: 'Muy pronto en el App Store', dl: 'Descargar en el App Store',
+    scroll: 'Desliza', next: 'Carpeta siguiente', prev: 'Carpeta anterior', close: 'Cerrar',
+    endcta: 'Todo lo de esta carpeta, y de las otras cuatro, en una sola app.', openF: 'Abrir la carpeta {x}',
+    allin: 'Todo en uno', toolsH: 'Un atril en lugar de diez apps.',
+    toolsP: 'Todo lo que usas para estudiar, en un solo lugar y sobre la misma partitura. Sin cambiar de app en mitad de una frase.',
+    privH: 'Sin cuenta.<br>Sin anuncios.<br>Sin rastreo.',
+    privP: 'Tus partituras, anotaciones, grabaciones y registro de estudio se quedan en tu dispositivo. El sonido y la imagen de la cámara se analizan en el propio dispositivo y nunca se envían.',
+    privLink: 'Leer la política de privacidad', faqH: 'Preguntas', finalNote: 'Para iPad y iPhone',
+    foot: 'Stand guarda tus partituras, anotaciones, grabaciones y registro de estudio en tu dispositivo y funciona sin conexión. Para iPad y iPhone, iPadOS e iOS 15 o posterior. Las partituras de las imágenes son de J. S. Bach: el Minueto en Sol (BWV Anh. 114), arreglado para violonchelo, y los Preludios de las Suites para violonchelo n.º 1 (BWV 1007) y n.º 3 (BWV 1009), grabados a partir de ediciones de dominio público (Bach-Gesellschaft; Schirmer, 1916) transcritas por el Mutopia Project. Fuente musical: Bravura (SIL Open Font License).',
+    privacy: 'Política de privacidad', terms: 'Condiciones de uso', support: 'Soporte', legal: 'La política de privacidad y las condiciones están en inglés.',
+    drawerLabel: 'Qué hace Stand', alsoLabel: 'También en Stand', onIphone: '{x} en el iPhone',
+  },
+  fr: {
+    title: 'Stand · Le pupitre qui travaille avec vous', top: 'Pour iPad et iPhone', lang: 'Langue',
+    folder: 'Dossier', eyebrow: 'Dossier {i} sur {n} · {k} choses à l’intérieur', open: 'Ouvrir',
+    hintWide: 'Ouvrez un dossier pour voir ce qu’il contient', hintPhone: 'Touchez un dossier pour voir ce qu’il contient',
+    h1: 'Le pupitre qui travaille avec vous.',
+    coverP: 'Lisez et annotez vos partitions, tournez les pages sans les mains, travaillez les passages difficiles, accordez, filmez-vous et écrivez votre propre musique. Une seule app, sur iPad et iPhone.',
+    note: 'Sans compte · Hors ligne · Privé', soon: 'Bientôt sur l’App Store', dl: 'Télécharger dans l’App Store',
+    scroll: 'Défiler', next: 'Dossier suivant', prev: 'Dossier précédent', close: 'Fermer',
+    endcta: 'Tout ce qui est dans ce dossier, et dans les quatre autres, dans une seule app.', openF: 'Ouvrir le dossier {x}',
+    allin: 'Tout en un', toolsH: 'Un pupitre au lieu de dix apps.',
+    toolsP: 'Tout ce qui vous sert à travailler, au même endroit et sur la même partition. Plus besoin de changer d’app au milieu d’une phrase.',
+    privH: 'Sans compte.<br>Sans pub.<br>Sans pistage.',
+    privP: 'Vos partitions, annotations, enregistrements et journal de travail restent sur votre appareil. Le son et l’image de la caméra sont analysés sur l’appareil et ne sont jamais envoyés.',
+    privLink: 'Lire la politique de confidentialité', faqH: 'Questions', finalNote: 'Pour iPad et iPhone',
+    foot: 'Stand garde vos partitions, annotations, enregistrements et journal de travail sur votre appareil et fonctionne hors ligne. Pour iPad et iPhone, iPadOS et iOS 15 ou ultérieur. Les partitions des images sont de J. S. Bach : le Menuet en sol (BWV Anh. 114), arrangé pour violoncelle, et les Préludes des Suites pour violoncelle n° 1 (BWV 1007) et n° 3 (BWV 1009), gravés d’après des éditions du domaine public (Bach-Gesellschaft ; Schirmer, 1916) transcrites par le Mutopia Project. Police musicale : Bravura (SIL Open Font License).',
+    privacy: 'Politique de confidentialité', terms: 'Conditions d’utilisation', support: 'Assistance', legal: 'La politique de confidentialité et les conditions sont en anglais.',
+    drawerLabel: 'Ce que fait Stand', alsoLabel: 'Aussi dans Stand', onIphone: '{x} sur iPhone',
+  },
+  de: {
+    title: 'Stand · Das Notenpult, das mit dir übt', top: 'Für iPad und iPhone', lang: 'Sprache',
+    folder: 'Mappe', eyebrow: 'Mappe {i} von {n} · {k} Dinge darin', open: 'Öffnen',
+    hintWide: 'Öffne eine Mappe, um hineinzusehen', hintPhone: 'Tippe auf eine Mappe, um hineinzusehen',
+    h1: 'Das Notenpult, das mit dir übt.',
+    coverP: 'Lies und bezeichne deine Noten, blättere freihändig um, übe die schweren Takte, stimme, filme dich und schreib deine eigene Musik. Eine App, auf iPad und iPhone.',
+    note: 'Kein Konto · Offline · Privat', soon: 'Bald im App Store', dl: 'Im App Store laden',
+    scroll: 'Scrollen', next: 'Nächste Mappe', prev: 'Vorherige Mappe', close: 'Schließen',
+    endcta: 'Alles aus dieser Mappe und den vier anderen, in einer App.', openF: 'Mappe {x} öffnen',
+    allin: 'Alles in einem', toolsH: 'Ein Pult statt zehn Apps.',
+    toolsP: 'Alles, womit du übst, an einem Ort und auf denselben Noten. Kein App-Wechsel mitten in der Phrase.',
+    privH: 'Kein Konto.<br>Keine Werbung.<br>Kein Tracking.',
+    privP: 'Deine Noten, Eintragungen, Aufnahmen und dein Übe-Tagebuch bleiben auf deinem Gerät. Ton und Kamerabild werden auf dem Gerät ausgewertet und nie verschickt.',
+    privLink: 'Datenschutzerklärung lesen', faqH: 'Fragen', finalNote: 'Für iPad und iPhone',
+    foot: 'Stand speichert deine Noten, Eintragungen, Aufnahmen und dein Übe-Tagebuch auf deinem Gerät und funktioniert offline. Für iPad und iPhone, iPadOS und iOS 15 oder neuer. Die Noten auf den Bildern sind von J. S. Bach: das Menuett in G (BWV Anh. 114), für Violoncello bearbeitet, und die Préludes der Cellosuiten Nr. 1 (BWV 1007) und Nr. 3 (BWV 1009), gesetzt nach gemeinfreien Ausgaben (Bach-Gesellschaft; Schirmer, 1916), übertragen vom Mutopia Project. Notenschrift: Bravura (SIL Open Font License).',
+    privacy: 'Datenschutz', terms: 'Nutzungsbedingungen', support: 'Hilfe', legal: 'Datenschutzerklärung und Nutzungsbedingungen sind auf Englisch.',
+    drawerLabel: 'Was Stand kann', alsoLabel: 'Außerdem in Stand', onIphone: '{x} auf dem iPhone',
+  },
+  it: {
+    title: 'Stand · Il leggio che studia con te', top: 'Per iPad e iPhone', lang: 'Lingua',
+    folder: 'Cartella', eyebrow: 'Cartella {i} di {n} · {k} cose dentro', open: 'Apri',
+    hintWide: 'Apri una cartella per vedere cosa c’è dentro', hintPhone: 'Tocca una cartella per vedere cosa c’è dentro',
+    h1: 'Il leggio che studia con te.',
+    coverP: 'Leggi e annota i tuoi spartiti, gira le pagine senza mani, studia le battute difficili, accorda, filmati e scrivi la tua musica. Una sola app, su iPad e iPhone.',
+    note: 'Nessun account · Offline · Privato', soon: 'Presto su App Store', dl: 'Scarica su App Store',
+    scroll: 'Scorri', next: 'Cartella successiva', prev: 'Cartella precedente', close: 'Chiudi',
+    endcta: 'Tutto quello che c’è in questa cartella, e nelle altre quattro, in una sola app.', openF: 'Apri la cartella {x}',
+    allin: 'Tutto in uno', toolsH: 'Un leggio al posto di dieci app.',
+    toolsP: 'Tutto ciò con cui studi, in un solo posto e sullo stesso spartito. Senza cambiare app a metà frase.',
+    privH: 'Nessun account.<br>Nessuna pubblicità.<br>Nessun tracciamento.',
+    privP: 'I tuoi spartiti, annotazioni, registrazioni e diario di studio restano sul tuo dispositivo. Il suono e le immagini della fotocamera vengono analizzati sul dispositivo e non vengono mai inviati.',
+    privLink: 'Leggi l’informativa sulla privacy', faqH: 'Domande', finalNote: 'Per iPad e iPhone',
+    foot: 'Stand conserva i tuoi spartiti, annotazioni, registrazioni e diario di studio sul tuo dispositivo e funziona offline. Per iPad e iPhone, iPadOS e iOS 15 o successivi. Gli spartiti nelle immagini sono di J. S. Bach: il Minuetto in Sol (BWV Anh. 114), arrangiato per violoncello, e i Preludi delle Suite per violoncello n. 1 (BWV 1007) e n. 3 (BWV 1009), incisi da edizioni di pubblico dominio (Bach-Gesellschaft; Schirmer, 1916) trascritte dal Mutopia Project. Font musicale: Bravura (SIL Open Font License).',
+    privacy: 'Privacy', terms: 'Condizioni d’uso', support: 'Assistenza', legal: 'L’informativa sulla privacy e le condizioni sono in inglese.',
+    drawerLabel: 'Cosa fa Stand', alsoLabel: 'Anche in Stand', onIphone: '{x} su iPhone',
+  },
+};
+
+const TR = {
+  /* ---------------- Português (Portugal) ---------------- */
+  pt: {
+    f: { read: ['Ler', 'As tuas partituras na estante, duas páginas de cada vez, viradas sem levantar a mão.'],
+      mark: ['Anotar', 'Escreve na música com o Apple Pencil, como farias com um lápis no papel.'],
+      practise: ['Estudar', 'Saber o que estudar, a que velocidade, e quanto estudaste mesmo.'],
+      listen: ['Afinar e Gravar', 'Ouve exatamente onde estás: afinação, tempo e vídeo.', 'Afinar'],
+      write: ['Escrever', 'Compõe, arranja e copia música, e guarda cadernos.'] },
+    c: {
+      library: ['Biblioteca', 'Todas as partituras num só sítio.', 'Importa PDFs e fotografias, ou digitaliza páginas com a câmara. Como uma app de digitalização, o Stand encontra a página, endireita-a pelas linhas da pauta e tira as sombras, para que uma fotografia pareça uma cópia limpa. O título e o compositor são lidos por ti.', ['Importar do Ficheiros', 'Digitalizar com a câmara', 'Pastas', 'Uma pasta Stand na app Ficheiros']],
+      find: ['Procurar partitura', 'Partituras de domínio público em segundos.', 'Procura na biblioteca IMSLP por compositor e obra. O Stand assinala a melhor edição para o teu instrumento e ela entra na tua biblioteca, pronta a ler e anotar. Para edições que vale a pena ter, há ligações para a Henle, a Bärenreiter e outras editoras.', ['Escreve “Bach suite violoncelo”', 'Escolhe o teu instrumento', 'Toca num resultado']],
+      turns: ['Virar páginas', 'Seis maneiras de virar a página.', 'Duas páginas lado a lado na horizontal, uma na vertical, ou uma página horizontal deitada num ecrã ao alto. Vira-as da maneira que der mais jeito no momento.', [['Tocar ou deslizar', 'Nas margens da página'], ['Pedal', 'Qualquer pedal Bluetooth'], ['Piscar o olho', 'Direito avança, esquerdo recua'], ['Escuta', 'Segue o que tocas, e os teus olhos (beta)'], ['Bater', 'Um toque firme na estante'], ['Metrónomo', 'A cada 2 a 16 compassos']]],
+      thisscore: ['Esta partitura', 'Cada partitura preparada à tua maneira.', 'Com a meia página, vês o início da página seguinte enquanto acabas esta, por isso nunca esperas por uma viragem.', [['Meia página', 'Vê o que vem a seguir'], ['Repetições e saltos', 'D.C., repetições, codas'], ['Marcadores', 'Salta para um andamento'], ['Papel', 'Branco, quente ou noite'], ['Música maior', 'Sem margens brancas'], ['Exportar PDF', 'Com ou sem anotações']]],
+      pages: ['Páginas', 'Corrige a edição, não te limites a lê-la.', 'Recorta uma página à música de que precisas, corta-a entre sistemas ou sobe linhas para a viragem cair num sítio melhor. Acrescenta páginas de um ficheiro, endireita uma página e tira páginas: nada se perde até tu decidires.', ['Recortar', 'Cortar entre sistemas', 'Subir linhas', 'Acrescentar páginas', 'Rodar uma página', 'Repor tudo']],
+      sets: ['Sets', 'Um concerto inteiro numa só ordem de leitura.', 'Escolhe páginas de várias partituras para uma audição, um exame ou um concerto. Depois da última página de uma obra, a partitura seguinte abre na página certa. Sem fazer um PDF novo.', ['Novo set, dá-lhe um nome', 'Acrescenta música: toca na primeira e na última página', 'Tocar: o pedal leva-te até ao fim']],
+      perform: ['Atuar', 'Em palco, só a música.', 'O modo Atuar esconde todas as ferramentas, para que um toque sem querer nunca abra nada. As viragens, o pedal e o piscar de olho continuam a funcionar.'],
+      pencil: ['Apple Pencil', 'O primeiro toque nunca escreve.', 'Toca na partitura com o Pencil e as ferramentas abrem, mais nada. O traço seguinte escreve. O dedo continua a virar páginas e a fazer zoom, e a mão pode pousar no vidro, por isso nunca escreves sem querer.', [['Caneta', 'Tipos, espessuras, cores'], ['Marcador', 'Cor transparente'], ['Texto', 'Escreve-o ou desenha-o com o Pencil'], ['Borracha', 'Só as tuas anotações'], ['Borracha da partitura', 'Tira uma ligadura impressa, mantém a pauta'], ['Duas cores', 'Preto e vermelho, à distância de um toque'], ['Nota', 'Uma folha transparente por cima'], ['Mão firme', 'Linhas mais calmas e direitas']]],
+      symbols: ['Símbolos', 'Símbolos com um toque.', 'Escolhe um símbolo e toca na música onde ele deve ficar.', ['pp a ff, sfz, fp', 'Arcada para baixo e para cima', 'Dedilhações 0–4', 'Cordas I–IV', 'Fermata, respiração, acento', 'rit., a tempo, pizz., arco', 'Óculos (atenção!)']],
+      slurs: ['Ligaduras', 'Desenha uma ligadura, recebe uma gravada.', 'Desenha da primeira nota à última. O Stand traça uma ligadura limpa e afilada, por cima ou por baixo, do lado em que a desenhaste.'],
+      select: ['Selecionar', 'Rodeia: move, copia ou transforma numa passagem.', 'Desenha um laço à volta do que escreveste para o mover, redimensionar, copiar ou apagar. Rodeia compassos e a primeira opção é criar uma passagem.'],
+      clean: ['Cópia limpa', 'As tuas anotações nunca tocam na edição.', 'As anotações ficam separadas da página impressa. Esconde-as todas com o olho, ou exporta a partitura com elas para um aluno, ou como cópia limpa.', ['Esconder as anotações', 'Exportar com anotações', 'Exportar uma cópia limpa']],
+      passages: ['Passagens', 'Um registo de tempo para cada sítio difícil.', 'Rodeia os compassos e dá à passagem um tipo, um tempo inicial e um objetivo. Regista cada dia o tempo que conseguiste: a barra enche-se até ao objetivo e um pequeno gráfico mostra o teu melhor, dia a dia.', [['Melódica', 'Primeiro limpa, depois rápida'], ['Técnica', '+5 bpm quando sai limpa'], ['Mudança', 'Devagar e a tempo'], ['Ritmo', 'Primeiro só o ritmo'], ['Arcada e respiração', 'O padrão sozinho'], ['O que ficou para trás', 'Passagens esquecidas há muito']]],
+      session: ['Sessão de estudo', 'Todas as tuas passagens, à distância de uma viragem.', 'Dá uma prioridade a cada passagem. O Stand começa pelas mais importantes e pelas mais longe do objetivo. Virar a página leva-te à passagem seguinte, em qualquer partitura, com a página inteira à vista.', ['Alta · Média · Baixa · Saltar', 'Prioridade alta duas vezes', 'Em todas as tuas partituras']],
+      reps: ['Repetições', 'Conta as vezes seguidas sem erros.', 'Marca cada passagem limpa e cada erro: um erro recomeça a contagem. Define um objetivo de 3, 5, 7 ou 10.'],
+      metronome: ['Metrónomo', 'Um metrónomo que faz mais do que tiquetaque.', 'Marca o tempo com o dedo, acentua ou silencia qualquer tempo e deixa-o virar as tuas páginas. Continua a tocar enquanto afinas, gravas ou mudas de app.', [['Compasso', 'De 1/4 a 12/8'], ['Subdivisão', 'Colcheias, tercinas, semicolcheias'], ['Treino de velocidade', 'Gradual ou por degraus'], ['Compassos em silêncio', 'Mantém tu o tempo'], ['Luz', 'Vê o primeiro tempo'], ['Som', 'Clique, bloco de madeira, bip']]],
+      scales: ['Escalas', 'Escalas em notas longas, ou rápidas.', 'Qualquer tonalidade, maior, menores e modos, com o seu próprio tempo. Cada nota dura 4, 3, 2 ou 1 tempos, ou 2 a 4 por tempo, com um clique limpo e um bordão por baixo.', ['Cada nota: 4 tempos', 'Bordão na tónica', 'Temperada, justa ou pitagórica', 'Som de piano, órgão ou arco', 'Um compasso de contagem']],
+      log: ['Registo de estudo', 'Vê o que estudaste mesmo.', 'O tempo conta sozinho enquanto uma partitura está aberta ou uma ferramenta está a funcionar. O anel no ecrã inicial vai enchendo até ao teu objetivo diário.', [['Objetivo diário', 'De 15 minutos a 4 horas'], ['Sequência', 'Dias seguidos'], ['Gráfico', 'Semana, mês, ano'], ['Por obra', 'Minutos em cada uma'], ['Hoje', 'Uma nota sobre o que vem a seguir'], ['Temporizador', '25/5, 45/15, 60/20']]],
+      plan: ['Plano semanal', 'Planeia a semana em meias horas.', 'Pinta as meias horas em que queres estudar. As semanas passadas mostram a verde o que fizeste e a vermelho o que falhaste, e chega um lembrete quando o estudo começa.', ['No início, 10 ou 30 min antes', 'Continua semana após semana', 'No iPad e no iPhone']],
+      iphone: ['iPhone', 'O teu estudo no bolso.', 'O iPhone mostra o dia, a semana e cada obra do teu iPad, e guarda as partituras do iPad para leres onde estiveres. Longe da estante tem o afinador, os harmónicos, o bordão, o metrónomo, as escalas, as repetições, um temporizador e gravação, e funciona como câmara do iPad.', ['As partituras do iPad, para ler', 'Tempo de estudo pelo iCloud', 'Câmara para o iPad']],
+      tuner: ['Afinador', 'Um afinador que aprende a tua afinação.', 'A agulha mostra os cents e a nota fica verde quando estás afinado. Com o tempo, aprende que notas costumas tocar altas ou baixas.', [['Lá de referência', 'Por exemplo 442 Hz'], ['Temperada', 'Como o piano'], ['Justa', 'Terceiras e quintas puras'], ['Pitagórica', 'Quintas puras'], ['Tendência', 'Alto ou baixo ultimamente'], ['Afinador pequeno', 'Por cima da partitura']]],
+      harmonics: ['Harmónicos', 'Que harmónico, em que corda, onde tocar.', 'Toca um harmónico natural e o Stand diz-te qual é. Ouve a série de qualquer corda e vê quanto cada harmónico se afasta do piano: o 5.º harmónico fica 14 cents abaixo, o 7.º 31 cents abaixo.'],
+      drone: ['Bordão', 'Um bordão que segue a música.', 'Uma nota fixa em intervalos puros, para que cada batimento que ouves seja a tua própria afinação. Som de órgão, suave, arco ou trompa, com a quinta ou a oitava se quiseres. Quando a música muda de tonalidade, o bordão pode acompanhar.', [['Eu toco', 'Fica até o mudares'], ['Ele ouve', 'Muda quando a tonalidade muda mesmo'], ['A minha lista', 'As tuas notas, pela tua ordem'], ['Todas as tonalidades', 'Avança a cada 2 a 16 compassos']]],
+      record: ['Gravar', 'Grava enquanto lês.', 'Áudio para o melhor som, ou vídeo para veres a postura. Um compasso de contagem do metrónomo, e a partitura fica no ecrã.', ['Áudio ou vídeo', 'Frontal, traseira ou iPhone', 'Um compasso de contagem', 'Manter o clique']],
+      camera: ['Câmara do iPhone', 'O teu iPhone como segunda câmara.', 'Abre o Stand no iPhone e escolhe câmara para o iPad. Os dois encontram-se sozinhos. Ajusta o brilho, a cor e o zoom a partir do iPad, e o vídeo chega quando paras.'],
+      recordings: ['Gravações', 'Ouve mais devagar, na mesma altura.', 'Arrasta sobre a onda para repetir uma passagem e ouvi-la a 50–100% da velocidade, na mesma altura. Acrescenta o som de uma sala ou de uma igreja e corta o que não precisas. O Studio põe a partitura no teu vídeo, a acompanhar o que tocas, em quadrado ou vertical e pronto a partilhar.', ['Repetir de A a B', 'Velocidade 50–100%', 'Som de sala ou igreja', 'Cortar', 'Studio: partitura no vídeo', 'Luz e cor automáticas']],
+      video: ['Vídeo sobre a partitura', 'Vê-te ao lado da música.', 'Arrasta um vídeo das Gravações para cima da partitura. Faz zoom até 5× no braço do arco, abranda-o, e as páginas continuam a virar por baixo.'],
+      along: ['Ouvir', 'Grandes gravações, à distância de um toque.', 'Guarda com cada partitura as interpretações de que gostas, no YouTube, Spotify ou Apple Music. Ou toca com um ficheiro de áudio, mais devagar e em repetição entre A e B.'],
+      composer: ['Compositor', 'Escreve com o Pencil, ouve-o tocado.', 'As notas ficam onde tocas na pauta. Duas vozes por pauta, ligaduras e reguladores entre compassos, casas de repetição, e Tocar com instrumentos de orquestra gravados.', ['Da semibreve à fusa', 'Voz 1 / Voz 2', 'Quiálteras de 2 a 11', 'Transpor por intervalo ou tonalidade', 'Abre MusicXML']],
+      instruments: ['Instrumentos', 'Mais de 100 instrumentos, cada um no seu tom.', 'Madeiras, metais, percussão, teclas, guitarras, vozes e cordas, com todos os instrumentos transpositores e a banda de metais. Escreve em sons reais; as partes saem no tom que cada músico lê.', ['Clarinete em Lá, Si♭, Mi♭', 'Trompa em Fá ou Mi♭', 'Bombardino, saxtrompa', 'Do solo à orquestra']],
+      layout: ['Grafia e som', 'Gravado como deve ser.', 'Tamanho da pauta, papel e orientação, pautas vazias escondidas e pautas que nunca se atropelam. Escolhe a sala e a afinação, de Lá = 415 a 443.'],
+      export: ['Exportar', 'Partitura, partes, MusicXML e MIDI.', 'Tudo o que uma banda ou uma orquestra precisa, a partir de uma só partitura.', [['Partitura', 'PDF, cada um no seu tom'], ['Todas as partes', 'Transpostas, pausas de vários compassos'], ['Sons reais', 'Para o maestro'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Áudio e MIDI', 'Ficheiros WAV e MIDI'], ['Na minha estante', 'Lê-a e anota-a']]],
+      capture: ['Ler música', 'Da página impressa às notas.', 'Escolhe linhas num PDF, numa digitalização ou numa fotografia. O Stand lê as notas, ritmos, pausas, acidentes, clave, armação e compasso, e cola-os em qualquer instrumento e compasso.', ['Compositor ▸ Capturar', 'Toca ou desliza sobre as linhas', 'Cola na partitura']],
+      notebooks: ['Cadernos', 'Papel de música com capa.', 'Papel pautado, de linhas ou liso para exercícios, ditados, notas de aula ou um diário de estudo. Acrescenta fotografias em formas ou dentro de uma palavra, cartões de vidro, fita washi e autocolantes, e move o que quiseres entre páginas.'],
+    },
+    also: ['iPad e iPhone juntos', 'Cópia de segurança no iCloud Drive ou no Ficheiros', 'Azul ou preto, claro ou escuro', 'Só as tuas ferramentas no ecrã inicial', 'Auscultadores e pedais Bluetooth', 'Funciona sem internet'],
+    high: [['Vira a página sem largar o arco.', 'Pisca o olho, carrega num pedal, bate na estante ou deixa o Stand seguir o que tocas. A meia página mostra o que vem a seguir, para nunca seres apanhado no fim da página.'],
+      ['Estuda os compassos difíceis, não a obra toda outra vez.', 'Rodeia os compassos que precisam de trabalho, dá-lhes um tempo objetivo e regista o que conseguiste cada dia. Uma sessão de estudo leva-te de uma passagem à seguinte, em todas as tuas partituras.'],
+      ['Ouve onde estás. Vê como tocas.', 'Um afinador que aprende que notas tocas altas ou baixas. Filma-te enquanto lês, vê-te ao lado da música, mais devagar, e põe a partitura no vídeo para partilhar.'],
+      ['Da página impressa à tua própria partitura.', 'Escolhe linhas numa digitalização ou num PDF e o Stand lê as notas para o compositor. Arranja-as para mais de 100 instrumentos e imprime as partes, cada uma no seu tom.']],
+    tools: ['Leitor de partituras', 'Anotações com o Pencil', 'Plano de estudo', 'Metrónomo', 'Afinador', 'Bordão', 'Gravador e vídeo', 'Registo de estudo', 'Notação', 'Cadernos'],
+    faq: [['Em que dispositivos funciona o Stand?', 'iPad e iPhone com iPadOS ou iOS 15 ou posterior. O iPad é a estante; o iPhone guarda o teu estudo, as partituras para ler e as ferramentas no bolso, e pode filmar para o iPad. Virar páginas a piscar o olho usa a câmara frontal e funciona melhor num iPad com Face ID.'],
+      ['Preciso de conta ou de internet?', 'Nunca há conta. O Stand funciona sem internet. A internet só é usada quando pedes algo online, como procurar uma partitura no IMSLP ou abrir uma gravação no YouTube, Spotify ou Apple Music.'],
+      ['Onde ficam as minhas partituras?', 'No teu dispositivo, no Stand e numa pasta Stand na app Ficheiros (Partituras, Gravações, Cópias). Faz uma cópia de segurança de tudo num só ficheiro quando quiseres, por exemplo no iCloud Drive, e recupera-a num iPad novo.'],
+      ['Posso usar o meu pedal de virar páginas?', 'Sim. Os pedais Bluetooth funcionam logo. Também podes piscar o olho, tocar na margem da página, bater na estante, deixar o metrónomo virar a cada poucos compassos ou deixar o Stand seguir o que tocas.'],
+      ['As anotações alteram o PDF?', 'Nunca. As anotações ficam numa camada própria. Esconde-as com um toque, ou exporta a partitura com elas ou como cópia limpa.'],
+      ['Serve para o meu instrumento?', 'O Stand é feito para todos os músicos que leem música: cordas, sopros, metais, teclas, guitarra, voz. O afinador, o bordão, os harmónicos e as escalas sentem-se especialmente em casa com instrumentos de corda, e o compositor conhece mais de 100 instrumentos.']],
+  },
+
+  /* ---------------- Español ---------------- */
+  es: {
+    f: { read: ['Leer', 'Tus partituras en el atril, dos páginas a la vez, pasadas sin levantar la mano.'],
+      mark: ['Anotar', 'Escribe en la música con el Apple Pencil, como lo harías con un lápiz en el papel.'],
+      practise: ['Estudiar', 'Saber qué estudiar, a qué velocidad y cuánto has estudiado de verdad.'],
+      listen: ['Afinar y Grabar', 'Escucha exactamente dónde estás: afinación, tempo y vídeo.', 'Afinar'],
+      write: ['Escribir', 'Compón, arregla y copia música, y guarda cuadernos.'] },
+    c: {
+      library: ['Biblioteca', 'Todas tus partituras en un solo lugar.', 'Importa PDF y fotos, o escanea páginas con la cámara. Como una app de escaneo, Stand encuentra la página, la endereza por las líneas del pentagrama y quita las sombras, para que una foto parezca una copia limpia. El título y el compositor se leen solos.', ['Importar desde Archivos', 'Escanear con la cámara', 'Carpetas', 'Una carpeta Stand en la app Archivos']],
+      find: ['Buscar partitura', 'Partituras de dominio público en segundos.', 'Busca en la biblioteca IMSLP por compositor y obra. Stand marca la mejor edición para tu instrumento y llega a tu biblioteca, lista para leer y anotar. Para las ediciones que vale la pena tener, enlaza con Henle, Bärenreiter y otras editoriales.', ['Escribe “Bach suite violonchelo”', 'Elige tu instrumento', 'Toca un resultado']],
+      turns: ['Pasar páginas', 'Seis formas de pasar la página.', 'Dos páginas una al lado de otra en horizontal, una en vertical, o una página horizontal girada en una pantalla vertical. Pásalas como mejor te venga en cada momento.', [['Tocar o deslizar', 'En los bordes de la página'], ['Pedal', 'Cualquier pedal Bluetooth'], ['Guiñar el ojo', 'El derecho avanza, el izquierdo retrocede'], ['Escucha', 'Sigue lo que tocas, y tus ojos (beta)'], ['Golpe', 'Un toque firme en el atril'], ['Metrónomo', 'Cada 2 a 16 compases']]],
+      thisscore: ['Esta partitura', 'Cada partitura preparada a tu manera.', 'Con la media página ves el principio de la página siguiente mientras terminas esta, así nunca esperas a un cambio de página.', [['Media página', 'Mira lo que viene'], ['Repeticiones y saltos', 'D.C., repeticiones, codas'], ['Marcadores', 'Salta a un movimiento'], ['Papel', 'Blanco, cálido o noche'], ['Música más grande', 'Sin márgenes blancos'], ['Exportar PDF', 'Con o sin anotaciones']]],
+      pages: ['Páginas', 'Corrige la edición, no solo la leas.', 'Recorta una página a la música que necesitas, córtala entre sistemas o sube líneas para que el cambio de página caiga en un mejor sitio. Añade páginas desde un archivo, endereza una página y quita páginas: no se pierde nada hasta que tú lo decides.', ['Recortar', 'Cortar entre sistemas', 'Subir líneas', 'Añadir páginas', 'Girar una página', 'Restaurar todo']],
+      sets: ['Sets', 'Un concierto entero en un solo orden de lectura.', 'Elige páginas de distintas partituras para una audición, un examen o un concierto. Tras la última página de una obra, la siguiente partitura se abre en la página correcta. Sin crear un PDF nuevo.', ['Nuevo set, ponle nombre', 'Añade música: toca la primera y la última página', 'Tocar: el pedal te lleva hasta el final']],
+      perform: ['Actuar', 'En el escenario, solo la música.', 'El modo Actuar oculta todas las herramientas, así un toque sin querer nunca abre nada. Los cambios de página, el pedal y el guiño siguen funcionando.'],
+      pencil: ['Apple Pencil', 'El primer toque nunca escribe.', 'Toca la partitura con el Pencil y se abren las herramientas, nada más. El siguiente trazo escribe. El dedo sigue pasando páginas y haciendo zoom, y la mano puede apoyarse en el cristal, así nunca escribes sin querer.', [['Bolígrafo', 'Tipos, grosores, colores'], ['Rotulador', 'Color transparente'], ['Texto', 'Escríbelo o dibújalo con el Pencil'], ['Goma', 'Solo tus anotaciones'], ['Goma de partitura', 'Quita una ligadura impresa, respeta el pentagrama'], ['Dos colores', 'Negro y rojo, a un toque'], ['Nota', 'Una hoja transparente encima'], ['Pulso firme', 'Líneas más tranquilas y rectas']]],
+      symbols: ['Símbolos', 'Símbolos con un toque.', 'Elige un símbolo y toca la música donde va.', ['pp a ff, sfz, fp', 'Arco abajo, arco arriba', 'Digitaciones 0–4', 'Cuerdas I–IV', 'Calderón, respiración, acento', 'rit., a tempo, pizz., arco', 'Gafas (¡atención!)']],
+      slurs: ['Ligaduras', 'Dibuja una ligadura, recibe una grabada.', 'Dibuja de la primera nota a la última. Stand traza una ligadura limpia y afilada, arriba o abajo, del lado en que la dibujaste.'],
+      select: ['Seleccionar', 'Rodéalo: muévelo, cópialo o conviértelo en un pasaje.', 'Dibuja un lazo alrededor de lo que escribiste para moverlo, cambiar su tamaño, copiarlo o borrarlo. Rodea compases y la primera opción es crear un pasaje.'],
+      clean: ['Copia limpia', 'Tus anotaciones nunca tocan la edición.', 'Las anotaciones se guardan aparte de la página impresa. Ocúltalas todas con el ojo, o exporta la partitura con ellas para un alumno, o como copia limpia.', ['Ocultar las anotaciones', 'Exportar con anotaciones', 'Exportar una copia limpia']],
+      passages: ['Pasajes', 'Un registro de tempo para cada sitio difícil.', 'Rodea los compases y dale al pasaje un tipo, un tempo inicial y un objetivo. Anota cada día el tempo que conseguiste: la barra se llena hacia el objetivo y un pequeño gráfico muestra tu mejor marca, día a día.', [['Melódico', 'Primero limpio, luego rápido'], ['Técnico', '+5 bpm cuando sale limpio'], ['Cambio de posición', 'Despacio y a tempo'], ['Ritmo', 'Primero solo el ritmo'], ['Arco y respiración', 'El patrón por separado'], ['Lo que se quedó atrás', 'Pasajes olvidados hace tiempo']]],
+      session: ['Sesión de estudio', 'Todos tus pasajes, a un cambio de página.', 'Dale una prioridad a cada pasaje. Stand empieza por los más importantes y por los más lejos de su objetivo. Pasar la página te lleva al siguiente pasaje, en cualquier partitura, con la página entera a la vista.', ['Alta · Media · Baja · Saltar', 'Prioridad alta dos veces', 'En todas tus partituras']],
+      reps: ['Repeticiones', 'Cuenta las veces seguidas sin fallos.', 'Marca cada vez limpia y cada fallo: un fallo vuelve a empezar la cuenta. Ponte un objetivo de 3, 5, 7 o 10.'],
+      metronome: ['Metrónomo', 'Un metrónomo que hace más que clic.', 'Marca el tempo con el dedo, acentúa o silencia cualquier pulso y deja que pase tus páginas. Sigue sonando mientras afinas, grabas o cambias de app.', [['Compás', 'De 1/4 a 12/8'], ['Subdivisión', 'Corcheas, tresillos, semicorcheas'], ['Entrenador de velocidad', 'Gradual o por escalones'], ['Compases en silencio', 'Mantén tú el tempo'], ['Destello', 'Ve el primer pulso'], ['Sonido', 'Clic, caja china, pitido']]],
+      scales: ['Escalas', 'Escalas en notas largas, o rápidas.', 'Cualquier tonalidad, mayor, menores y modos, con su propio tempo. Cada nota dura 4, 3, 2 o 1 pulsos, o va de 2 a 4 por pulso, con un clic limpio y un bordón debajo.', ['Cada nota: 4 pulsos', 'Bordón en la tónica', 'Temperada, justa o pitagórica', 'Sonido de piano, órgano o arco', 'Un compás de entrada']],
+      log: ['Registro de estudio', 'Mira lo que has estudiado de verdad.', 'El tiempo cuenta solo mientras hay una partitura abierta o una herramienta en marcha. El anillo de la pantalla de inicio se llena hacia tu objetivo diario.', [['Objetivo diario', 'De 15 minutos a 4 horas'], ['Racha', 'Días seguidos'], ['Gráfico', 'Semana, mes, año'], ['Por obra', 'Minutos en cada una'], ['Hoy', 'Una nota sobre lo siguiente'], ['Temporizador', '25/5, 45/15, 60/20']]],
+      plan: ['Plan semanal', 'Planifica la semana en medias horas.', 'Pinta las medias horas en las que quieres estudiar. Las semanas pasadas muestran en verde lo hecho y en rojo lo que faltó, y llega un aviso cuando empieza el estudio.', ['Al empezar, 10 o 30 min antes', 'Sigue semana tras semana', 'En iPad y iPhone']],
+      iphone: ['iPhone', 'Tu estudio en el bolsillo.', 'El iPhone muestra el día, la semana y cada obra de tu iPad, y guarda las partituras del iPad para leerlas donde estés. Lejos del atril tiene el afinador, los armónicos, el bordón, el metrónomo, las escalas, las repeticiones, un temporizador y grabación, y funciona como cámara del iPad.', ['Las partituras del iPad, para leer', 'Tiempo de estudio por iCloud', 'Cámara para el iPad']],
+      tuner: ['Afinador', 'Un afinador que aprende tu afinación.', 'La aguja muestra los cents y la nota se pone verde cuando estás afinado. Con el tiempo aprende qué notas sueles tocar altas o bajas.', [['La de referencia', 'Por ejemplo 442 Hz'], ['Temperada', 'Como el piano'], ['Justa', 'Terceras y quintas puras'], ['Pitagórica', 'Quintas puras'], ['Tendencia', 'Alto o bajo últimamente'], ['Afinador pequeño', 'Sobre la partitura']]],
+      harmonics: ['Armónicos', 'Qué armónico, en qué cuerda, dónde tocar.', 'Toca un armónico natural y Stand te dice cuál es. Escucha la serie de cualquier cuerda y mira cuánto se aleja cada armónico del piano: el 5.º armónico está 14 cents bajo, el 7.º 31 cents bajo.'],
+      drone: ['Bordón', 'Un bordón que sigue la música.', 'Una nota fija en intervalos puros, para que cada batido que oigas sea tu propia afinación. Sonido de órgano, suave, arco o trompa, con la quinta o la octava si quieres. Cuando la música cambia de tonalidad, el bordón puede seguirla.', [['Yo toco', 'Se queda hasta que lo cambies'], ['Escucha', 'Cambia cuando la tonalidad cambia de verdad'], ['Mi lista', 'Tus notas, en tu orden'], ['Todas las tonalidades', 'Avanza cada 2 a 16 compases']]],
+      record: ['Grabar', 'Graba mientras lees.', 'Audio para el mejor sonido, o vídeo para ver tu postura. Un compás de entrada del metrónomo, y la partitura sigue en pantalla.', ['Audio o vídeo', 'Frontal, trasera o iPhone', 'Un compás de entrada', 'Mantener el clic']],
+      camera: ['Cámara del iPhone', 'Tu iPhone como segunda cámara.', 'Abre Stand en el iPhone y elige cámara para el iPad. Los dos se encuentran solos. Ajusta el brillo, el color y el zoom desde el iPad, y el vídeo llega cuando paras.'],
+      recordings: ['Grabaciones', 'Escucha más despacio, a la misma altura.', 'Arrastra sobre la onda para repetir un pasaje y escucharlo al 50–100 % de velocidad, a la misma altura. Añade el sonido de una sala o una iglesia y corta lo que no necesites. Studio pone la partitura en tu vídeo, siguiendo lo que tocas, en cuadrado o vertical y listo para compartir.', ['Repetir de A a B', 'Velocidad 50–100 %', 'Sonido de sala o iglesia', 'Cortar', 'Studio: partitura en el vídeo', 'Luz y color automáticos']],
+      video: ['Vídeo sobre la partitura', 'Mírate junto a la música.', 'Arrastra un vídeo de Grabaciones sobre la partitura. Haz zoom hasta 5× en el brazo del arco, ralentízalo, y las páginas siguen pasando debajo.'],
+      along: ['Escuchar', 'Grandes grabaciones, a un toque.', 'Guarda con cada partitura las interpretaciones que te gustan, en YouTube, Spotify o Apple Music. O toca con un archivo de audio, más despacio y en bucle entre A y B.'],
+      composer: ['Compositor', 'Escribe con el Pencil, escúchalo tocado.', 'Las notas caen donde tocas el pentagrama. Dos voces por pentagrama, ligaduras y reguladores entre compases, casillas de repetición, y Tocar con instrumentos de orquesta grabados.', ['De la redonda a la fusa', 'Voz 1 / Voz 2', 'Grupos irregulares de 2 a 11', 'Transportar por intervalo o tonalidad', 'Abre MusicXML']],
+      instruments: ['Instrumentos', 'Más de 100 instrumentos, cada uno en su tono.', 'Maderas, metales, percusión, teclados, guitarras, voces y cuerdas, con todos los instrumentos transpositores y la banda de metales. Escribe en sonidos reales; las partes salen en el tono que lee cada músico.', ['Clarinete en La, Si♭, Mi♭', 'Trompa en Fa o Mi♭', 'Bombardino, trompa tenor', 'Del solo a la orquesta']],
+      layout: ['Grabado y sonido', 'Grabado como debe ser.', 'Tamaño del pentagrama, papel y orientación, pentagramas vacíos ocultos y pentagramas que nunca chocan. Elige la sala y la afinación, de La = 415 a 443.'],
+      export: ['Exportar', 'Partitura, partes, MusicXML y MIDI.', 'Todo lo que necesita una banda o una orquesta, a partir de una sola partitura.', [['Partitura', 'PDF, cada uno en su tono'], ['Todas las partes', 'Transportadas, silencios de varios compases'], ['Sonidos reales', 'Para el director'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio y MIDI', 'Archivos WAV y MIDI'], ['En mi atril', 'Léela y anótala']]],
+      capture: ['Leer música', 'De la página impresa a las notas.', 'Elige líneas en un PDF, un escaneo o una foto. Stand lee las notas, ritmos, silencios, alteraciones, clave, armadura y compás, y los pega en cualquier instrumento y compás.', ['Compositor ▸ Capturar', 'Toca o desliza sobre las líneas', 'Pega en la partitura']],
+      notebooks: ['Cuadernos', 'Papel pautado con tapa.', 'Papel pautado, de rayas o liso para ejercicios, dictados, notas de clase o un diario de estudio. Añade fotos en formas o dentro de una palabra, tarjetas de cristal, cinta washi y pegatinas, y mueve lo que quieras entre páginas.'],
+    },
+    also: ['iPad y iPhone juntos', 'Copia de seguridad en iCloud Drive o Archivos', 'Azul o negro, claro u oscuro', 'Solo tus herramientas en la pantalla de inicio', 'Auriculares y pedales Bluetooth', 'Funciona sin conexión'],
+    high: [['Pasa la página sin soltar el arco.', 'Guiña el ojo, pisa un pedal, golpea el atril o deja que Stand siga lo que tocas. La media página muestra lo que viene, para que nunca te pille el final de la página.'],
+      ['Estudia los compases difíciles, no la obra entera otra vez.', 'Rodea los compases que necesitan trabajo, dales un tempo objetivo y anota lo que conseguiste cada día. Una sesión de estudio te lleva de un pasaje al siguiente, en todas tus partituras.'],
+      ['Escucha dónde estás. Mira cómo tocas.', 'Un afinador que aprende qué notas tocas altas o bajas. Grábate mientras lees, mírate junto a la música, más despacio, y pon la partitura en el vídeo para compartirlo.'],
+      ['De la página impresa a tu propia partitura.', 'Elige líneas en un escaneo o un PDF y Stand lee las notas para el compositor. Arréglalas para más de 100 instrumentos e imprime las partes, cada una en su tono.']],
+    tools: ['Lector de partituras', 'Anotaciones con Pencil', 'Plan de estudio', 'Metrónomo', 'Afinador', 'Bordón', 'Grabadora y vídeo', 'Registro de estudio', 'Notación', 'Cuadernos'],
+    faq: [['¿En qué dispositivos funciona Stand?', 'iPad y iPhone con iPadOS o iOS 15 o posterior. El iPad es el atril; el iPhone lleva tu estudio, las partituras para leer y las herramientas en el bolsillo, y puede grabar para el iPad. Pasar páginas guiñando el ojo usa la cámara frontal y funciona mejor en un iPad con Face ID.'],
+      ['¿Necesito una cuenta o internet?', 'Nunca hay cuenta. Stand funciona sin conexión. Internet solo se usa cuando pides algo en línea, como buscar una partitura en IMSLP o abrir una grabación en YouTube, Spotify o Apple Music.'],
+      ['¿Dónde se guardan mis partituras?', 'En tu dispositivo, en Stand y en una carpeta Stand de la app Archivos (Partituras, Grabaciones, Copias). Haz una copia de todo en un solo archivo cuando quieras, por ejemplo en iCloud Drive, y recupérala en un iPad nuevo.'],
+      ['¿Puedo usar mi pedal para pasar páginas?', 'Sí. Los pedales Bluetooth funcionan directamente. También puedes guiñar el ojo, tocar el borde de la página, golpear el atril, dejar que el metrónomo pase cada pocos compases o dejar que Stand siga lo que tocas.'],
+      ['¿Mis anotaciones cambian el PDF?', 'Nunca. Las anotaciones están en su propia capa. Ocúltalas con un toque, o exporta la partitura con ellas o como copia limpia.'],
+      ['¿Sirve para mi instrumento?', 'Stand está hecho para todos los músicos que leen música: cuerdas, maderas, metales, teclados, guitarra, voz. El afinador, el bordón, los armónicos y las escalas se sienten especialmente en casa con los instrumentos de cuerda, y el compositor conoce más de 100 instrumentos.']],
+  },
+
+  /* ---------------- Français ---------------- */
+  fr: {
+    f: { read: ['Lire', 'Vos partitions sur le pupitre, deux pages à la fois, tournées sans lever la main.'],
+      mark: ['Annoter', 'Écrivez sur la musique avec l’Apple Pencil, comme avec un crayon sur le papier.'],
+      practise: ['Travailler', 'Savoir quoi travailler, à quel tempo, et combien vous avez vraiment travaillé.'],
+      listen: ['Accorder & Enregistrer', 'Entendez exactement où vous en êtes : justesse, tempo et vidéo.', 'Accorder'],
+      write: ['Écrire', 'Composez, arrangez et copiez de la musique, et tenez des cahiers.'] },
+    c: {
+      library: ['Bibliothèque', 'Toutes vos partitions au même endroit.', 'Importez des PDF et des photos, ou numérisez des pages avec l’appareil photo. Comme une app de numérisation, Stand trouve la page, la redresse grâce aux lignes de la portée et enlève les ombres, pour qu’une photo ressemble à une copie propre. Le titre et le compositeur sont lus pour vous.', ['Importer depuis Fichiers', 'Numériser avec l’appareil photo', 'Dossiers', 'Un dossier Stand dans l’app Fichiers']],
+      find: ['Trouver une partition', 'Des partitions du domaine public en quelques secondes.', 'Cherchez dans la bibliothèque IMSLP par compositeur et par œuvre. Stand signale la meilleure édition pour votre instrument, et elle arrive dans votre bibliothèque, prête à lire et à annoter. Pour les éditions qui valent la peine d’être achetées, des liens mènent vers Henle, Bärenreiter et d’autres éditeurs.', ['Tapez « Bach suite violoncelle »', 'Choisissez votre instrument', 'Touchez un résultat']],
+      turns: ['Tourner les pages', 'Six façons de tourner la page.', 'Deux pages côte à côte à l’horizontale, une à la verticale, ou une page à l’italienne couchée sur un écran vertical. Tournez-les comme cela vous arrange sur le moment.', [['Toucher ou glisser', 'Sur les bords de la page'], ['Pédale', 'N’importe quelle pédale Bluetooth'], ['Clin d’œil', 'L’œil droit avance, le gauche recule'], ['Écoute', 'Suit votre jeu, et vos yeux (bêta)'], ['Toc', 'Un coup franc sur le pupitre'], ['Métronome', 'Toutes les 2 à 16 mesures']]],
+      thisscore: ['Cette partition', 'Chaque partition réglée à votre façon.', 'La demi-page montre le haut de la page suivante pendant que vous finissez celle-ci : vous n’attendez jamais une tourne.', [['Demi-page', 'Voir la suite'], ['Reprises et sauts', 'D.C., reprises, codas'], ['Signets', 'Aller à un mouvement'], ['Papier', 'Blanc, chaud ou nuit'], ['Musique plus grande', 'Sans marges blanches'], ['Exporter en PDF', 'Avec ou sans annotations']]],
+      pages: ['Pages', 'Corrigez l’édition, ne vous contentez pas de la lire.', 'Recadrez une page sur la musique utile, coupez-la entre deux systèmes ou remontez des lignes pour que la tourne tombe mieux. Ajoutez des pages depuis un fichier, remettez une page à l’endroit et retirez des pages : rien n’est perdu tant que vous ne le décidez pas.', ['Recadrer', 'Couper entre les systèmes', 'Remonter des lignes', 'Ajouter des pages', 'Tourner une page', 'Tout remettre']],
+      sets: ['Programmes', 'Tout un concert dans un seul ordre de lecture.', 'Choisissez des pages de plusieurs partitions pour une audition, un examen ou un concert. Après la dernière page d’une œuvre, la partition suivante s’ouvre à la bonne page. Pas de nouveau PDF à fabriquer.', ['Nouveau programme, donnez-lui un nom', 'Ajoutez la musique : touchez la première et la dernière page', 'Jouer : la pédale vous mène jusqu’au bout']],
+      perform: ['Concert', 'Sur scène, seulement la musique.', 'Le mode Concert cache tous les outils, pour qu’un geste involontaire n’ouvre jamais rien. Les tournes, la pédale et le clin d’œil fonctionnent toujours.'],
+      pencil: ['Apple Pencil', 'Le premier contact n’écrit jamais.', 'Touchez la partition avec le Pencil et les outils s’ouvrent, rien de plus. Le trait suivant écrit. Le doigt continue de tourner les pages et de zoomer, et la main peut se poser sur l’écran : vous n’écrivez jamais par accident.', [['Stylo', 'Types, tailles, couleurs'], ['Surligneur', 'Couleur transparente'], ['Texte', 'Tapé, ou écrit au Pencil'], ['Gomme', 'Seulement vos annotations'], ['Gomme de partition', 'Enlève une liaison imprimée, garde la portée'], ['Deux couleurs', 'Noir et rouge, à portée de doigt'], ['Note', 'Une feuille transparente par-dessus'], ['Main sûre', 'Des traits plus calmes et plus droits']]],
+      symbols: ['Symboles', 'Des symboles en un geste.', 'Choisissez un symbole, puis touchez la musique là où il doit aller.', ['pp à ff, sfz, fp', 'Tiré, poussé', 'Doigtés 0–4', 'Cordes I–IV', 'Point d’orgue, respiration, accent', 'rit., a tempo, pizz., arco', 'Lunettes (attention !)']],
+      slurs: ['Liaisons', 'Dessinez une liaison, obtenez-la gravée.', 'Tracez de la première note à la dernière. Stand dessine une liaison nette et effilée, au-dessus ou en dessous, du côté où vous l’avez tracée.'],
+      select: ['Sélection', 'Entourez : déplacez, copiez ou faites-en un passage.', 'Entourez ce que vous avez écrit pour le déplacer, le redimensionner, le copier ou l’effacer. Entourez des mesures et la première proposition est d’en faire un passage.'],
+      clean: ['Copie propre', 'Vos annotations ne touchent jamais l’édition.', 'Les annotations restent séparées de la page imprimée. Masquez-les toutes avec l’œil, ou exportez la partition avec elles pour un élève, ou en copie propre.', ['Masquer les annotations', 'Exporter avec les annotations', 'Exporter une copie propre']],
+      passages: ['Passages', 'Un carnet de tempo pour chaque endroit difficile.', 'Entourez les mesures, donnez au passage un type, un tempo de départ et un objectif. Notez chaque jour le tempo atteint : la barre se remplit vers l’objectif et un petit graphique montre votre meilleur jour après jour.', [['Mélodique', 'D’abord propre, puis vite'], ['Technique', '+5 bpm quand c’est propre'], ['Démanché', 'Lentement et en rythme'], ['Rythme', 'Le rythme seul d’abord'], ['Archet et souffle', 'Le motif tout seul'], ['Ce qui a été oublié', 'Les passages délaissés trop longtemps']]],
+      session: ['Séance de travail', 'Tous vos passages, à une tourne de distance.', 'Donnez une priorité à chaque passage. Stand commence par les plus importants et par ceux qui sont le plus loin de leur objectif. Tourner la page mène au passage suivant, dans n’importe quelle partition, avec la page entière.', ['Haute · Moyenne · Basse · Passer', 'Priorité haute deux fois', 'Dans toutes vos partitions']],
+      reps: ['Répétitions', 'Comptez les passages propres d’affilée.', 'Notez chaque passage propre et chaque faute : une faute remet le compteur à zéro. Fixez-vous un objectif de 3, 5, 7 ou 10.'],
+      metronome: ['Métronome', 'Un métronome qui fait plus que tic-tac.', 'Tapez le tempo, accentuez ou faites taire n’importe quel temps, et laissez-le tourner vos pages. Il continue pendant que vous accordez, enregistrez ou changez d’app.', [['Mesure', 'De 1/4 à 12/8'], ['Subdivision', 'Croches, triolets, doubles'], ['Entraîneur de vitesse', 'Progressif ou par paliers'], ['Mesures muettes', 'Gardez le tempo vous-même'], ['Flash', 'Voir le premier temps'], ['Son', 'Clic, wood-block, bip']]],
+      scales: ['Gammes', 'Des gammes en notes longues, ou rapides.', 'Toutes les tonalités, majeures, mineures et modes, chacune avec son tempo. Chaque note dure 4, 3, 2 ou 1 temps, ou 2 à 4 par temps, avec un clic net et un bourdon en dessous.', ['Chaque note : 4 temps', 'Bourdon sur la tonique', 'Tempérée, juste ou pythagoricienne', 'Son de piano, d’orgue ou d’archet', 'Une mesure pour rien']],
+      log: ['Journal de travail', 'Voyez ce que vous avez vraiment travaillé.', 'Le temps compte tout seul tant qu’une partition est ouverte ou qu’un outil tourne. L’anneau de l’écran d’accueil se remplit vers votre objectif du jour.', [['Objectif du jour', 'De 15 minutes à 4 heures'], ['Série', 'Jours d’affilée'], ['Graphique', 'Semaine, mois, année'], ['Par œuvre', 'Minutes sur chacune'], ['Aujourd’hui', 'Une note sur la suite'], ['Minuteur', '25/5, 45/15, 60/20']]],
+      plan: ['Planning de la semaine', 'Planifiez la semaine par demi-heures.', 'Coloriez les demi-heures où vous voulez travailler. Les semaines passées montrent en vert ce qui est fait et en rouge ce qui est manqué, et un rappel arrive quand la séance commence.', ['Au début, 10 ou 30 min avant', 'Se répète de semaine en semaine', 'Sur iPad et iPhone']],
+      iphone: ['iPhone', 'Votre travail dans la poche.', 'L’iPhone montre la journée, la semaine et chaque œuvre de votre iPad, et garde les partitions de l’iPad pour les lire partout. Loin du pupitre, il a l’accordeur, les harmoniques, le bourdon, le métronome, les gammes, les répétitions, un minuteur et l’enregistrement, et il sert de caméra à l’iPad.', ['Les partitions de l’iPad, à lire', 'Temps de travail via iCloud', 'Caméra pour l’iPad']],
+      tuner: ['Accordeur', 'Un accordeur qui apprend votre justesse.', 'L’aiguille indique les cents et la note devient verte quand c’est juste. Avec le temps, il apprend quelles notes vous jouez souvent trop haut ou trop bas.', [['La de référence', 'Par exemple 442 Hz'], ['Tempérée', 'Comme le piano'], ['Juste', 'Tierces et quintes pures'], ['Pythagoricienne', 'Quintes pures'], ['Tendance', 'Trop haut ou trop bas ces temps-ci'], ['Petit accordeur', 'Par-dessus la partition']]],
+      harmonics: ['Harmoniques', 'Quelle harmonique, sur quelle corde, où poser le doigt.', 'Jouez une harmonique naturelle et Stand la nomme. Écoutez la série de n’importe quelle corde et voyez l’écart de chaque harmonique avec le piano : la 5e harmonique est 14 cents trop basse, la 7e 31 cents.'],
+      drone: ['Bourdon', 'Un bourdon qui suit la musique.', 'Une note tenue en intervalles purs, pour que chaque battement entendu soit votre propre justesse. Son d’orgue, doux, d’archet ou de cor, avec la quinte ou l’octave si vous voulez. Quand la musique module, le bourdon peut suivre.', [['Je touche', 'Reste jusqu’à ce que vous changiez'], ['Il écoute', 'Change quand la tonalité change vraiment'], ['Ma liste', 'Vos notes, dans votre ordre'], ['Toutes les tonalités', 'Avance toutes les 2 à 16 mesures']]],
+      record: ['Enregistrer', 'Enregistrez en lisant.', 'L’audio pour le meilleur son, ou la vidéo pour regarder votre posture. Une mesure pour rien au métronome, et la partition reste à l’écran.', ['Audio ou vidéo', 'Avant, arrière ou iPhone', 'Une mesure pour rien', 'Garder le clic']],
+      camera: ['Caméra iPhone', 'Votre iPhone comme seconde caméra.', 'Ouvrez Stand sur l’iPhone et choisissez caméra pour l’iPad. Les deux se trouvent tout seuls. Réglez la luminosité, la couleur et le zoom depuis l’iPad, et la vidéo arrive après l’arrêt.'],
+      recordings: ['Enregistrements', 'Réécoutez plus lentement, à la même hauteur.', 'Glissez sur la forme d’onde pour boucler un passage et l’écouter à 50–100 % de la vitesse, à la même hauteur. Ajoutez l’acoustique d’une salle ou d’une église et coupez ce qui ne sert pas. Studio pose la partition sur votre vidéo, qui suit votre jeu, au format carré ou vertical, prête à partager.', ['Boucle de A à B', 'Vitesse 50–100 %', 'Salle ou église', 'Couper', 'Studio : partition sur la vidéo', 'Lumière et couleur auto']],
+      video: ['Vidéo sur la partition', 'Regardez-vous à côté de la musique.', 'Faites glisser une vidéo des Enregistrements sur la partition. Zoomez jusqu’à 5× sur le bras d’archet, ralentissez-la, et les pages tournent toujours en dessous.'],
+      along: ['Écouter', 'Les grands enregistrements, à portée de doigt.', 'Gardez avec chaque partition les interprétations que vous aimez, sur YouTube, Spotify ou Apple Music. Ou jouez avec un fichier audio, plus lentement et en boucle entre A et B.'],
+      composer: ['Compositeur', 'Écrivez au Pencil, écoutez le résultat.', 'Les notes se posent là où vous touchez la portée. Deux voix par portée, liaisons et soufflets d’une mesure à l’autre, maisons de reprise, et lecture avec des instruments d’orchestre échantillonnés.', ['De la ronde à la triple croche', 'Voix 1 / Voix 2', 'N-olets de 2 à 11', 'Transposer par intervalle ou tonalité', 'Ouvre le MusicXML']],
+      instruments: ['Instruments', 'Plus de 100 instruments, chacun dans son ton.', 'Bois, cuivres, percussions, claviers, guitares, voix et cordes, avec tous les instruments transpositeurs et le brass band. Écrivez en sons réels ; les parties sortent dans le ton que lit chaque musicien.', ['Clarinette en la, si♭, mi♭', 'Cor en fa ou mi♭', 'Euphonium, alto (tenor horn)', 'Du solo à l’orchestre']],
+      layout: ['Mise en page et son', 'Gravé comme il se doit.', 'Taille de la portée, papier et orientation, portées vides masquées et portées qui ne se chevauchent jamais. Choisissez la salle et le diapason, de la = 415 à 443.'],
+      export: ['Exporter', 'Conducteur, parties, MusicXML et MIDI.', 'Tout ce dont un orchestre ou un ensemble a besoin, à partir d’une seule partition.', [['Conducteur', 'PDF, chacun dans son ton'], ['Toutes les parties', 'Transposées, silences multi-mesures'], ['Sons réels', 'Pour le chef'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio et MIDI', 'Fichiers WAV et MIDI'], ['Sur mon pupitre', 'À lire et annoter']]],
+      capture: ['Lire la musique', 'De la page imprimée aux notes.', 'Choisissez des lignes dans un PDF, une numérisation ou une photo. Stand lit les notes, les rythmes, les silences, les altérations, la clé, l’armure et la mesure, et les colle dans n’importe quel instrument et à n’importe quelle mesure.', ['Compositeur ▸ Capture', 'Touchez ou glissez sur les lignes', 'Collez dans la partition']],
+      notebooks: ['Cahiers', 'Du papier à musique avec une couverture.', 'Papier à portées, ligné ou blanc pour les exercices, les dictées, les notes de cours ou un journal de travail. Ajoutez des photos dans des formes ou dans un mot, des cartes en verre, du washi tape et des autocollants, et déplacez ce que vous voulez d’une page à l’autre.'],
+    },
+    also: ['iPad et iPhone ensemble', 'Sauvegarde dans iCloud Drive ou Fichiers', 'Bleu ou noir, clair ou sombre', 'Seulement vos outils sur l’écran d’accueil', 'Écouteurs et pédales Bluetooth', 'Fonctionne hors ligne'],
+    high: [['Tournez la page sans lâcher l’archet.', 'Clignez de l’œil, appuyez sur une pédale, frappez le pupitre ou laissez Stand suivre votre jeu. La demi-page montre la suite : vous n’êtes jamais pris au dépourvu en bas de page.'],
+      ['Travaillez les mesures difficiles, pas toute l’œuvre encore une fois.', 'Entourez les mesures à travailler, donnez-leur un tempo objectif et notez chaque jour ce que vous avez atteint. Une séance de travail vous mène d’un passage à l’autre, dans toutes vos partitions.'],
+      ['Entendez où vous en êtes. Voyez comment vous jouez.', 'Un accordeur qui apprend quelles notes vous jouez trop haut ou trop bas. Filmez-vous en lisant, regardez-vous à côté de la musique, au ralenti, et posez la partition sur la vidéo pour la partager.'],
+      ['De la page imprimée à votre propre partition.', 'Choisissez des lignes sur une numérisation ou un PDF et Stand lit les notes dans le compositeur. Arrangez-les pour plus de 100 instruments et imprimez les parties, chacune dans son ton.']],
+    tools: ['Lecteur de partitions', 'Annotations au Pencil', 'Plan de travail', 'Métronome', 'Accordeur', 'Bourdon', 'Enregistreur et vidéo', 'Journal de travail', 'Notation', 'Cahiers'],
+    faq: [['Sur quels appareils Stand fonctionne-t-il ?', 'iPad et iPhone avec iPadOS ou iOS 15 ou ultérieur. L’iPad est le pupitre ; l’iPhone garde votre travail, vos partitions à lire et les outils dans votre poche, et peut filmer pour l’iPad. Tourner les pages d’un clin d’œil utilise la caméra avant et fonctionne au mieux sur un iPad avec Face ID.'],
+      ['Faut-il un compte ou Internet ?', 'Jamais de compte. Stand fonctionne hors ligne. Internet ne sert que lorsque vous demandez quelque chose en ligne, comme chercher une partition sur IMSLP ou ouvrir un enregistrement sur YouTube, Spotify ou Apple Music.'],
+      ['Où sont gardées mes partitions ?', 'Sur votre appareil, dans Stand et dans un dossier Stand de l’app Fichiers (Partitions, Enregistrements, Sauvegardes). Sauvegardez tout dans un seul fichier quand vous voulez, par exemple dans iCloud Drive, et restaurez-le sur un nouvel iPad.'],
+      ['Puis-je utiliser ma pédale tourne-page ?', 'Oui. Les pédales Bluetooth fonctionnent tout de suite. Vous pouvez aussi cligner de l’œil, toucher le bord de la page, frapper le pupitre, laisser le métronome tourner toutes les quelques mesures ou laisser Stand suivre votre jeu.'],
+      ['Mes annotations modifient-elles le PDF ?', 'Jamais. Les annotations sont sur leur propre calque. Masquez-les d’un geste, ou exportez la partition avec elles ou en copie propre.'],
+      ['Est-ce pour mon instrument ?', 'Stand est fait pour tous les musiciens qui lisent la musique : cordes, bois, cuivres, claviers, guitare, voix. L’accordeur, le bourdon, les harmoniques et les gammes sont particulièrement à l’aise avec les cordes, et le compositeur connaît plus de 100 instruments.']],
+  },
+
+  /* ---------------- Deutsch ---------------- */
+  de: {
+    f: { read: ['Lesen', 'Deine Noten auf dem Pult, zwei Seiten auf einmal, umgeblättert ohne die Hand zu heben.'],
+      mark: ['Eintragen', 'Schreib mit dem Apple Pencil in die Noten, wie mit einem Bleistift auf Papier.'],
+      practise: ['Üben', 'Wissen, was du üben musst, in welchem Tempo, und wie viel du wirklich geübt hast.'],
+      listen: ['Stimmen & Aufnehmen', 'Hör genau, wo du stehst: Intonation, Tempo und Video.', 'Stimmen'],
+      write: ['Schreiben', 'Komponieren, arrangieren, Noten abschreiben und Hefte führen.'] },
+    c: {
+      library: ['Bibliothek', 'Alle Noten an einem Ort.', 'Importiere PDFs und Fotos oder scanne Seiten mit der Kamera. Wie eine Scanner-App findet Stand die Seite, richtet sie an den Notenlinien gerade und entfernt die Schatten, damit ein Foto wie eine saubere Kopie aussieht. Titel und Komponist werden für dich gelesen.', ['Aus Dateien importieren', 'Mit der Kamera scannen', 'Ordner', 'Ein Stand-Ordner in der Dateien-App']],
+      find: ['Noten finden', 'Gemeinfreie Noten in Sekunden.', 'Durchsuche die IMSLP-Bibliothek nach Komponist und Werk. Stand markiert die beste Ausgabe für dein Instrument, und sie landet in deiner Bibliothek, bereit zum Lesen und Eintragen. Für Ausgaben, die es wert sind, gibt es Links zu Henle, Bärenreiter und anderen Verlagen.', ['Tippe „Bach Cellosuite“', 'Wähle dein Instrument', 'Tippe auf ein Ergebnis']],
+      turns: ['Umblättern', 'Sechs Arten umzublättern.', 'Zwei Seiten nebeneinander im Querformat, eine im Hochformat, oder eine Querformatseite gedreht auf einem hochkant stehenden Bildschirm. Blättere so um, wie es gerade passt.', [['Tippen oder wischen', 'An den Seitenrändern'], ['Pedal', 'Jedes Bluetooth-Pedal'], ['Zwinkern', 'Rechtes Auge vor, linkes zurück'], ['Zuhören', 'Folgt deinem Spiel und deinen Augen (Beta)'], ['Klopfen', 'Ein kräftiger Klopfer aufs Pult'], ['Metronom', 'Alle 2 bis 16 Takte']]],
+      thisscore: ['Diese Noten', 'Jedes Stück so eingerichtet, wie du liest.', 'Mit dem halben Umblättern siehst du schon den Anfang der nächsten Seite, während du diese zu Ende spielst. So wartest du nie aufs Umblättern.', [['Halbe Seite', 'Sieh, was kommt'], ['Wiederholungen und Sprünge', 'D.C., Wiederholungen, Codas'], ['Lesezeichen', 'Zu einem Satz springen'], ['Papier', 'Weiß, warm oder Nacht'], ['Größere Noten', 'Ohne weiße Ränder'], ['PDF exportieren', 'Mit oder ohne Eintragungen']]],
+      pages: ['Seiten', 'Korrigiere die Ausgabe, statt sie nur zu lesen.', 'Schneide eine Seite auf die Musik zu, die du brauchst, teile sie zwischen den Systemen oder zieh Zeilen hoch, damit die Wendestelle besser liegt. Füge Seiten aus einer Datei hinzu, dreh eine Seite richtig herum und nimm Seiten heraus: Nichts geht verloren, bis du es willst.', ['Zuschneiden', 'Zwischen Systemen teilen', 'Zeilen hochziehen', 'Seiten hinzufügen', 'Seite drehen', 'Alles zurück']],
+      sets: ['Programme', 'Ein ganzes Konzert in einer Lesereihenfolge.', 'Wähle Seiten aus verschiedenen Noten für ein Vorspiel, eine Prüfung oder ein Konzert. Nach der letzten Seite eines Stücks öffnet sich das nächste an der richtigen Stelle. Kein neues PDF nötig.', ['Neues Programm, gib ihm einen Namen', 'Musik hinzufügen: erste und letzte Seite antippen', 'Spielen: das Pedal führt dich durch']],
+      perform: ['Auftritt', 'Auf der Bühne nur die Musik.', 'Der Auftrittsmodus blendet alle Werkzeuge aus, damit eine versehentliche Berührung nie etwas öffnet. Umblättern, Pedal und Zwinkern funktionieren weiter.'],
+      pencil: ['Apple Pencil', 'Die erste Berührung schreibt nie.', 'Berühre die Noten mit dem Pencil und die Werkzeuge öffnen sich, mehr nicht. Der nächste Strich schreibt. Dein Finger blättert und zoomt weiter, und die Hand darf auf dem Glas liegen, so schreibst du nie aus Versehen.', [['Stift', 'Arten, Stärken, Farben'], ['Textmarker', 'Durchscheinende Farbe'], ['Text', 'Tippen oder mit dem Pencil schreiben'], ['Radierer', 'Nur deine Eintragungen'], ['Notenradierer', 'Entfernt einen gedruckten Bogen, lässt die Linien stehen'], ['Zwei Farben', 'Schwarz und Rot, einen Tipp entfernt'], ['Notiz', 'Ein durchsichtiges Blatt darüber'], ['Ruhige Hand', 'Ruhigere, geradere Linien']]],
+      symbols: ['Zeichen', 'Zeichen mit einem Tipp.', 'Wähle ein Zeichen und tippe in die Noten, wo es hingehört.', ['pp bis ff, sfz, fp', 'Abstrich, Aufstrich', 'Fingersätze 0–4', 'Saiten I–IV', 'Fermate, Atemzeichen, Akzent', 'rit., a tempo, pizz., arco', 'Brille (Achtung!)']],
+      slurs: ['Bögen', 'Zeichne einen Bogen, bekomm einen gestochenen.', 'Zeichne von der ersten bis zur letzten Note. Stand zeichnet einen sauberen, spitz zulaufenden Bogen, oben oder unten, auf der Seite, auf der du gezeichnet hast.'],
+      select: ['Auswählen', 'Einkreisen: verschieben, kopieren oder zur Übestelle machen.', 'Zieh eine Schlinge um das Geschriebene, um es zu verschieben, zu skalieren, zu kopieren oder zu löschen. Kreise Takte ein, und als Erstes wird eine Übestelle angeboten.'],
+      clean: ['Saubere Kopie', 'Deine Eintragungen berühren nie die Ausgabe.', 'Eintragungen liegen getrennt von der gedruckten Seite. Blende alle mit dem Auge aus, oder exportiere die Noten mit ihnen für Schüler oder als saubere Kopie.', ['Eintragungen ausblenden', 'Mit Eintragungen exportieren', 'Saubere Kopie exportieren']],
+      passages: ['Übestellen', 'Ein Tempo-Tagebuch für jede schwere Stelle.', 'Kreise die Takte ein und gib der Stelle eine Art, ein Starttempo und ein Ziel. Trag jeden Tag das erreichte Tempo ein: Der Balken füllt sich zum Ziel hin, und eine kleine Kurve zeigt deinen Bestwert Tag für Tag.', [['Melodisch', 'Erst sauber, dann schnell'], ['Technisch', '+5 bpm, wenn es sauber ist'], ['Lagenwechsel', 'Langsam und im Rhythmus'], ['Rhythmus', 'Erst nur den Rhythmus'], ['Strich und Atem', 'Das Muster für sich'], ['Was liegen blieb', 'Zu lange vernachlässigte Stellen']]],
+      session: ['Übe-Einheit', 'Alle Übestellen, nur ein Umblättern entfernt.', 'Gib jeder Stelle eine Priorität. Stand beginnt mit den wichtigsten und denen, die am weitesten vom Ziel sind. Umblättern führt zur nächsten Stelle, in jedem Stück, mit der ganzen Seite.', ['Hoch · Mittel · Niedrig · Auslassen', 'Hohe Priorität zweimal', 'Über alle deine Noten']],
+      reps: ['Wiederholungen', 'Zähle saubere Durchgänge am Stück.', 'Markiere jeden sauberen Durchgang und jeden Fehler: Ein Fehler setzt die Zählung zurück. Setz dir ein Ziel von 3, 5, 7 oder 10.'],
+      metronome: ['Metronom', 'Ein Metronom, das mehr kann als klicken.', 'Tippe das Tempo, betone oder stumme jeden Schlag und lass es für dich umblättern. Es läuft weiter, während du stimmst, aufnimmst oder die App wechselst.', [['Taktart', '1/4 bis 12/8'], ['Unterteilung', 'Achtel, Triolen, Sechzehntel'], ['Tempotrainer', 'Fließend oder in Stufen'], ['Stumme Takte', 'Halte das Tempo selbst'], ['Blinken', 'Die Eins sehen'], ['Klang', 'Klick, Holzblock, Piep']]],
+      scales: ['Tonleitern', 'Tonleitern in langen Tönen oder schnell.', 'Jede Tonart, Dur, Moll und Modi, mit eigenem Tempo. Jeder Ton dauert 4, 3, 2 oder 1 Schlag oder kommt 2- bis 4-mal pro Schlag, mit sauberem Klick und einem Bordun darunter.', ['Jeder Ton: 4 Schläge', 'Bordun auf dem Grundton', 'Gleichstufig, rein oder pythagoreisch', 'Klavier-, Orgel- oder Streicherklang', 'Ein Takt Vorzähler']],
+      log: ['Übe-Tagebuch', 'Sieh, was du wirklich geübt hast.', 'Die Zeit läuft von selbst, solange Noten offen sind oder ein Werkzeug läuft. Der Ring auf dem Startbildschirm füllt sich zu deinem Tagesziel.', [['Tagesziel', '15 Minuten bis 4 Stunden'], ['Serie', 'Tage am Stück'], ['Diagramm', 'Woche, Monat, Jahr'], ['Pro Stück', 'Minuten an jedem'], ['Heute', 'Eine Notiz, was als Nächstes kommt'], ['Timer', '25/5, 45/15, 60/20']]],
+      plan: ['Wochenplan', 'Plane deine Woche in halben Stunden.', 'Male die halben Stunden aus, in denen du üben willst. Vergangene Wochen zeigen Erledigtes grün und Verpasstes rot, und eine Erinnerung kommt, wenn das Üben beginnt.', ['Zu Beginn, 10 oder 30 Min. vorher', 'Läuft Woche für Woche weiter', 'Auf iPad und iPhone']],
+      iphone: ['iPhone', 'Dein Üben in der Hosentasche.', 'Das iPhone zeigt den Tag, die Woche und jedes Stück von deinem iPad und hält die Noten des iPads für unterwegs bereit. Fern vom Pult hat es Stimmgerät, Flageoletts, Bordun, Metronom, Tonleitern, Wiederholungen, einen Übe-Timer und Aufnahme, und es dient dem iPad als Kamera.', ['Die Noten vom iPad, zum Lesen', 'Übezeit über iCloud', 'Kamera fürs iPad']],
+      tuner: ['Stimmgerät', 'Ein Stimmgerät, das deine Intonation lernt.', 'Die Nadel zeigt die Cent, und der Ton wird grün, wenn er stimmt. Mit der Zeit lernt es, welche Töne du gern zu hoch oder zu tief spielst.', [['Kammerton A', 'Zum Beispiel 442 Hz'], ['Gleichstufig', 'Wie das Klavier'], ['Rein', 'Reine Terzen und Quinten'], ['Pythagoreisch', 'Reine Quinten'], ['Tendenz', 'Zuletzt zu hoch oder zu tief'], ['Kleines Stimmgerät', 'Über den Noten']]],
+      harmonics: ['Flageoletts', 'Welches Flageolett, auf welcher Saite, wo berühren.', 'Spiel ein natürliches Flageolett und Stand nennt es. Hör die Obertonreihe jeder Saite und sieh, wie weit jeder Oberton vom Klavier abweicht: der 5. ist 14 Cent zu tief, der 7. 31 Cent.'],
+      drone: ['Bordun', 'Ein Bordun, der der Musik folgt.', 'Ein gehaltener Ton in reinen Intervallen, damit jede Schwebung, die du hörst, deine eigene Intonation ist. Orgel-, weicher, Streicher- oder Hornklang, auf Wunsch mit Quinte oder Oktave. Wenn die Musik moduliert, kann der Bordun folgen.', [['Ich tippe', 'Bleibt, bis du ihn änderst'], ['Er hört zu', 'Wechselt, wenn die Tonart wirklich wechselt'], ['Meine Liste', 'Deine Töne, in deiner Reihenfolge'], ['Alle Tonarten', 'Weiter alle 2 bis 16 Takte']]],
+      record: ['Aufnehmen', 'Nimm auf, während du liest.', 'Audio für den besten Klang oder Video, um deine Haltung zu sehen. Ein Takt Vorzähler vom Metronom, und die Noten bleiben auf dem Bildschirm.', ['Audio oder Video', 'Vorne, hinten oder iPhone', 'Ein Takt Vorzähler', 'Klick weiterlaufen lassen']],
+      camera: ['iPhone-Kamera', 'Dein iPhone als zweite Kamera.', 'Öffne Stand auf dem iPhone und wähle Kamera fürs iPad. Die beiden finden sich von selbst. Stell Helligkeit, Farbe und Zoom vom iPad aus ein, und das Video kommt nach dem Stoppen herüber.'],
+      recordings: ['Aufnahmen', 'Langsamer anhören, in derselben Tonhöhe.', 'Zieh über die Wellenform, um eine Stelle zu wiederholen, und hör sie mit 50–100 % Tempo in derselben Tonhöhe. Füge den Klang eines Saals oder einer Kirche hinzu und schneide weg, was du nicht brauchst. Studio legt die Noten über dein Video, mitlaufend mit deinem Spiel, quadratisch oder hochkant und bereit zum Teilen.', ['Schleife von A nach B', '50–100 % Tempo', 'Saal oder Kirche', 'Schneiden', 'Studio: Noten im Video', 'Licht und Farbe automatisch']],
+      video: ['Video über den Noten', 'Sieh dich neben der Musik.', 'Zieh ein Video aus den Aufnahmen auf die Noten. Zoome bis 5× auf den Bogenarm, verlangsame es, und die Seiten blättern darunter weiter.'],
+      along: ['Mithören', 'Große Aufnahmen, einen Tipp entfernt.', 'Bewahre zu jedem Stück die Interpretationen auf, die du liebst, auf YouTube, Spotify oder Apple Music. Oder spiel zu einer Audiodatei, langsamer und in einer Schleife zwischen A und B.'],
+      composer: ['Komponieren', 'Mit dem Pencil schreiben, gespielt hören.', 'Die Noten landen dort, wo du das System berührst. Zwei Stimmen pro System, Bögen und Gabeln über Taktgrenzen, Volten und Wiederholungen, und Abspielen mit gesampelten Orchesterinstrumenten.', ['Ganze bis Zweiunddreißigstel', 'Stimme 1 / Stimme 2', 'N-tolen von 2 bis 11', 'Transponieren nach Intervall oder Tonart', 'Öffnet MusicXML']],
+      instruments: ['Instrumente', 'Mehr als 100 Instrumente, jedes in seiner Stimmung.', 'Holz, Blech, Schlagwerk, Tasteninstrumente, Gitarren, Stimmen und Streicher, mit allen transponierenden Instrumenten und der Brass Band. Schreib klingend; die Stimmen kommen in der Tonart heraus, die jeder Spieler liest.', ['Klarinette in A, B, Es', 'Horn in F oder Es', 'Euphonium, Tenorhorn', 'Vom Solo bis zum Orchester']],
+      layout: ['Satz und Klang', 'Gestochen, wie es sich gehört.', 'Systemgröße, Papier und Ausrichtung, leere Systeme ausgeblendet und Systeme, die nie kollidieren. Wähle den Raum und die Stimmung, von A = 415 bis 443.'],
+      export: ['Exportieren', 'Partitur, Stimmen, MusicXML und MIDI.', 'Alles, was eine Band oder ein Orchester braucht, aus einer einzigen Partitur.', [['Partitur', 'PDF, jedes in seiner Stimmung'], ['Alle Stimmen', 'Transponiert, mit Mehrtaktpausen'], ['Klingend', 'Für die Dirigentin'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio und MIDI', 'WAV- und MIDI-Dateien'], ['Auf mein Pult', 'Lesen und eintragen']]],
+      capture: ['Noten lesen', 'Von der gedruckten Seite zu Noten.', 'Wähle Zeilen in einem PDF, einem Scan oder einem Foto. Stand liest Noten, Rhythmen, Pausen, Vorzeichen, Schlüssel, Tonart und Takt und fügt sie in jedes Instrument und jeden Takt ein.', ['Komponieren ▸ Erfassen', 'Über die Zeilen tippen oder wischen', 'In die Partitur einfügen']],
+      notebooks: ['Hefte', 'Notenpapier mit Umschlag.', 'Noten-, Linien- oder leeres Papier für Übungen, Diktate, Unterrichtsnotizen oder ein Übe-Tagebuch. Füge Fotos in Formen oder in einem Wort ein, Glaskarten, Washi-Tape und Sticker, und verschiebe alles zwischen den Seiten.'],
+    },
+    also: ['iPad und iPhone zusammen', 'Sicherung in iCloud Drive oder Dateien', 'Blau oder Schwarz, hell oder dunkel', 'Nur deine Werkzeuge auf dem Startbildschirm', 'Bluetooth-Kopfhörer und -Pedale', 'Funktioniert offline'],
+    high: [['Umblättern, ohne den Bogen loszulassen.', 'Zwinkere, tritt aufs Pedal, klopf aufs Pult oder lass Stand deinem Spiel folgen. Das halbe Umblättern zeigt, was kommt, damit dich das Seitenende nie überrascht.'],
+      ['Übe die schweren Takte, nicht das ganze Stück noch einmal.', 'Kreise die Takte ein, die Arbeit brauchen, gib ihnen ein Zieltempo und trag jeden Tag ein, was du geschafft hast. Eine Übe-Einheit führt dich von Stelle zu Stelle, über alle deine Noten.'],
+      ['Hör, wo du stehst. Sieh, wie du spielst.', 'Ein Stimmgerät, das lernt, welche Töne du zu hoch oder zu tief spielst. Filme dich beim Lesen, sieh dich neben der Musik, langsamer, und leg die Noten zum Teilen über das Video.'],
+      ['Von der gedruckten Seite zur eigenen Partitur.', 'Wähle Zeilen in einem Scan oder PDF, und Stand liest die Noten in den Editor. Arrangiere sie für mehr als 100 Instrumente und druck die Stimmen, jede in ihrer Stimmung.']],
+    tools: ['Notenleser', 'Eintragen mit dem Pencil', 'Übeplan', 'Metronom', 'Stimmgerät', 'Bordun', 'Rekorder und Video', 'Übe-Tagebuch', 'Notensatz', 'Hefte'],
+    faq: [['Auf welchen Geräten läuft Stand?', 'Auf iPad und iPhone mit iPadOS oder iOS 15 oder neuer. Das iPad ist das Notenpult; das iPhone trägt dein Üben, deine Noten zum Lesen und die Werkzeuge in der Tasche und kann fürs iPad filmen. Umblättern per Zwinkern nutzt die Frontkamera und funktioniert am besten auf einem iPad mit Face ID.'],
+      ['Brauche ich ein Konto oder Internet?', 'Nie ein Konto. Stand funktioniert offline. Das Internet wird nur genutzt, wenn du etwas online anfragst, etwa Noten auf IMSLP suchst oder eine Aufnahme auf YouTube, Spotify oder Apple Music öffnest.'],
+      ['Wo liegen meine Noten?', 'Auf deinem Gerät, in Stand und in einem Stand-Ordner in der Dateien-App (Noten, Aufnahmen, Sicherungen). Sichere alles in eine einzige Datei, wann du willst, zum Beispiel in iCloud Drive, und stell sie auf einem neuen iPad wieder her.'],
+      ['Kann ich mein Blätterpedal benutzen?', 'Ja. Bluetooth-Blätterpedale funktionieren sofort. Du kannst auch zwinkern, an den Seitenrand tippen, aufs Pult klopfen, das Metronom alle paar Takte umblättern lassen oder Stand deinem Spiel folgen lassen.'],
+      ['Verändern meine Eintragungen das PDF?', 'Nie. Eintragungen liegen auf einer eigenen Ebene. Blende sie mit einem Tipp aus oder exportiere die Noten mit ihnen oder als saubere Kopie.'],
+      ['Ist es etwas für mein Instrument?', 'Stand ist für alle Musikerinnen und Musiker gemacht, die Noten lesen: Streicher, Holz, Blech, Tasten, Gitarre, Gesang. Stimmgerät, Bordun, Flageoletts und Tonleitern sind bei Streichern besonders zu Hause, und der Editor kennt mehr als 100 Instrumente.']],
+  },
+
+  /* ---------------- Italiano ---------------- */
+  it: {
+    f: { read: ['Leggere', 'I tuoi spartiti sul leggio, due pagine alla volta, girate senza alzare la mano.'],
+      mark: ['Annotare', 'Scrivi sulla musica con l’Apple Pencil, come faresti con una matita sulla carta.'],
+      practise: ['Studiare', 'Sapere cosa studiare, a che velocità, e quanto hai studiato davvero.'],
+      listen: ['Accordare & Registrare', 'Senti esattamente dove sei: intonazione, tempo e video.', 'Accordare'],
+      write: ['Scrivere', 'Componi, arrangia e copia musica, e tieni quaderni.'] },
+    c: {
+      library: ['Libreria', 'Tutti gli spartiti in un posto solo.', 'Importa PDF e foto, o scansiona le pagine con la fotocamera. Come un’app scanner, Stand trova la pagina, la raddrizza seguendo le righe del pentagramma e toglie le ombre, così una foto sembra una copia pulita. Titolo e compositore vengono letti per te.', ['Importa da File', 'Scansiona con la fotocamera', 'Cartelle', 'Una cartella Stand nell’app File']],
+      find: ['Trova uno spartito', 'Spartiti di pubblico dominio in pochi secondi.', 'Cerca nella biblioteca IMSLP per compositore e brano. Stand segnala l’edizione migliore per il tuo strumento, che arriva nella tua libreria pronta da leggere e annotare. Per le edizioni che vale la pena avere, ci sono link a Henle, Bärenreiter e altri editori.', ['Scrivi “Bach suite violoncello”', 'Scegli il tuo strumento', 'Tocca un risultato']],
+      turns: ['Girare pagina', 'Sei modi per girare pagina.', 'Due pagine affiancate in orizzontale, una in verticale, oppure una pagina orizzontale ruotata su uno schermo verticale. Girale nel modo più comodo al momento.', [['Tocca o scorri', 'Sui bordi della pagina'], ['Pedale', 'Qualsiasi pedale Bluetooth'], ['Occhiolino', 'Occhio destro avanti, sinistro indietro'], ['Ascolto', 'Segue quello che suoni, e i tuoi occhi (beta)'], ['Colpo', 'Un colpo deciso sul leggio'], ['Metronomo', 'Ogni 2–16 battute']]],
+      thisscore: ['Questo spartito', 'Ogni spartito impostato come lo leggi tu.', 'Con la mezza pagina vedi l’inizio della pagina successiva mentre finisci questa, così non aspetti mai un cambio pagina.', [['Mezza pagina', 'Vedi cosa viene dopo'], ['Ritornelli e salti', 'D.C., ritornelli, code'], ['Segnalibri', 'Vai a un movimento'], ['Carta', 'Bianca, calda o notte'], ['Musica più grande', 'Senza margini bianchi'], ['Esporta PDF', 'Con o senza annotazioni']]],
+      pages: ['Pagine', 'Correggi l’edizione, non limitarti a leggerla.', 'Ritaglia una pagina sulla musica che ti serve, tagliala tra i sistemi o sposta righe in alto perché il cambio pagina cada in un punto migliore. Aggiungi pagine da un file, raddrizza una pagina e togli pagine: non si perde nulla finché non lo decidi tu.', ['Ritaglia', 'Taglia tra i sistemi', 'Sposta righe in alto', 'Aggiungi pagine', 'Ruota una pagina', 'Ripristina tutto']],
+      sets: ['Scalette', 'Un intero concerto in un solo ordine di lettura.', 'Scegli pagine da spartiti diversi per un’audizione, un esame o un concerto. Dopo l’ultima pagina di un brano, lo spartito successivo si apre alla pagina giusta. Nessun PDF nuovo da preparare.', ['Nuova scaletta, dalle un nome', 'Aggiungi musica: tocca la prima e l’ultima pagina', 'Suona: il pedale ti porta fino in fondo']],
+      perform: ['Concerto', 'Sul palco, solo la musica.', 'La modalità Concerto nasconde tutti gli strumenti, così un tocco involontario non apre mai nulla. Cambi pagina, pedale e occhiolino continuano a funzionare.'],
+      pencil: ['Apple Pencil', 'Il primo tocco non scrive mai.', 'Tocca lo spartito con il Pencil e si aprono gli strumenti, nient’altro. Il tratto successivo scrive. Il dito continua a girare pagina e a zoomare, e la mano può appoggiarsi sul vetro, così non scrivi mai per sbaglio.', [['Penna', 'Tipi, spessori, colori'], ['Evidenziatore', 'Colore trasparente'], ['Testo', 'Digitalo o scrivilo con il Pencil'], ['Gomma', 'Solo le tue annotazioni'], ['Gomma dello spartito', 'Toglie una legatura stampata, lascia il pentagramma'], ['Due colori', 'Nero e rosso, a un tocco'], ['Nota', 'Un foglio trasparente sopra'], ['Mano ferma', 'Linee più calme e dritte']]],
+      symbols: ['Simboli', 'Simboli con un tocco.', 'Scegli un simbolo, poi tocca la musica dove va.', ['Da pp a ff, sfz, fp', 'Arcata in giù, in su', 'Diteggiature 0–4', 'Corde I–IV', 'Corona, respiro, accento', 'rit., a tempo, pizz., arco', 'Occhiali (attenzione!)']],
+      slurs: ['Legature', 'Disegna una legatura, ottienila incisa.', 'Traccia dalla prima nota all’ultima. Stand disegna una legatura pulita e affusolata, sopra o sotto, dal lato in cui l’hai tracciata.'],
+      select: ['Seleziona', 'Cerchialo: spostalo, copialo o fanne un passaggio.', 'Disegna un laccio intorno a ciò che hai scritto per spostarlo, ridimensionarlo, copiarlo o cancellarlo. Cerchia delle battute e la prima proposta è farne un passaggio.'],
+      clean: ['Copia pulita', 'Le tue annotazioni non toccano mai l’edizione.', 'Le annotazioni restano separate dalla pagina stampata. Nascondile tutte con l’occhio, o esporta lo spartito con le annotazioni per un allievo, o come copia pulita.', ['Nascondi le annotazioni', 'Esporta con annotazioni', 'Esporta una copia pulita']],
+      passages: ['Passaggi', 'Un registro del tempo per ogni punto difficile.', 'Cerchia le battute, dai al passaggio un tipo, un tempo di partenza e un obiettivo. Annota ogni giorno il tempo raggiunto: la barra si riempie verso l’obiettivo e un piccolo grafico mostra il tuo meglio, giorno dopo giorno.', [['Melodico', 'Prima pulito, poi veloce'], ['Tecnico', '+5 bpm quando è pulito'], ['Cambio di posizione', 'Lento e a tempo'], ['Ritmo', 'Prima solo il ritmo'], ['Arcata e respiro', 'Lo schema da solo'], ['Quello che hai trascurato', 'Passaggi lasciati da parte troppo a lungo']]],
+      session: ['Sessione di studio', 'Tutti i tuoi passaggi, a un cambio pagina di distanza.', 'Dai una priorità a ogni passaggio. Stand comincia dai più importanti e da quelli più lontani dall’obiettivo. Girare pagina porta al passaggio successivo, in qualsiasi spartito, con la pagina intera.', ['Alta · Media · Bassa · Salta', 'Priorità alta due volte', 'In tutti i tuoi spartiti']],
+      reps: ['Ripetizioni', 'Conta le esecuzioni pulite di fila.', 'Segna ogni esecuzione pulita e ogni errore: un errore fa ripartire il conteggio. Fissa un obiettivo di 3, 5, 7 o 10.'],
+      metronome: ['Metronomo', 'Un metronomo che fa più di un clic.', 'Batti il tempo con il dito, accentua o silenzia qualsiasi battito e lascia che giri le tue pagine. Continua mentre accordi, registri o cambi app.', [['Tempo', 'Da 1/4 a 12/8'], ['Suddivisione', 'Crome, terzine, semicrome'], ['Allenatore di velocità', 'Graduale o a gradini'], ['Battute mute', 'Tieni il tempo da solo'], ['Lampo', 'Vedi il primo tempo'], ['Suono', 'Clic, woodblock, bip']]],
+      scales: ['Scale', 'Scale a note lunghe, o veloci.', 'Qualsiasi tonalità, maggiore, minori e modi, ognuna con il suo tempo. Ogni nota dura 4, 3, 2 o 1 battiti, o va da 2 a 4 per battito, con un clic pulito e un bordone sotto.', ['Ogni nota: 4 battiti', 'Bordone sulla tonica', 'Temperata, naturale o pitagorica', 'Suono di pianoforte, organo o arco', 'Una battuta d’attacco']],
+      log: ['Diario di studio', 'Guarda cosa hai studiato davvero.', 'Il tempo si conta da solo mentre uno spartito è aperto o uno strumento è in funzione. L’anello nella schermata iniziale si riempie verso il tuo obiettivo giornaliero.', [['Obiettivo giornaliero', 'Da 15 minuti a 4 ore'], ['Serie', 'Giorni di fila'], ['Grafico', 'Settimana, mese, anno'], ['Per brano', 'Minuti su ciascuno'], ['Oggi', 'Una nota su cosa viene dopo'], ['Timer', '25/5, 45/15, 60/20']]],
+      plan: ['Piano settimanale', 'Pianifica la settimana a mezz’ore.', 'Colora le mezz’ore in cui vuoi studiare. Le settimane passate mostrano in verde ciò che hai fatto e in rosso ciò che hai saltato, e arriva un promemoria quando lo studio comincia.', ['All’inizio, 10 o 30 min prima', 'Continua settimana dopo settimana', 'Su iPad e iPhone']],
+      iphone: ['iPhone', 'Il tuo studio in tasca.', 'L’iPhone mostra la giornata, la settimana e ogni brano del tuo iPad, e tiene gli spartiti dell’iPad da leggere ovunque. Lontano dal leggio ha accordatore, armonici, bordone, metronomo, scale, ripetizioni, un timer e la registrazione, e fa da fotocamera per l’iPad.', ['Gli spartiti dell’iPad, da leggere', 'Tempo di studio via iCloud', 'Fotocamera per l’iPad']],
+      tuner: ['Accordatore', 'Un accordatore che impara la tua intonazione.', 'L’ago mostra i cent e la nota diventa verde quando sei intonato. Col tempo impara quali note tendi a suonare crescenti o calanti.', [['La di riferimento', 'Per esempio 442 Hz'], ['Temperata', 'Come il pianoforte'], ['Naturale', 'Terze e quinte pure'], ['Pitagorica', 'Quinte pure'], ['Tendenza', 'Crescente o calante ultimamente'], ['Accordatore piccolo', 'Sopra lo spartito']]],
+      harmonics: ['Armonici', 'Quale armonico, su quale corda, dove toccare.', 'Suona un armonico naturale e Stand ti dice qual è. Ascolta la serie di qualsiasi corda e guarda quanto ogni armonico si allontana dal pianoforte: il 5° armonico è calante di 14 cent, il 7° di 31.'],
+      drone: ['Bordone', 'Un bordone che segue la musica.', 'Una nota tenuta in intervalli puri, così ogni battimento che senti è la tua intonazione. Suono d’organo, morbido, d’arco o di corno, con la quinta o l’ottava se vuoi. Quando la musica cambia tonalità, il bordone può seguirla.', [['Tocco io', 'Resta finché non lo cambi'], ['Ascolta', 'Cambia quando la tonalità cambia davvero'], ['La mia lista', 'Le tue note, nel tuo ordine'], ['Tutte le tonalità', 'Avanza ogni 2–16 battute']]],
+      record: ['Registra', 'Registra mentre leggi.', 'Audio per il suono migliore, o video per guardare la postura. Una battuta d’attacco dal metronomo, e lo spartito resta sullo schermo.', ['Audio o video', 'Anteriore, posteriore o iPhone', 'Una battuta d’attacco', 'Tieni il clic']],
+      camera: ['Fotocamera dell’iPhone', 'Il tuo iPhone come seconda fotocamera.', 'Apri Stand sull’iPhone e scegli fotocamera per l’iPad. I due si trovano da soli. Regola luminosità, colore e zoom dall’iPad, e il video arriva quando ti fermi.'],
+      recordings: ['Registrazioni', 'Riascolta più lento, alla stessa altezza.', 'Trascina sulla forma d’onda per ripetere un passaggio e ascoltarlo al 50–100% della velocità, alla stessa altezza. Aggiungi l’acustica di una sala o di una chiesa e taglia ciò che non ti serve. Studio mette lo spartito sul tuo video, che segue quello che suoni, quadrato o verticale e pronto da condividere.', ['Ripeti da A a B', 'Velocità 50–100%', 'Sala o chiesa', 'Taglia', 'Studio: spartito sul video', 'Luce e colore automatici']],
+      video: ['Video sopra lo spartito', 'Guardati accanto alla musica.', 'Trascina un video dalle Registrazioni sopra lo spartito. Zooma fino a 5× sul braccio dell’arco, rallentalo, e le pagine continuano a girare sotto.'],
+      along: ['Ascolta', 'Grandi registrazioni, a un tocco.', 'Conserva con ogni spartito le interpretazioni che ami, su YouTube, Spotify o Apple Music. Oppure suona con un file audio, più lento e in loop tra A e B.'],
+      composer: ['Compositore', 'Scrivi con il Pencil, ascoltalo suonato.', 'Le note cadono dove tocchi il pentagramma. Due voci per pentagramma, legature e forcelle tra le battute, finali e ritornelli, e riproduzione con strumenti d’orchestra campionati.', ['Dalla semibreve alla biscroma', 'Voce 1 / Voce 2', 'Gruppi irregolari da 2 a 11', 'Trasporta per intervallo o tonalità', 'Apre MusicXML']],
+      instruments: ['Strumenti', 'Più di 100 strumenti, ognuno nella sua tonalità.', 'Legni, ottoni, percussioni, tastiere, chitarre, voci e archi, con tutti gli strumenti traspositori e la brass band. Scrivi in suoni reali; le parti escono nella tonalità che legge ogni musicista.', ['Clarinetto in La, Si♭, Mi♭', 'Corno in Fa o Mi♭', 'Euphonium, flicorno contralto', 'Dal solo all’orchestra']],
+      layout: ['Impaginazione e suono', 'Inciso come si deve.', 'Dimensione del pentagramma, carta e orientamento, pentagrammi vuoti nascosti e pentagrammi che non si scontrano mai. Scegli la sala e il diapason, da La = 415 a 443.'],
+      export: ['Esporta', 'Partitura, parti, MusicXML e MIDI.', 'Tutto ciò che serve a una banda o a un’orchestra, da un’unica partitura.', [['Partitura', 'PDF, ognuna nella sua tonalità'], ['Tutte le parti', 'Trasposte, pause di più battute'], ['Suoni reali', 'Per il direttore'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio e MIDI', 'File WAV e MIDI'], ['Sul mio leggio', 'Leggila e annotala']]],
+      capture: ['Leggi la musica', 'Dalla pagina stampata alle note.', 'Scegli delle righe in un PDF, una scansione o una foto. Stand legge note, ritmi, pause, alterazioni, chiave, armatura e tempo, e li incolla in qualsiasi strumento e battuta.', ['Compositore ▸ Cattura', 'Tocca o scorri sulle righe', 'Incolla nella partitura']],
+      notebooks: ['Quaderni', 'Carta da musica con la copertina.', 'Carta pentagrammata, a righe o bianca per esercizi, dettati, appunti di lezione o un diario di studio. Aggiungi foto in forme o dentro una parola, schede di vetro, washi tape e adesivi, e sposta qualsiasi cosa tra le pagine.'],
+    },
+    also: ['iPad e iPhone insieme', 'Backup su iCloud Drive o File', 'Blu o nero, chiaro o scuro', 'Solo i tuoi strumenti nella schermata iniziale', 'Cuffie e pedali Bluetooth', 'Funziona offline'],
+    high: [['Gira pagina senza lasciare l’arco.', 'Fai l’occhiolino, premi un pedale, batti sul leggio o lascia che Stand segua quello che suoni. La mezza pagina mostra cosa arriva, così la fine della pagina non ti coglie mai di sorpresa.'],
+      ['Studia le battute difficili, non di nuovo tutto il brano.', 'Cerchia le battute che hanno bisogno di lavoro, dai loro un tempo obiettivo e annota cosa hai raggiunto ogni giorno. Una sessione di studio ti porta da un passaggio all’altro, in tutti i tuoi spartiti.'],
+      ['Senti dove sei. Guarda come suoni.', 'Un accordatore che impara quali note suoni crescenti o calanti. Filmati mentre leggi, guardati accanto alla musica, più lento, e metti lo spartito sul video da condividere.'],
+      ['Dalla pagina stampata al tuo spartito.', 'Scegli delle righe in una scansione o in un PDF e Stand legge le note nel compositore. Arrangiale per più di 100 strumenti e stampa le parti, ognuna nella sua tonalità.']],
+    tools: ['Lettore di spartiti', 'Annotazioni con il Pencil', 'Piano di studio', 'Metronomo', 'Accordatore', 'Bordone', 'Registratore e video', 'Diario di studio', 'Notazione', 'Quaderni'],
+    faq: [['Su quali dispositivi funziona Stand?', 'iPad e iPhone con iPadOS o iOS 15 o successivi. L’iPad è il leggio; l’iPhone porta in tasca il tuo studio, gli spartiti da leggere e gli strumenti, e può filmare per l’iPad. Girare pagina con l’occhiolino usa la fotocamera anteriore e funziona meglio su un iPad con Face ID.'],
+      ['Serve un account o internet?', 'Mai un account. Stand funziona offline. Internet si usa solo quando chiedi qualcosa online, come cercare uno spartito su IMSLP o aprire una registrazione su YouTube, Spotify o Apple Music.'],
+      ['Dove vengono conservati i miei spartiti?', 'Sul tuo dispositivo, in Stand e in una cartella Stand nell’app File (Spartiti, Registrazioni, Backup). Fai il backup di tutto in un unico file quando vuoi, per esempio su iCloud Drive, e ripristinalo su un iPad nuovo.'],
+      ['Posso usare il mio pedale girapagine?', 'Sì. I pedali Bluetooth funzionano subito. Puoi anche fare l’occhiolino, toccare il bordo della pagina, battere sul leggio, lasciare che il metronomo giri ogni poche battute o lasciare che Stand segua quello che suoni.'],
+      ['Le annotazioni modificano il PDF?', 'Mai. Le annotazioni stanno su un livello a parte. Nascondile con un tocco, o esporta lo spartito con le annotazioni o come copia pulita.'],
+      ['Va bene per il mio strumento?', 'Stand è fatto per tutti i musicisti che leggono la musica: archi, legni, ottoni, tastiere, chitarra, voce. Accordatore, bordone, armonici e scale si trovano particolarmente a casa con gli archi, e il compositore conosce più di 100 strumenti.']],
+  },
+};
+
+/* ---------- pick a language and lay it over the English ---------- */
+const LANG = (() => {
+  const ok = (l) => l && LANGS.some(([k]) => k === l) ? l : null;
+  try { const q = new URLSearchParams(location.search).get('lang'); if (ok(q)) { try { localStorage.setItem('stand-lang', q); } catch {} return q; } } catch {}
+  try { const s = ok(localStorage.getItem('stand-lang')); if (s) return s; } catch {}
+  for (const l of (navigator.languages || [navigator.language || 'en'])) { const k = ok(String(l).slice(0, 2).toLowerCase()); if (k) return k; }
+  return 'en';
+})();
+const U = Object.assign({}, UI.en, UI[LANG] || {});
+const fmt = (s, o) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in o ? o[k] : m));
+(() => {
+  const t = TR[LANG];
+  if (t) {
+    F.forEach((f) => {
+      const x = t.f[f.id]; if (x) { f.title = x[0]; f.lead = x[1]; if (f.short || x[2]) f.short = x[2] || x[0]; }
+      f.ch.forEach((c) => {
+        const y = t.c[c.id]; if (!y) return;
+        [c.name, c.h, c.p] = y;
+        if (y[3]) { if (c.grid) c.grid = y[3]; else if (c.steps) c.steps = y[3]; else if (c.chips) c.chips = y[3]; }
+      });
+    });
+    ALSO.forEach((a, i) => { if (t.also[i]) a[1] = t.also[i]; });
+    HIGH.forEach((h, i) => { const y = t.high[i]; if (y) { h.h = y[0]; h.p = y[1]; } });
+    TOOLS.forEach((a, i) => { if (t.tools[i]) a[1] = t.tools[i]; });
+    t.faq.forEach((q, i) => { FAQ[i] = q; });
+  }
+  HIGH.forEach((h) => { const f = F.find((x) => x.id === h.to[0]); if (f) h.k = f.title; });
+  document.documentElement.lang = LANG === 'pt' ? 'pt-PT' : LANG;
+  document.title = U.title;
+})();
+
+/* ---------- the words in the page around the folders, and the language picker ---------- */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+  set('topNote', U.top); set('footP', U.foot); set('lkPriv', U.privacy); set('lkTerms', U.terms); set('lkSupport', U.support); set('legalNote', U.legal);
+  const al = (id, t) => { const e = $(id); if (e) e.setAttribute('aria-label', t); };
+  al('drawer', U.drawerLabel); al('also', U.alsoLabel); al('prevBtn', U.prev); al('nextBtn', U.next); al('closeBtn', U.close);
+  const sel = $('langSel'); if (!sel) return;
+  sel.innerHTML = LANGS.map(([k, n]) => `<option value="${k}" lang="${k}"${k === LANG ? ' selected' : ''}>${n}</option>`).join('');
+  sel.setAttribute('aria-label', U.lang);
+  sel.addEventListener('change', () => {
+    try { localStorage.setItem('stand-lang', sel.value); } catch {}
+    try { const u = new URL(location.href); u.searchParams.set('lang', sel.value); location.replace(u.href); } catch { location.reload(); }
+  });
+})();
 
 (() => {
   try {
@@ -669,20 +1139,20 @@ const THEME = {
   tabH: 170,
   tone(el, f) { el.style.setProperty('--c-bg', PAPER[f.id][0]); el.style.setProperty('--c-ink', PAPER[f.id][1]); },
   folder(f, i) {
-    return `<span class="tab">Folder 0${i + 1} · ${f.short || f.title}</span>
+    return `<span class="tab">${U.folder} 0${i + 1} · ${f.short || f.title}</span>
       <span class="strip"><span class="name">${f.title}</span><span class="flead">${f.lead}</span>
         <span class="sb"><ul class="contents">${f.ch.map((c) => `<li>${c.name}</li>`).join('')}</ul><span class="bars" aria-hidden="true"></span><span class="num">0${i + 1} / 0${F.length}</span>
-          <span class="open" aria-hidden="true">Open<svg><use href="#i-chev-r"/></svg></span></span></span>
+          <span class="open" aria-hidden="true">${U.open}<svg><use href="#i-chev-r"/></svg></span></span></span>
       <span class="peek"><img src="img/m_${f.shot}.webp" alt="" decoding="async" loading="lazy"></span>`;
   },
   cover() {
-    return `<div class="big" aria-hidden="true">Stand</div><div class="spine-note" aria-hidden="true">Read · Mark · Practise · Tune &amp; Record · Write</div>
+    return `<div class="big" aria-hidden="true">Stand</div><div class="spine-note" aria-hidden="true">${F.map((f) => f.title).join(' · ')}</div>
       <div class="inner">
-        <span class="hint"><i></i><span class="hint-wide">Open a folder to see inside</span><span class="hint-phone">Tap a folder to see inside</span></span>
+        <span class="hint"><i></i><span class="hint-wide">${U.hintWide}</span><span class="hint-phone">${U.hintPhone}</span></span>
         <div class="ctext">
-          <h1>The music stand that practises with you.</h1>
-          <p>Read and mark your scores, turn pages hands-free, practise the hard bars, tune, film yourself and write your own music. One app, on iPad and iPhone.</p>
-          <div class="cta-row">${ctaHTML()}<span class="ctanote">No account · Offline · Private</span></div>
+          <h1>${U.h1}</h1>
+          <p>${U.coverP}</p>
+          <div class="cta-row">${ctaHTML()}<span class="ctanote">${U.note}</span></div>
         </div>
         <div class="shots" aria-hidden="true">
           <div class="dev ipad"><div class="slides">${["07_marked","63_video_over_score","12_drone","26_study_running"].map((n, k) => `<img src="img/s_${n}.webp" alt="" decoding="async"${k ? ' loading="lazy"' : ' fetchpriority="high" class="on"'}>`).join("")}</div></div>
@@ -690,7 +1160,7 @@ const THEME = {
         </div>
       </div>`;
   },
-  eyebrow(f, i) { return `<i></i>Folder 0${i + 1} of 0${F.length} · ${f.ch.length} things inside`; },
+  eyebrow(f, i) { return `<i></i>${fmt(U.eyebrow, { i: '0' + (i + 1), n: '0' + F.length, k: f.ch.length })}`; },
 };
 
 document.getElementById('also').innerHTML = ALSO.map(([i, t]) => `<span><svg class="i" aria-hidden="true"><use href="#i-${i}"/></svg>${t}</span>`).join('');
@@ -707,7 +1177,7 @@ document.getElementById('also').innerHTML = ALSO.map(([i, t]) => `<span><svg cla
           <span class="hk"><i></i>${String(k + 1).padStart(2, '0')} · ${h.k}</span>
           <h2>${h.h}</h2>
           <p>${h.p}</p>
-          <button class="hopen" data-open="${h.to[0]}" data-ch="${h.to[1]}">Open the ${title(h.to[0])} folder<svg aria-hidden="true"><use href="#i-chev-r"/></svg></button>
+          <button class="hopen" data-open="${h.to[0]}" data-ch="${h.to[1]}">${fmt(U.openF, { x: title(h.to[0]) })}<svg aria-hidden="true"><use href="#i-chev-r"/></svg></button>
         </div>
         <div class="hpics${h.phone ? ' two' : ''}" aria-hidden="true">
           <div class="dev ipad"><img src="img/s_${h.shot}.webp" alt="" loading="lazy" decoding="async"></div>
@@ -718,31 +1188,31 @@ document.getElementById('also').innerHTML = ALSO.map(([i, t]) => `<span><svg cla
 
     <section class="tools" aria-labelledby="toolsH">
       <div class="tl">
-        <span class="hk"><i></i>All in one</span>
-        <h2 id="toolsH">One stand instead of ten apps.</h2>
-        <p>Everything you practise with, in one place and on the same score. No switching apps in the middle of a phrase.</p>
+        <span class="hk"><i></i>${U.allin}</span>
+        <h2 id="toolsH">${U.toolsH}</h2>
+        <p>${U.toolsP}</p>
       </div>
       <ul class="tgrid">${TOOLS.map(([i, t]) => `<li>${icon(i)}<span>${t}</span></li>`).join('')}</ul>
     </section>
 
     <section class="private" aria-labelledby="privH">
-      <h2 id="privH">No account.<br>No ads.<br>No tracking.</h2>
+      <h2 id="privH">${U.privH}</h2>
       <div>
-        <p>Your scores, markings, recordings and practice log stay on your device. Sound and camera pictures are analysed on the device and never sent anywhere.</p>
-        <a class="plink" href="privacy.html">Read the privacy policy<svg aria-hidden="true"><use href="#i-chev-r"/></svg></a>
+        <p>${U.privP}</p>
+        <a class="plink" href="privacy.html">${U.privLink}<svg aria-hidden="true"><use href="#i-chev-r"/></svg></a>
       </div>
     </section>
 
     <section class="faq" aria-labelledby="faqH">
-      <h2 id="faqH">Questions</h2>
+      <h2 id="faqH">${U.faqH}</h2>
       <div class="qs">${FAQ.map(([q, a]) => `<details><summary>${q}<span class="pm" aria-hidden="true"></span></summary><p>${a}</p></details>`).join('')}</div>
     </section>
 
     <section class="final" aria-labelledby="finalH">
       <div class="fbig" aria-hidden="true">Stand</div>
       <div class="ftx">
-        <h2 id="finalH">The music stand that practises with you.</h2>
-        <div class="cta-row">${ctaHTML()}<span class="ctanote">For iPad and iPhone</span></div>
+        <h2 id="finalH">${U.h1}</h2>
+        <div class="cta-row">${ctaHTML()}<span class="ctanote">${U.finalNote}</span></div>
       </div>
     </section>`;
   host.querySelectorAll('[data-tone]').forEach((el) => THEME.tone(el, F.find((f) => f.id === el.dataset.tone)));
@@ -844,14 +1314,14 @@ function extra(c) {
   return '';
 }
 const frame = (c, cls = '') => c.phone
-  ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${c.name} on iPhone" decoding="async"></div>`
+  ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${fmt(U.onIphone, { x: c.name })}" decoding="async"></div>`
   : `<div class="dev ipad ${cls}"><img src="${img(c.shot)}" alt="${c.name}" decoding="async"></div>`;
 
 function fill(i) {
   const f = F[i], next = F[(i + 1) % n];
-  const endcta = `<div class="endcta"><div><b>Stand</b><span>Everything in this folder, and the four others, in one app.</span></div>${ctaHTML()}</div>`;
+  const endcta = `<div class="endcta"><div><b>Stand</b><span>${U.endcta}</span></div>${ctaHTML()}</div>`;
   THEME.tone(sheet, f, i);
-  barT.innerHTML = `${ic(f.icon)}<span>${f.title}</span>`; barC.textContent = '';
+  barT.innerHTML = `${ic(f.icon)}<span>${phoneQ() ? (f.short || f.title) : f.title}</span>`; barC.textContent = '';
   body.innerHTML = `
     <header class="hero">
       <div class="htext">
@@ -859,7 +1329,7 @@ function fill(i) {
         <h2 class="rv" id="sheetTitle">${f.title}</h2>
         <p class="lead rv">${f.lead}</p>
         <div class="tiles rv" role="list">${f.ch.map((c, k) => `<button role="listitem" data-to="${k}">${ic(c.icon)}<span>${c.name}</span></button>`).join('')}</div>
-        <span class="scrollhint rv" aria-hidden="true">Scroll<i></i></span>
+        <span class="scrollhint rv" aria-hidden="true">${U.scroll}<i></i></span>
       </div>
       <div class="hdev rv" aria-hidden="true"><div class="dev ipad"><img src="${img(f.shot)}" alt="" decoding="async"></div></div>
     </header>
@@ -879,7 +1349,7 @@ function fill(i) {
     </div>
     <footer class="nextf">
       <button class="nextcard" data-go="${(i + 1) % n}">
-        <span class="nt"><small>Next folder</small><b>${next.title}</b><em>${next.lead}</em></span>
+        <span class="nt"><small>${U.next}</small><b>${next.title}</b><em>${next.lead}</em></span>
         <span class="np"><img src="${img(next.shot)}" alt="" loading="lazy" decoding="async"></span>
       </button>
       <div class="others">${F.map((g, k) => `<button data-go="${k}" ${k === i ? 'aria-current="true"' : ''}>${ic(g.icon)}${g.short || g.title}</button>`).join('')}</div>
@@ -888,8 +1358,18 @@ function fill(i) {
   THEME.tone(body.querySelector('.nextcard'), next, (i + 1) % n);
   body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
   body.querySelectorAll('[data-to]').forEach((b) => b.addEventListener('click', () => toCh(+b.dataset.to)));
-  active = -1; watch(); setActive(0); if (typeof sizeDevs === 'function') sizeDevs(body);
+  active = -1; watch(); setActive(0); fitTitles(); if (typeof sizeDevs === 'function') sizeDevs(body);
 }
+/* big titles shrink until their longest word fits the column (long names in some languages) */
+function fitTitles() {
+  if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => { if (!sheet.hidden) fitTitles(); });
+  body.querySelectorAll('.hero h2, .nextcard b').forEach((el) => {
+    el.style.fontSize = '';
+    let fs = parseFloat(getComputedStyle(el).fontSize), n = 0;
+    while (el.scrollWidth > el.clientWidth + 1 && fs > 30 && n++ < 60) { fs -= 3; el.style.fontSize = fs + 'px'; }
+  });
+}
+addEventListener('resize', () => { if (!sheet.hidden) fitTitles(); });
 function toCh(k) {
   const el = body.querySelectorAll('.ch')[k]; if (!el) return;
   const y = el.getBoundingClientRect().top - sheet.getBoundingClientRect().top + sheet.scrollTop - (narrow() ? 70 : 0);

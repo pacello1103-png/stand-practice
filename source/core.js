@@ -77,14 +77,14 @@ function extra(c) {
   return '';
 }
 const frame = (c, cls = '') => c.phone
-  ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${c.name} on iPhone" decoding="async"></div>`
+  ? `<div class="dev phone ${cls}"><img src="${img(c.phone)}" alt="${fmt(U.onIphone, { x: c.name })}" decoding="async"></div>`
   : `<div class="dev ipad ${cls}"><img src="${img(c.shot)}" alt="${c.name}" decoding="async"></div>`;
 
 function fill(i) {
   const f = F[i], next = F[(i + 1) % n];
-  const endcta = `<div class="endcta"><div><b>Stand</b><span>Everything in this folder, and the four others, in one app.</span></div>${ctaHTML()}</div>`;
+  const endcta = `<div class="endcta"><div><b>Stand</b><span>${U.endcta}</span></div>${ctaHTML()}</div>`;
   THEME.tone(sheet, f, i);
-  barT.innerHTML = `${ic(f.icon)}<span>${f.title}</span>`; barC.textContent = '';
+  barT.innerHTML = `${ic(f.icon)}<span>${phoneQ() ? (f.short || f.title) : f.title}</span>`; barC.textContent = '';
   body.innerHTML = `
     <header class="hero">
       <div class="htext">
@@ -92,7 +92,7 @@ function fill(i) {
         <h2 class="rv" id="sheetTitle">${f.title}</h2>
         <p class="lead rv">${f.lead}</p>
         <div class="tiles rv" role="list">${f.ch.map((c, k) => `<button role="listitem" data-to="${k}">${ic(c.icon)}<span>${c.name}</span></button>`).join('')}</div>
-        <span class="scrollhint rv" aria-hidden="true">Scroll<i></i></span>
+        <span class="scrollhint rv" aria-hidden="true">${U.scroll}<i></i></span>
       </div>
       <div class="hdev rv" aria-hidden="true"><div class="dev ipad"><img src="${img(f.shot)}" alt="" decoding="async"></div></div>
     </header>
@@ -112,7 +112,7 @@ function fill(i) {
     </div>
     <footer class="nextf">
       <button class="nextcard" data-go="${(i + 1) % n}">
-        <span class="nt"><small>Next folder</small><b>${next.title}</b><em>${next.lead}</em></span>
+        <span class="nt"><small>${U.next}</small><b>${next.title}</b><em>${next.lead}</em></span>
         <span class="np"><img src="${img(next.shot)}" alt="" loading="lazy" decoding="async"></span>
       </button>
       <div class="others">${F.map((g, k) => `<button data-go="${k}" ${k === i ? 'aria-current="true"' : ''}>${ic(g.icon)}${g.short || g.title}</button>`).join('')}</div>
@@ -121,8 +121,18 @@ function fill(i) {
   THEME.tone(body.querySelector('.nextcard'), next, (i + 1) % n);
   body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.go)));
   body.querySelectorAll('[data-to]').forEach((b) => b.addEventListener('click', () => toCh(+b.dataset.to)));
-  active = -1; watch(); setActive(0); if (typeof sizeDevs === 'function') sizeDevs(body);
+  active = -1; watch(); setActive(0); fitTitles(); if (typeof sizeDevs === 'function') sizeDevs(body);
 }
+/* big titles shrink until their longest word fits the column (long names in some languages) */
+function fitTitles() {
+  if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => { if (!sheet.hidden) fitTitles(); });
+  body.querySelectorAll('.hero h2, .nextcard b').forEach((el) => {
+    el.style.fontSize = '';
+    let fs = parseFloat(getComputedStyle(el).fontSize), n = 0;
+    while (el.scrollWidth > el.clientWidth + 1 && fs > 30 && n++ < 60) { fs -= 3; el.style.fontSize = fs + 'px'; }
+  });
+}
+addEventListener('resize', () => { if (!sheet.hidden) fitTitles(); });
 function toCh(k) {
   const el = body.querySelectorAll('.ch')[k]; if (!el) return;
   const y = el.getBoundingClientRect().top - sheet.getBoundingClientRect().top + sheet.scrollTop - (narrow() ? 70 : 0);

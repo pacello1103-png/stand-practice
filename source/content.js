@@ -12,16 +12,16 @@ const F = [
         steps: ['Type “Bach cello suite”', 'Choose your instrument', 'Tap a result'] },
       { id: 'turns', icon: 'flip', name: 'Page turns', shot: '02_score',
         h: 'Six ways to turn the page.',
-        p: 'Two pages side by side in landscape, one in portrait. Turn them in whatever way suits the moment.',
-        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing (beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
+        p: 'Two pages side by side in landscape, one in portrait, or a landscape page turned sideways across an upright screen. Turn them in whatever way suits the moment.',
+        grid: [['Tap or swipe', 'The edges of the page'], ['Pedal', 'Any Bluetooth pedal'], ['Wink', 'Right eye forward, left eye back'], ['Listening', 'Follows your playing, and your eyes (beta)'], ['Knock', 'A firm tap on the stand'], ['Metronome', 'Every 2 to 16 bars']] },
       { id: 'thisscore', icon: 'more', name: 'This score', shot: '03_more',
         h: 'Each score set up the way you read it.',
         p: 'Half-page turns show the top of the next page while you finish this one, so you never wait for a turn.',
         grid: [['Half-page turns', 'See what comes next'], ['Repeats and jumps', 'D.C., repeats, codas'], ['Bookmarks', 'Jump to a movement'], ['Paper', 'White, warm or night'], ['Bigger music', 'No white margins'], ['Export PDF', 'With or without markings']] },
       { id: 'pages', icon: 'pages', name: 'Pages', shot: '04_pages',
         h: 'Fix the edition, not just read it.',
-        p: 'Crop a page to the music you need, cut it between systems, or move lines up so the page turn falls in a better place. Delete a page with one tap, and Undo is right there.',
-        chips: ['Crop', 'Cut between systems', 'Move lines up', 'Delete and undo'] },
+        p: 'Crop a page to the music you need, cut it between systems, or move lines up so the page turn falls in a better place. Add pages from a file, turn a page the right way up, and take pages out: nothing is lost until you say so.',
+        chips: ['Crop', 'Cut between systems', 'Move lines up', 'Add pages', 'Turn a page', 'Put all back'] },
       { id: 'sets', icon: 'set', name: 'Sets', shot: '23_set_editor',
         h: 'A whole concert in one reading order.',
         p: 'Choose pages from different scores for an audition, an exam or a concert. After the last page of one piece, the next score opens at the right page. No new PDF to make.',
@@ -36,7 +36,7 @@ const F = [
       { id: 'pencil', icon: 'pen', name: 'Apple Pencil', shot: '05_markings_bar',
         h: 'The first touch never writes.',
         p: 'Touch the score with the Pencil and the tools open, nothing more. Your next stroke writes. Your finger still turns pages and zooms, and your hand can rest on the glass, so you never write by accident.',
-        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type it, or write it with the Pencil'], ['Eraser', 'Your markings only'], ['Score eraser', 'Removes a printed slur, keeps the staff'], ['Two colours', 'Black and red, one tap away']] },
+        grid: [['Pen', 'Types, sizes, colours'], ['Highlighter', 'See-through colour'], ['Text', 'Type it, or write it with the Pencil'], ['Eraser', 'Your markings only'], ['Score eraser', 'Removes a printed slur, keeps the staff'], ['Two colours', 'Black and red, one tap away'], ['Note', 'A see-through sheet on top'], ['Steady hand', 'Calmer, straighter lines']] },
       { id: 'symbols', icon: 'finger', name: 'Symbols', shot: '06_symbols',
         h: 'Symbols in one tap.',
         p: 'Choose a symbol, then tap the music where it goes.',
@@ -73,7 +73,7 @@ const F = [
       { id: 'scales', icon: 'scales', name: 'Scales', shot: '16_scale_tempo',
         h: 'Scales in long notes, or fast.',
         p: 'Any key, major, minors and modes, with its own tempo. Each note lasts 4, 3, 2 or 1 beats, or goes 2 to 4 per beat, with a clean click and a drone underneath.',
-        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal or just tuning', 'One bar count-in'] },
+        chips: ['Each note: 4 beats', 'Drone on the key note', 'Equal, just or Pythagorean', 'Piano, organ or bow sound', 'One bar count-in'] },
       { id: 'log', icon: 'chart', name: 'Practice log', shot: '27_practice',
         h: 'See what you really practised.',
         p: 'Time counts by itself while a score is open or a tool is running. The ring on the home screen fills up toward your daily goal.',
@@ -99,7 +99,7 @@ const F = [
         p: 'Play a natural harmonic and Stand names it. Hear the series of any string, and see how far each overtone is from the piano: the 5th harmonic is 14 cents flat, the 7th 31 cents flat.' },
       { id: 'drone', icon: 'drone', name: 'Drone', shot: '12_drone',
         h: 'A drone that follows the music.',
-        p: 'A steady note in pure intervals, so every beat you hear is your own intonation. When the music changes key, the drone can follow.',
+        p: 'A steady note in pure intervals, so every beat you hear is your own intonation. Organ, soft, bow or horn sound, with the fifth or the octave if you like. When the music changes key, the drone can follow.',
         grid: [['I tap', 'Stays until you change it'], ['It listens', 'Follows when the key really changes'], ['My list', 'Your notes, in your order'], ['All keys', 'Moves on every 2 to 16 bars']] },
       { id: 'record', icon: 'mic', name: 'Record', shot: '61_recording',
         h: 'Record while you read.',
@@ -124,7 +124,7 @@ const F = [
     ch: [
       { id: 'composer', icon: 'compose', name: 'Composer', shot: '40_composer',
         h: 'Write with the Pencil, hear it played.',
-        p: 'Notes land where you touch the staff. Two voices on a staff, slurs and hairpins across bars, endings and repeats, and Play with sampled instruments.',
+        p: 'Notes land where you touch the staff. Two voices on a staff, slurs and hairpins across bars, endings and repeats, and Play with sampled orchestral instruments.',
         chips: ['Whole note to 32nd', 'Voice 1 / Voice 2', 'Tuplets 2–11', 'Transpose by interval or key', 'Opens MusicXML'] },
       { id: 'instruments', icon: 'instruments', name: 'Instruments', shot: '43_instruments',
         h: 'More than 100 instruments, each in its own key.',
@@ -134,9 +134,9 @@ const F = [
         h: 'Engraved the way it should be.',
         p: 'Staff size, paper and orientation, empty staves hidden, and staves that never collide. Choose the room and the tuning, from A = 415 to 443.' },
       { id: 'export', icon: 'share', name: 'Export', shot: '44_export',
-        h: 'Score, parts and MusicXML.',
+        h: 'Score, parts, MusicXML and MIDI.',
         p: 'Everything a band or an orchestra needs, from one score.',
-        grid: [['Score', 'PDF, each in its own key'], ['All parts', 'Transposed, multi-bar rests'], ['Concert pitch', 'For the conductor'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio', 'WAV'], ['On my stand', 'Read and mark it']] },
+        grid: [['Score', 'PDF, each in its own key'], ['All parts', 'Transposed, multi-bar rests'], ['Concert pitch', 'For the conductor'], ['MusicXML', 'Sibelius, Dorico, MuseScore'], ['Audio and MIDI', 'WAV and MIDI files'], ['On my stand', 'Read and mark it']] },
       { id: 'capture', icon: 'capture', name: 'Read music', shot: '50_capture_result',
         h: 'From the printed page to notes.',
         p: 'Choose lines in a PDF, a scan or a photo. Stand reads the notes, rhythms, rests, accidentals, clef, key and time, and pastes them into any instrument and bar.',
@@ -150,11 +150,11 @@ const F = [
 /* App Store: paste the link here on launch day and the buttons become "Download on the App Store". */
 const APP_STORE_URL = '';
 const ctaHTML = () => APP_STORE_URL
-  ? `<a class="cta" href="${APP_STORE_URL}" target="_blank" rel="noopener">Download on the App Store</a>`
-  : `<span class="cta">Coming soon to the App Store</span>`;
+  ? `<a class="cta" href="${APP_STORE_URL}" target="_blank" rel="noopener">${U.dl}</a>`
+  : `<span class="cta">${U.soon}</span>`;
 
 /* ---------- the home page below the folders ---------- */
-const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
+const ALSO = [['phone', 'iPad and iPhone together'], ['cloud', 'Back up to iCloud Drive or Files'], ['sliders', 'Blue or black, light or dark'], ['more', 'Only your tools on the home screen'], ['ear', 'Bluetooth headphones and pedals'], ['check', 'Works offline']];
 /* each highlight opens a folder at a chapter: [folder id, chapter id] */
 const HIGH = [
   { k: 'Read', to: ['read', 'turns'], shot: '19_perform', phone: null,
@@ -172,7 +172,7 @@ const HIGH = [
 ];
 const TOOLS = [['lib', 'Score reader'], ['pen', 'Pencil markings'], ['passage', 'Practice planner'], ['metro', 'Metronome'], ['fork', 'Tuner'], ['drone', 'Drone'], ['video', 'Recorder and video'], ['chart', 'Practice log'], ['compose', 'Notation'], ['paper', 'Notebooks']];
 const FAQ = [
-  ['Which devices does Stand run on?', 'iPad and iPhone with iPadOS or iOS 15 or later. The iPad is the music stand; the iPhone keeps your practice, your scores to read and the tools in your pocket, and can film for the iPad. Winking to turn pages needs an iPad with Face ID.'],
+  ['Which devices does Stand run on?', 'iPad and iPhone with iPadOS or iOS 15 or later. The iPad is the music stand; the iPhone keeps your practice, your scores to read and the tools in your pocket, and can film for the iPad. Winking to turn pages uses the front camera and works best on an iPad with Face ID.'],
   ['Do I need an account or the internet?', 'No account, ever. Stand works offline. The internet is only used when you ask for something online, such as finding a score on IMSLP or opening a recording on YouTube, Spotify or Apple Music.'],
   ['Where are my scores kept?', 'On your device, in Stand and in a Stand folder in the Files app (Scores, Recordings, Backups). Back up everything to a single file whenever you like, for example in iCloud Drive, and restore it on a new iPad.'],
   ['Can I use my page-turn pedal?', 'Yes. Bluetooth page-turn pedals work out of the box. You can also wink, tap the edge of the page, knock on the stand, let the metronome turn every few bars, or let Stand follow your playing.'],

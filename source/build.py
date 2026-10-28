@@ -14,6 +14,7 @@ SHELL='''<meta charset="utf-8">
 {syms}
 <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"/></g></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
 </svg>
 <div class="wrap">
@@ -22,8 +23,8 @@ SHELL='''<meta charset="utf-8">
   <section class="also" id="also" aria-label="Also in Stand"></section>
   <div class="more" id="more"></div>
   <footer class="foot">
-    <p>Stand keeps your scores, markings, recordings and practice log on your device and works offline. For iPad and iPhone, iPadOS and iOS 15 or later. The scores on this page are J. S. Bach: the Minuet in G (BWV Anh. 114), arranged for cello, and the Pr&eacute;lude of the Cello Suite No. 1 (BWV 1007), engraved from public-domain editions (Bach-Gesellschaft; Schirmer, 1916) transcribed by the Mutopia Project. Music font: Bravura (SIL Open Font License).</p>
-    <nav aria-label="More"><a href="privacy.html">Privacy policy</a><a href="terms.html">Terms of use</a><a href="privacy.html#support">Support</a><span>&copy; 2026 Stand</span></nav>
+    <p id="footP">Stand keeps your scores, markings, recordings and practice log on your device and works offline.</p>
+    <nav aria-label="More"><a href="privacy.html" id="lkPriv">Privacy policy</a><a href="terms.html" id="lkTerms">Terms of use</a><a href="privacy.html#support" id="lkSupport">Support</a><span>&copy; 2026 Stand</span><small id="legalNote"></small></nav>
   </footer>
 </div>
 <section class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle">
@@ -39,6 +40,7 @@ SHELL='''<meta charset="utf-8">
 </section>
 <script>
 {content}
+{lang}
 {theme}
 document.getElementById('also').innerHTML = ALSO.map(([i, t]) => `<span><svg class="i" aria-hidden="true"><use href="#i-${{i}}"/></svg>${{t}}</span>`).join('');
 {home}
@@ -71,9 +73,9 @@ HEAD='''<!doctype html>
 <body>
 '''
 for name,title,fonts,css,js,top in [
- ('v1_paper.html','Stand Site, Paper Folders','https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap','paper.css','paper.js','<b>Stand</b><span class="mono">For iPad and iPhone</span>')
+ ('v1_paper.html','Stand Site, Paper Folders','https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap','paper.css','paper.js','<b>Stand</b><span class="topr"><span class="mono" id="topNote">For iPad and iPhone</span><label class="lang"><svg aria-hidden="true"><use href="#i-globe"/></svg><select id="langSel" aria-label="Language"><option>English</option></select></label></span>')
 ]:  # the App Folders look (/app/) is no longer built; it keeps its last version
-    out=SHELL.format(title=title,fonts=fonts,css=R('core.css')+'\n'+R(css),syms=syms,top=top,content=R('content.js'),theme=R(js),home=(R('home.js') if js=='paper.js' else ''),core=R('core.js'))
+    out=SHELL.format(title=title,fonts=fonts,css=R('core.css')+'\n'+R(css),syms=syms,top=top,content=R('content.js'),lang=R('lang.js'),theme=R(js),home=(R('home.js') if js=='paper.js' else ''),core=R('core.js'))
     open(os.path.join(D,'..',name),'w').write(out); print(name,len(out))
     # the published pages: the same body with share-preview tags around it
     sub = name.startswith('v2')

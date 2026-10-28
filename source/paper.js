@@ -12,20 +12,20 @@ const THEME = {
   tabH: 170,
   tone(el, f) { el.style.setProperty('--c-bg', PAPER[f.id][0]); el.style.setProperty('--c-ink', PAPER[f.id][1]); },
   folder(f, i) {
-    return `<span class="tab">Folder 0${i + 1} · ${f.short || f.title}</span>
+    return `<span class="tab">${U.folder} 0${i + 1} · ${f.short || f.title}</span>
       <span class="strip"><span class="name">${f.title}</span><span class="flead">${f.lead}</span>
         <span class="sb"><ul class="contents">${f.ch.map((c) => `<li>${c.name}</li>`).join('')}</ul><span class="bars" aria-hidden="true"></span><span class="num">0${i + 1} / 0${F.length}</span>
-          <span class="open" aria-hidden="true">Open<svg><use href="#i-chev-r"/></svg></span></span></span>
+          <span class="open" aria-hidden="true">${U.open}<svg><use href="#i-chev-r"/></svg></span></span></span>
       <span class="peek"><img src="img/m_${f.shot}.webp" alt="" decoding="async" loading="lazy"></span>`;
   },
   cover() {
-    return `<div class="big" aria-hidden="true">Stand</div><div class="spine-note" aria-hidden="true">Read · Mark · Practise · Tune &amp; Record · Write</div>
+    return `<div class="big" aria-hidden="true">Stand</div><div class="spine-note" aria-hidden="true">${F.map((f) => f.title).join(' · ')}</div>
       <div class="inner">
-        <span class="hint"><i></i><span class="hint-wide">Open a folder to see inside</span><span class="hint-phone">Tap a folder to see inside</span></span>
+        <span class="hint"><i></i><span class="hint-wide">${U.hintWide}</span><span class="hint-phone">${U.hintPhone}</span></span>
         <div class="ctext">
-          <h1>The music stand that practises with you.</h1>
-          <p>Read and mark your scores, turn pages hands-free, practise the hard bars, tune, film yourself and write your own music. One app, on iPad and iPhone.</p>
-          <div class="cta-row">${ctaHTML()}<span class="ctanote">No account · Offline · Private</span></div>
+          <h1>${U.h1}</h1>
+          <p>${U.coverP}</p>
+          <div class="cta-row">${ctaHTML()}<span class="ctanote">${U.note}</span></div>
         </div>
         <div class="shots" aria-hidden="true">
           <div class="dev ipad"><div class="slides">${["07_marked","63_video_over_score","12_drone","26_study_running"].map((n, k) => `<img src="img/s_${n}.webp" alt="" decoding="async"${k ? ' loading="lazy"' : ' fetchpriority="high" class="on"'}>`).join("")}</div></div>
@@ -33,5 +33,5 @@ const THEME = {
         </div>
       </div>`;
   },
-  eyebrow(f, i) { return `<i></i>Folder 0${i + 1} of 0${F.length} · ${f.ch.length} things inside`; },
+  eyebrow(f, i) { return `<i></i>${fmt(U.eyebrow, { i: '0' + (i + 1), n: '0' + F.length, k: f.ch.length })}`; },
 };
