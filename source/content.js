@@ -179,3 +179,16 @@ const FAQ = [
   ['Will my markings change the PDF?', 'Never. Markings sit on their own layer. Hide them with one tap, or export the score with them or as a clean copy.'],
   ['Is it for my instrument?', 'Stand is made for every musician who reads music: strings, winds, brass, keyboards, guitar, voice. The tuner, drone, harmonics and scales are especially at home with string players, and the composer knows more than 100 instruments.'],
 ];
+/* things no other music stand does: [icon, folder, chapter, title, line] — each card opens that chapter */
+const UNIQ = [
+  ['flip', 'read', 'turns', 'Turn pages with a wink', 'Right eye forward, left eye back. Or a firm knock on the stand.'],
+  ['ear', 'read', 'turns', 'It follows your playing', 'Stand listens to you and turns the page at the right bar (beta).'],
+  ['fork', 'listen', 'tuner', 'A tuner that knows you', 'It learns which notes you tend to play sharp or flat.'],
+  ['drone', 'listen', 'drone', 'A drone that changes key', 'It hears the music modulate and moves with it.'],
+  ['harm', 'listen', 'harmonics', 'It names your harmonics', 'Which harmonic, on which string, and where to touch.'],
+  ['passage', 'practise', 'passages', 'A tempo log for every hard bar', 'Practice sessions jump from passage to passage, across all your scores.'],
+  ['pen', 'mark', 'pencil', 'Erase the printed page', 'Take out a printed slur or fingering. The staff lines stay.'],
+  ['capture', 'write', 'capture', 'It reads printed music', 'Turn a scan or a photo into notes you can edit, on the device.'],
+  ['video', 'listen', 'video', 'Your video on the score', 'Watch yourself next to the music, slower, while the pages turn.'],
+  ['phone', 'listen', 'camera', 'Your iPhone as a second camera', 'Film from the side while the iPad shows the music.'],
+];

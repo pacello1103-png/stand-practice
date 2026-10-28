@@ -21,6 +21,7 @@ const UI = {
     privLink: 'Read the privacy policy', faqH: 'Questions', finalNote: 'For iPad and iPhone',
     foot: 'Stand keeps your scores, markings, recordings and practice log on your device and works offline. For iPad and iPhone, iPadOS and iOS 15 or later. The scores in the pictures are by J. S. Bach: the Minuet in G (BWV Anh. 114), arranged for cello, and the Préludes of the Cello Suites No. 1 (BWV 1007) and No. 3 (BWV 1009), engraved from public-domain editions (Bach-Gesellschaft; Schirmer, 1916) transcribed by the Mutopia Project. Music font: Bravura (SIL Open Font License).',
     privacy: 'Privacy policy', terms: 'Terms of use', support: 'Support', legal: '',
+    uniqK: 'Only in Stand', uniqH: 'Things no other music stand does.', uniqP: 'Tap a card to see it in the app.',
     drawerLabel: 'What Stand does', alsoLabel: 'Also in Stand', onIphone: '{x} on iPhone',
   },
   pt: {
@@ -39,6 +40,7 @@ const UI = {
     privLink: 'Ler a política de privacidade', faqH: 'Perguntas', finalNote: 'Para iPad e iPhone',
     foot: 'O Stand guarda as tuas partituras, anotações, gravações e registo de estudo no teu dispositivo e funciona sem internet. Para iPad e iPhone, iPadOS e iOS 15 ou posterior. As partituras nas imagens são de J. S. Bach: o Minueto em Sol (BWV Anh. 114), arranjado para violoncelo, e os Prelúdios das Suites para violoncelo n.º 1 (BWV 1007) e n.º 3 (BWV 1009), gravados a partir de edições de domínio público (Bach-Gesellschaft; Schirmer, 1916) transcritas pelo Mutopia Project. Fonte musical: Bravura (SIL Open Font License).',
     privacy: 'Política de privacidade', terms: 'Termos de utilização', support: 'Apoio', legal: 'A política de privacidade e os termos estão em inglês.',
+    uniqK: 'Só no Stand', uniqH: 'Coisas que nenhuma outra estante faz.', uniqP: 'Toca num cartão para o veres na app.',
     drawerLabel: 'O que o Stand faz', alsoLabel: 'Também no Stand', onIphone: '{x} no iPhone',
   },
   es: {
@@ -57,6 +59,7 @@ const UI = {
     privLink: 'Leer la política de privacidad', faqH: 'Preguntas', finalNote: 'Para iPad y iPhone',
     foot: 'Stand guarda tus partituras, anotaciones, grabaciones y registro de estudio en tu dispositivo y funciona sin conexión. Para iPad y iPhone, iPadOS e iOS 15 o posterior. Las partituras de las imágenes son de J. S. Bach: el Minueto en Sol (BWV Anh. 114), arreglado para violonchelo, y los Preludios de las Suites para violonchelo n.º 1 (BWV 1007) y n.º 3 (BWV 1009), grabados a partir de ediciones de dominio público (Bach-Gesellschaft; Schirmer, 1916) transcritas por el Mutopia Project. Fuente musical: Bravura (SIL Open Font License).',
     privacy: 'Política de privacidad', terms: 'Condiciones de uso', support: 'Soporte', legal: 'La política de privacidad y las condiciones están en inglés.',
+    uniqK: 'Solo en Stand', uniqH: 'Cosas que ningún otro atril hace.', uniqP: 'Toca una tarjeta para verlo en la app.',
     drawerLabel: 'Qué hace Stand', alsoLabel: 'También en Stand', onIphone: '{x} en el iPhone',
   },
   fr: {
@@ -75,6 +78,7 @@ const UI = {
     privLink: 'Lire la politique de confidentialité', faqH: 'Questions', finalNote: 'Pour iPad et iPhone',
     foot: 'Stand garde vos partitions, annotations, enregistrements et journal de travail sur votre appareil et fonctionne hors ligne. Pour iPad et iPhone, iPadOS et iOS 15 ou ultérieur. Les partitions des images sont de J. S. Bach : le Menuet en sol (BWV Anh. 114), arrangé pour violoncelle, et les Préludes des Suites pour violoncelle n° 1 (BWV 1007) et n° 3 (BWV 1009), gravés d’après des éditions du domaine public (Bach-Gesellschaft ; Schirmer, 1916) transcrites par le Mutopia Project. Police musicale : Bravura (SIL Open Font License).',
     privacy: 'Politique de confidentialité', terms: 'Conditions d’utilisation', support: 'Assistance', legal: 'La politique de confidentialité et les conditions sont en anglais.',
+    uniqK: 'Seulement dans Stand', uniqH: 'Ce qu’aucun autre pupitre ne fait.', uniqP: 'Touchez une carte pour la voir dans l’app.',
     drawerLabel: 'Ce que fait Stand', alsoLabel: 'Aussi dans Stand', onIphone: '{x} sur iPhone',
   },
   de: {
@@ -93,6 +97,7 @@ const UI = {
     privLink: 'Datenschutzerklärung lesen', faqH: 'Fragen', finalNote: 'Für iPad und iPhone',
     foot: 'Stand speichert deine Noten, Eintragungen, Aufnahmen und dein Übe-Tagebuch auf deinem Gerät und funktioniert offline. Für iPad und iPhone, iPadOS und iOS 15 oder neuer. Die Noten auf den Bildern sind von J. S. Bach: das Menuett in G (BWV Anh. 114), für Violoncello bearbeitet, und die Préludes der Cellosuiten Nr. 1 (BWV 1007) und Nr. 3 (BWV 1009), gesetzt nach gemeinfreien Ausgaben (Bach-Gesellschaft; Schirmer, 1916), übertragen vom Mutopia Project. Notenschrift: Bravura (SIL Open Font License).',
     privacy: 'Datenschutz', terms: 'Nutzungsbedingungen', support: 'Hilfe', legal: 'Datenschutzerklärung und Nutzungsbedingungen sind auf Englisch.',
+    uniqK: 'Nur in Stand', uniqH: 'Was kein anderes Notenpult kann.', uniqP: 'Tippe auf eine Karte, um es in der App zu sehen.',
     drawerLabel: 'Was Stand kann', alsoLabel: 'Außerdem in Stand', onIphone: '{x} auf dem iPhone',
   },
   it: {
@@ -111,6 +116,7 @@ const UI = {
     privLink: 'Leggi l’informativa sulla privacy', faqH: 'Domande', finalNote: 'Per iPad e iPhone',
     foot: 'Stand conserva i tuoi spartiti, annotazioni, registrazioni e diario di studio sul tuo dispositivo e funziona offline. Per iPad e iPhone, iPadOS e iOS 15 o successivi. Gli spartiti nelle immagini sono di J. S. Bach: il Minuetto in Sol (BWV Anh. 114), arrangiato per violoncello, e i Preludi delle Suite per violoncello n. 1 (BWV 1007) e n. 3 (BWV 1009), incisi da edizioni di pubblico dominio (Bach-Gesellschaft; Schirmer, 1916) trascritte dal Mutopia Project. Font musicale: Bravura (SIL Open Font License).',
     privacy: 'Privacy', terms: 'Condizioni d’uso', support: 'Assistenza', legal: 'L’informativa sulla privacy e le condizioni sono in inglese.',
+    uniqK: 'Solo in Stand', uniqH: 'Cose che nessun altro leggio fa.', uniqP: 'Tocca una scheda per vederla nell’app.',
     drawerLabel: 'Cosa fa Stand', alsoLabel: 'Anche in Stand', onIphone: '{x} su iPhone',
   },
 };
@@ -118,6 +124,7 @@ const UI = {
 const TR = {
   /* ---------------- Português (Portugal) ---------------- */
   pt: {
+    uniq: [["Vira páginas a piscar o olho", "Olho direito avança, esquerdo recua. Ou uma pancada firme na estante."], ["Segue o que tocas", "O Stand ouve-te e vira a página no compasso certo (beta)."], ["Um afinador que te conhece", "Aprende que notas costumas tocar altas ou baixas."], ["Um bordão que muda de tom", "Ouve a música modular e acompanha-a."], ["Diz-te que harmónico é", "Que harmónico, em que corda e onde tocar."], ["Um registo de tempo para cada compasso difícil", "As sessões de estudo saltam de passagem em passagem, em todas as partituras."], ["Apaga a página impressa", "Tira uma ligadura ou dedilhação impressa. As linhas da pauta ficam."], ["Lê música impressa", "Transforma uma digitalização ou fotografia em notas editáveis, no próprio dispositivo."], ["O teu vídeo sobre a partitura", "Vê-te ao lado da música, mais devagar, enquanto as páginas viram."], ["O iPhone como segunda câmara", "Filma de lado enquanto o iPad mostra a música."]],
     f: { read: ['Ler', 'As tuas partituras na estante, duas páginas de cada vez, viradas sem levantar a mão.'],
       mark: ['Anotar', 'Escreve na música com o Apple Pencil, como farias com um lápis no papel.'],
       practise: ['Estudar', 'Saber o que estudar, a que velocidade, e quanto estudaste mesmo.'],
@@ -175,6 +182,7 @@ const TR = {
 
   /* ---------------- Español ---------------- */
   es: {
+    uniq: [["Pasa páginas guiñando el ojo", "El ojo derecho avanza, el izquierdo retrocede. O un golpe firme en el atril."], ["Sigue lo que tocas", "Stand te escucha y pasa la página en el compás justo (beta)."], ["Un afinador que te conoce", "Aprende qué notas sueles tocar altas o bajas."], ["Un bordón que cambia de tonalidad", "Oye cómo modula la música y la sigue."], ["Te dice qué armónico es", "Qué armónico, en qué cuerda y dónde tocar."], ["Un registro de tempo para cada compás difícil", "Las sesiones de estudio saltan de pasaje en pasaje, en todas tus partituras."], ["Borra la página impresa", "Quita una ligadura o digitación impresa. Las líneas del pentagrama se quedan."], ["Lee música impresa", "Convierte un escaneo o una foto en notas editables, en el propio dispositivo."], ["Tu vídeo sobre la partitura", "Mírate junto a la música, más despacio, mientras pasan las páginas."], ["El iPhone como segunda cámara", "Graba de lado mientras el iPad muestra la música."]],
     f: { read: ['Leer', 'Tus partituras en el atril, dos páginas a la vez, pasadas sin levantar la mano.'],
       mark: ['Anotar', 'Escribe en la música con el Apple Pencil, como lo harías con un lápiz en el papel.'],
       practise: ['Estudiar', 'Saber qué estudiar, a qué velocidad y cuánto has estudiado de verdad.'],
@@ -232,6 +240,7 @@ const TR = {
 
   /* ---------------- Français ---------------- */
   fr: {
+    uniq: [["Tournez les pages d’un clin d’œil", "L’œil droit avance, le gauche recule. Ou un coup franc sur le pupitre."], ["Il suit votre jeu", "Stand vous écoute et tourne la page à la bonne mesure (bêta)."], ["Un accordeur qui vous connaît", "Il apprend quelles notes vous jouez souvent trop haut ou trop bas."], ["Un bourdon qui module", "Il entend la musique changer de ton et la suit."], ["Il nomme vos harmoniques", "Quelle harmonique, sur quelle corde, et où poser le doigt."], ["Un carnet de tempo pour chaque mesure difficile", "Les séances passent de passage en passage, dans toutes vos partitions."], ["Effacez la page imprimée", "Retirez une liaison ou un doigté imprimé. Les lignes de la portée restent."], ["Il lit la musique imprimée", "Transformez une numérisation ou une photo en notes modifiables, sur l’appareil."], ["Votre vidéo sur la partition", "Regardez-vous à côté de la musique, au ralenti, pendant que les pages tournent."], ["L’iPhone comme seconde caméra", "Filmez de côté pendant que l’iPad affiche la musique."]],
     f: { read: ['Lire', 'Vos partitions sur le pupitre, deux pages à la fois, tournées sans lever la main.'],
       mark: ['Annoter', 'Écrivez sur la musique avec l’Apple Pencil, comme avec un crayon sur le papier.'],
       practise: ['Travailler', 'Savoir quoi travailler, à quel tempo, et combien vous avez vraiment travaillé.'],
@@ -289,6 +298,7 @@ const TR = {
 
   /* ---------------- Deutsch ---------------- */
   de: {
+    uniq: [["Umblättern per Zwinkern", "Rechtes Auge vor, linkes zurück. Oder ein kräftiges Klopfen aufs Pult."], ["Es folgt deinem Spiel", "Stand hört dir zu und blättert im richtigen Takt um (Beta)."], ["Ein Stimmgerät, das dich kennt", "Es lernt, welche Töne du gern zu hoch oder zu tief spielst."], ["Ein Bordun, der moduliert", "Er hört, wenn die Musik die Tonart wechselt, und geht mit."], ["Es benennt deine Flageoletts", "Welches Flageolett, auf welcher Saite und wo berühren."], ["Ein Tempo-Tagebuch für jeden schweren Takt", "Übe-Einheiten springen von Stelle zu Stelle, über alle deine Noten."], ["Die gedruckte Seite radieren", "Entferne einen gedruckten Bogen oder Fingersatz. Die Notenlinien bleiben."], ["Es liest gedruckte Noten", "Mach aus einem Scan oder Foto bearbeitbare Noten, direkt auf dem Gerät."], ["Dein Video über den Noten", "Sieh dich neben der Musik, langsamer, während die Seiten blättern."], ["Das iPhone als zweite Kamera", "Filme von der Seite, während das iPad die Noten zeigt."]],
     f: { read: ['Lesen', 'Deine Noten auf dem Pult, zwei Seiten auf einmal, umgeblättert ohne die Hand zu heben.'],
       mark: ['Eintragen', 'Schreib mit dem Apple Pencil in die Noten, wie mit einem Bleistift auf Papier.'],
       practise: ['Üben', 'Wissen, was du üben musst, in welchem Tempo, und wie viel du wirklich geübt hast.'],
@@ -346,6 +356,7 @@ const TR = {
 
   /* ---------------- Italiano ---------------- */
   it: {
+    uniq: [["Gira pagina con un occhiolino", "Occhio destro avanti, sinistro indietro. O un colpo deciso sul leggio."], ["Segue quello che suoni", "Stand ti ascolta e gira pagina alla battuta giusta (beta)."], ["Un accordatore che ti conosce", "Impara quali note tendi a suonare crescenti o calanti."], ["Un bordone che cambia tonalità", "Sente la musica modulare e la segue."], ["Ti dice che armonico è", "Quale armonico, su quale corda e dove toccare."], ["Un registro del tempo per ogni battuta difficile", "Le sessioni di studio saltano da un passaggio all’altro, in tutti i tuoi spartiti."], ["Cancella la pagina stampata", "Togli una legatura o una diteggiatura stampata. Le righe del pentagramma restano."], ["Legge la musica stampata", "Trasforma una scansione o una foto in note modificabili, sul dispositivo."], ["Il tuo video sopra lo spartito", "Guardati accanto alla musica, più lento, mentre le pagine girano."], ["L’iPhone come seconda fotocamera", "Filma di lato mentre l’iPad mostra la musica."]],
     f: { read: ['Leggere', 'I tuoi spartiti sul leggio, due pagine alla volta, girate senza alzare la mano.'],
       mark: ['Annotare', 'Scrivi sulla musica con l’Apple Pencil, come faresti con una matita sulla carta.'],
       practise: ['Studiare', 'Sapere cosa studiare, a che velocità, e quanto hai studiato davvero.'],
@@ -423,6 +434,7 @@ const fmt = (s, o) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in o ? o[k] :
         if (y[3]) { if (c.grid) c.grid = y[3]; else if (c.steps) c.steps = y[3]; else if (c.chips) c.chips = y[3]; }
       });
     });
+    if (t.uniq) UNIQ.forEach((u, i) => { if (t.uniq[i]) { u[3] = t.uniq[i][0]; u[4] = t.uniq[i][1]; } });
     ALSO.forEach((a, i) => { if (t.also[i]) a[1] = t.also[i]; });
     HIGH.forEach((h, i) => { const y = t.high[i]; if (y) { h.h = y[0]; h.p = y[1]; } });
     TOOLS.forEach((a, i) => { if (t.tools[i]) a[1] = t.tools[i]; });

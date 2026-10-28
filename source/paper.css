@@ -224,9 +224,11 @@ a.cta:active { transform: scale(.97); }
 
 /* cover: the iPad turns through a few screens of the app */
 .shots .slides { position: relative; }
-.shots .slides img { transition: opacity 1.1s var(--ease); }
+.shots .slides { overflow: hidden; border-radius: calc(var(--w) * .028); perspective: 1400px; }
+.shots .slides img { transition: opacity .9s var(--ease), transform 1.1s var(--ease); transform-origin: 0 50%; backface-visibility: hidden; }
 .shots .slides img:not(:first-child) { position: absolute; inset: 0; }
-.shots .slides img:not(.on) { opacity: 0; }
+.shots .slides img:not(.on) { opacity: 0; transform: translateX(6%); }
+.shots .slides img.out { opacity: 0; transform: translateX(-4%) rotateY(8deg); }
 /* iPhone: each folder sits in front of the one above it, the first one in front of the cover */
 @media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
   .cover { position: relative; z-index: 0; }
@@ -248,4 +250,42 @@ a.cta:active { transform: scale(.97); }
 @media (max-width: 760px) { .foot nav small { text-align: left; } }
 @media (max-width: 760px), (max-height: 560px) and (orientation: landscape) and (max-width: 1000px) {
   .folder .name { white-space: normal; line-height: .95; }
+}
+
+/* ---------- only in Stand ---------- */
+.uniq { padding-block: clamp(46px, 7vw, 84px) 10px; display: grid; gap: 26px; }
+.uhead { display: grid; gap: 14px; max-width: 760px; }
+.uhead h2 { margin: 0; font: 800 clamp(36px, 4.6vw, 66px)/.93 var(--display); font-stretch: 70%; text-transform: uppercase; text-wrap: balance; }
+.uhead p { margin: 0; opacity: .85; font-size: 16.5px; }
+.ugrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.ucard { position: relative; display: grid; align-content: start; gap: 10px; min-height: 190px; padding: 18px 18px 46px; border: 0; border-radius: 10px 14px 14px 10px; text-align: left; cursor: pointer;
+  background: var(--c-bg) var(--grain); background-blend-mode: multiply; color: var(--c-ink); font: inherit;
+  box-shadow: 0 18px 34px -24px rgba(0, 0, 0, .7), inset 1px 0 0 rgba(255, 255, 255, .25); transition: transform .45s var(--ease), box-shadow .45s var(--ease); }
+.ucard .un { font: 500 11px/1 var(--mono); letter-spacing: .1em; opacity: .7; }
+.ucard > svg.i { width: 26px; height: 26px; position: absolute; right: 16px; top: 15px; opacity: .85; }
+.ucard b { font: 800 23px/1 var(--display); font-stretch: 72%; text-transform: uppercase; letter-spacing: .005em; margin-top: 18px; text-wrap: balance; }
+.ucard .ul { font-size: 14.5px; line-height: 1.4; opacity: .88; }
+.ucard .ua { position: absolute; left: 18px; bottom: 16px; width: 16px; height: 16px; transition: transform .35s var(--ease); }
+@media (hover: hover) {
+  .ucard:hover { transform: translateY(-6px) rotate(-.4deg); box-shadow: 0 30px 44px -26px rgba(0, 0, 0, .75), inset 1px 0 0 rgba(255, 255, 255, .25); }
+  .ucard:hover .ua { transform: translateX(6px); }
+}
+.ucard:active { transform: scale(.98); }
+.ucard:focus-visible { outline: 2px solid var(--on-ground); outline-offset: 3px; }
+@media (max-width: 520px) { .ugrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; } .ucard { min-height: 200px; padding: 14px 14px 40px; } .ucard b { font-size: 19px; } .ucard .ul { font-size: 13.5px; } .ucard > svg.i { right: 12px; top: 12px; } .ucard .ua { left: 14px; } }
+
+/* ---------- gentle motion ---------- */
+.rise.wait { opacity: 0; transform: translateY(26px) rotate(-1.2deg); }
+.rise.up { opacity: 1; transform: none; transition: opacity .7s var(--ease), transform .9s var(--ease), box-shadow .45s var(--ease); transition-delay: calc(var(--i, 0) * 60ms); }
+.ucard.rise.up:hover { transition-delay: 0s; }
+.hpics .ipad { translate: 0 var(--drift, 0); }
+.hpics .phone { translate: 0 var(--drift2, 0); }
+.fbig span { display: inline-block; }
+.final.wait .fbig span { opacity: 0; transform: translateY(40%); }
+.final.up .fbig span { transition: opacity .6s var(--ease), transform .9s var(--ease); transition-delay: calc(var(--i) * 70ms); }
+.private.wait h2 { opacity: 0; transform: translateY(18px); }
+.private.up h2 { transition: opacity .8s var(--ease), transform 1s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .rise.wait, .final.wait .fbig span, .private.wait h2 { opacity: 1; transform: none; }
+  .hpics .ipad, .hpics .phone { translate: none; }
 }
