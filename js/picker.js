@@ -25,6 +25,8 @@ export function pickRegion(src, file, opts = {}) {
 }
 function finish(result) {
   $('#picker').hidden = true;
+  // (a page still being read is let go: nothing keeps working, and warming the iPad, once closed)
+  try { dropReader(); } catch {}
   for (const u of PK.thumbs) URL.revokeObjectURL(u); PK.thumbs = [];
   if (PK.doc && PK.ownDoc) try { PK.doc.destroy(); } catch {}
   PK.doc = null;
@@ -101,30 +103,48 @@ async function showPage() {
 }
 // ---------- the lines of music on the page ----------
 let LW = null, lwBroken = false, lwSeq = 0; const lwWait = new Map();
+// a reader that is still busy with a page turned past is let go, and a fresh one reads this page
+// (pages queued behind each other made the last one wait, then read on the main thread: frozen)
+function dropReader() {
+  if (LW) { try { LW.terminate(); } catch {} LW = null; }
+  for (const w of lwWait.values()) { clearTimeout(w.t); w.res('dropped'); } lwWait.clear();
+}
 function linesElsewhere(canvas) {
   if (lwBroken || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return Promise.resolve(null);
+  if (lwWait.size) dropReader();
   if (!LW) {
     try {
       LW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
-      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) { lwBroken = true; w.res(null); } else w.res(d.lines); };
-      LW.onerror = () => { lwBroken = true; for (const w of lwWait.values()) { clearTimeout(w.t); w.res(null); } lwWait.clear(); try { LW.terminate(); } catch {} LW = null; };
+      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) w.res([]); else w.res(d.lines || []); };   // (a page that could not be read: only that page)
+      LW.onerror = () => { lwBroken = true; for (const w of lwWait.values()) { clearTimeout(w.t); w.res(null); } lwWait.clear(); dropReader(); };
     } catch { lwBroken = true; return Promise.resolve(null); }
   }
   return createImageBitmap(canvas).then((page) => new Promise((res) => {
     const id = ++lwSeq;
-    const t = setTimeout(() => { lwWait.delete(id); res(null); }, 30000);
+    // (a page that takes too long: given up, the music can still be chosen by drawing a loop)
+    const t = setTimeout(() => { lwWait.delete(id); dropReader(); res('slow'); }, 12000);
     lwWait.set(id, { res, t });
     try { LW.postMessage({ id, page }, [page]); } catch { clearTimeout(t); lwWait.delete(id); lwBroken = true; res(null); }
   }), () => null);
 }
+// the main thread reads only in small steps of time it can spare (never frozen for seconds)
+const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 300 }) : setTimeout(r, 30)));
 async function findLines() {
   const key = PK.doc.id + ':' + PK.page + ':' + (PK.source.scoreId || PK.source.file || '');
   const page = PK.page;
-  if (PK.linesCache.has(key)) { PK.lines = PK.linesCache.get(key); $('#pkFinding').hidden = true; $('#pkAll').hidden = !(PK.lines && PK.lines.length); drawSel(); drawTray(); return; }
+  const done = () => {
+    if (PK.page !== page) return;
+    $('#pkFinding').hidden = true;
+    if (PK.lines && !PK.lines.length) $('#pkHint').textContent = 'Draw a loop around the music you want.';
+    $('#pkAll').hidden = !(PK.lines && PK.lines.length);
+    drawSel(); drawTray();
+  };
+  if (PK.linesCache.has(key)) { PK.lines = PK.linesCache.get(key); done(); return; }
   $('#pkFinding').hidden = false;
   // (a moment first: turning through the pages quickly reads none of the pages passed by)
   await new Promise((r) => setTimeout(r, 350));
   if (PK.page !== page || !PK.doc) return;
+  let lines = null;
   try {
     const [pw, ph] = PK.doc.sizes[page];
     const sc = Math.min(3, Math.max(1, 1700 / pw));
@@ -132,17 +152,26 @@ async function findLines() {
     await PK.doc.render(page, c, pw * sc, ph * sc);
     if (PK.page !== page || !PK.doc) { c.width = c.height = 0; return; }
     // read in a thread of its own (the page stays free to turn); here only if that cannot be had
-    let lines = await linesElsewhere(c);
-    if (!lines) { const A = await analyse(c); lines = linesOf(A); }
+    lines = await linesElsewhere(c);
+    if (lines === 'dropped') { c.width = c.height = 0; return; }
+    // (no thread for it: read here, from a smaller picture, so the page never freezes for long)
+    if (lines === null && PK.page === page) {
+      await idle();
+      if (PK.page === page) {
+        const k = Math.min(1, 1100 / c.width), s2 = document.createElement('canvas');
+        s2.width = Math.round(c.width * k); s2.height = Math.round(c.height * k);
+        s2.getContext('2d').drawImage(c, 0, 0, s2.width, s2.height);
+        const A = await analyse(s2); lines = linesOf(A); s2.width = s2.height = 0;
+      }
+    }
     c.width = c.height = 0;
-    if (PK.page !== page || !PK.doc) { PK.linesCache.set(key, lines); return; }
-    PK.linesCache.set(key, lines);
-    PK.lines = lines;
-  } catch (err) { console.error(err); PK.lines = []; }
-  $('#pkFinding').hidden = true;
-  if (PK.lines && !PK.lines.length) $('#pkHint').textContent = 'Draw a loop around the music you want.';
-  $('#pkAll').hidden = !(PK.lines && PK.lines.length);
-  drawSel(); drawTray();
+  } catch (err) { console.error(err); lines = []; }
+  // (too slow: not kept, the page is read again next time it is turned to)
+  if (lines === null || lines === 'slow') { if (PK.page === page) { PK.lines = []; done(); } return; }
+  PK.linesCache.set(key, lines);
+  if (PK.page !== page || !PK.doc) return;
+  PK.lines = lines;
+  done();
 }
 // remember this page's choice, and whether there is anything to use
 function savePick() {

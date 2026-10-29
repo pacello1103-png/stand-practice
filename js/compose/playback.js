@@ -162,7 +162,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   });
   const tAt = (k, pos) => { const bm = barMap[k]; const i = Math.min(bm.cum.length - 1, Math.floor(pos / STEP)); const fr = pos / STEP - i; const a = bm.cum[i], b = bm.cum[Math.min(bm.cum.length - 1, i + 1)]; return barStart[k] + a + (b - a) * fr; };
   const total = t;
-  let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
+  let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; }; const rnd2 = () => rnd() + 0.5; const IOWA_STR = !!(globalThis.__iowaS ?? 1);
   const notes = [];
   const marks = [];   // onsets for the moving cursor: {t, m, pos, ids}
   // ---- the pianist's pedal, where the score marks none (expressive style): held through each
@@ -319,7 +319,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     // each phrase rises a little towards its middle and settles at its end (on top of the written
     // dynamics: a soft phrase stays soft, it only breathes)
     if (expr && PHR.length) {
-      const A = globalThis.__phrArch ?? 0.1;
+      const A = globalThis.__phrArch ?? ((globalThis.__iowaS ?? 1) && /^(violin|viola|cello)$/.test(sid) ? 0.16 : 0.1);
       const spans2 = PHR.map((ph) => { const ka = ph.a.k, ke = ph.e.k; return { t0: tAt(ka, ph.a.pos), t1: tAt(ke, Math.min(barMap[ke].total, ph.e.pos + ph.e.len)) }; });
       for (const f of flat) {
         if (!f.ev.notes || f.ev.rest) continue;
@@ -433,11 +433,19 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           // separate bows (or tonguings) without a slur: the sound hardly stops between notes, only
           // the change of bow is heard (players keep the line; the old 13% gap sounded like a keyboard)
           // (the solo strings recorded without vibrato: a separate bow is heard as a small break, larger than a slur's)
-          const DT = globalThis.__detache ?? ((globalThis.__iowaS ?? 0) && /^(violin|viola|cello)$/.test(sid) ? [0.9, 0.95] : BOWED_SET.test(sid) ? [0.97, 0.99] : [0.9, 0.95]);
+          const DT = globalThis.__detache ?? ((globalThis.__iowaS ?? 1) && /^(violin|viola|cello)$/.test(sid) ? [0.9, 0.95] : BOWED_SET.test(sid) ? [0.97, 0.99] : [0.9, 0.95]);
           if (!f.slurred && !art && dur > 0.12) base.dur = dur * (dur < 0.4 ? DT[0] : DT[1]);
           if (VIBRATO[sid] && dur > 0.32 && art !== 'stacc' && art !== 'stacciss') base.vib = VIBRATO[sid];
           // long notes breathe: a little swell, then ease off
-          if (dur > 0.9 && !f.env && !f.hpEnd) base.env = [[t0 + dur * 0.45, 1.12], [t0 + dur * 0.95, f.phraseEnd ? 0.8 : 0.96]];
+          if (IOWA_STR && /^(violin|viola|cello)$/.test(sid)) {
+            // a string player's swell: every note of some length grows into its middle and gives a
+            // little back, each a bit differently (the peak earlier or later, larger on longer notes)
+            base.phraseEnd = !!f.phraseEnd;
+            if (dur > 0.5 && !f.env && !f.hpEnd) {
+              const sw = Math.min(0.24, 0.08 + dur * 0.06) * (0.7 + rnd2() * 0.6), pk = 0.35 + rnd2() * 0.25;
+              base.env = [[t0 + dur * pk, 1 + sw], [t0 + dur * 0.95, f.phraseEnd ? 0.78 : 0.93 + rnd2() * 0.06]];
+            }
+          } else if (dur > 0.9 && !f.env && !f.hpEnd) base.env = [[t0 + dur * 0.45, 1.12], [t0 + dur * 0.95, f.phraseEnd ? 0.8 : 0.96]];
         }
         // ornaments, written out
         const upper = (k2) => midiOf(n.s + k2, keyAlterAt(score, f.m, n.s + k2));

@@ -1,6 +1,6 @@
 // Camera recording with MediaRecorder. The audio track is decoded afterwards so video takes
 // get the same waveform, looping, slow-down and reverb as audio takes.
-import { getCtx } from './audio.js';
+import { getCtx, cameraMic, holdSound } from './audio.js';
 
 const TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
 
@@ -28,6 +28,7 @@ export class VideoRecorder {
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
     });
     this.shape = shape; this.facing = facing;
+    cameraMic(true);
     // the camera's own picture, kept in the page (iOS slows down videos that are not on the page)
     const v = this.src = document.createElement('video'); v.muted = true; v.playsInline = true; v.setAttribute('playsinline', '');
     v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1';
@@ -89,6 +90,7 @@ export class VideoRecorder {
     this.mime = this.rec.mimeType || type || 'video/mp4';
     this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
     this.rec.start(1000);
+    if (!this.recording) holdSound(true);
     this.recording = true;
     this.startedAt = performance.now();
   }
@@ -97,6 +99,7 @@ export class VideoRecorder {
       if (!this.rec || this.rec.state === 'inactive') { resolve(null); return; }
       this.rec.onstop = () => {
         const blob = new Blob(this.chunks, { type: this.mime.split(';')[0] });
+        if (this.recording) holdSound(false);
         this.recording = false;
         resolve(blob);
       };
@@ -105,7 +108,8 @@ export class VideoRecorder {
   }
   close() {
     cancelAnimationFrame(this.raf); clearInterval(this.timer);
-    if (this.cam) this.cam.getTracks().forEach((t) => t.stop());
+    if (this.recording) { holdSound(false); this.recording = false; }
+    if (this.cam) { this.cam.getTracks().forEach((t) => t.stop()); cameraMic(false); }
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     if (this.src) { this.src.srcObject = null; this.src.remove(); this.src = null; }
     this.facing = null; this.canvas = null;

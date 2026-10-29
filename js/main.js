@@ -1,6 +1,6 @@
 import { pixDropFile } from './pixcache.js';
 import { db, getSetting, setSetting, uid } from './db.js';
-import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession } from './audio.js';
+import { getCtx, unlock, micErrorText, ensureRunning, resetSound, audioLog, applySession, freshSound } from './audio.js';
 import { Metronome, makeTapper, tempoMarking, meterInfo } from './metronome.js';
 import { Tuner, Drone, DRONE_VOICES, DRONE_CHORDS, naturalHarmonics, playHarmonics, stopHarmonics, playRefTone } from './tuner.js';
 import { NOTE_NAMES, SYSTEMS, INSTRUMENTS, stringTargets, etFreq, midiName } from './temperament.js';
@@ -5279,7 +5279,7 @@ function pageForPhone(id, i) {
   // one page at a time, in turn (two questions at once never draw two pages together)
   return phoneJob(async () => {
     // (iOS said memory is short, or the iPad is busy reading or playing: the iPhone asks again later)
-    if (Date.now() < (window.__phoneHoldUntil || 0)) throw new Error('busy');
+    if (Date.now() < (window.__phoneHoldUntil || 0) || recState || player.playing) throw new Error('busy');   // (never while recording or playing a recording: the picture must stay smooth)
     // (a breath between pages, so the memory of the last one is let go before the next is drawn)
     await new Promise((r) => setTimeout(r, 250));
     const P = await phoneDoc(id), doc = P.doc;
@@ -7022,7 +7022,10 @@ player.onState = () => {
   if (VF.on) vfSync();
 };
 player.onBusy = (on) => { $('#waveBusy').hidden = !on; };
-$('#playBtn').addEventListener('click', () => { unlock(); player.playing ? player.pause() : player.play(); });
+// (a recording played after the camera or the microphone was used: a fresh sound system if the old
+// one went quiet, so it is never silent)
+const playTake = () => { if (!player.playing) freshSound(); unlock(); player.playing ? player.pause() : player.play(); };
+$('#playBtn').addEventListener('click', playTake);
 // ---------- the video over the score ----------
 // Drag a video out of Recordings (or tap its button) and it floats small over the score, as while
 // recording: drag it anywhere, pull its corner to resize, pinch (or double-tap) to zoom into the
@@ -7084,7 +7087,7 @@ $('#vfBig').addEventListener('click', (e) => {
   // stays on the screen
   requestAnimationFrame(() => { const r = vfEl.getBoundingClientRect(); vfEl.style.left = clamp(r.left, 4, Math.max(4, innerWidth - r.width - 4)) + 'px'; vfEl.style.top = clamp(r.top, 4, Math.max(4, innerHeight - r.height - 4)) + 'px'; vfEl.style.bottom = 'auto'; vfApply(); });
 });
-$('#vfPlay').addEventListener('click', (e) => { e.stopPropagation(); unlock(); player.playing ? player.pause() : player.play(); setTimeout(vfSync, 50); });
+$('#vfPlay').addEventListener('click', (e) => { e.stopPropagation(); playTake(); setTimeout(vfSync, 50); });
 $('#vfSpeed').addEventListener('click', (e) => { e.stopPropagation(); const steps = [1, 0.9, 0.75, 0.6, 0.5]; const i = steps.findIndex((s) => Math.abs(s - player.rate) < 0.01); setSpeed(steps[(i + 1) % steps.length]); vfSync(); });
 $('#vfBack').addEventListener('click', (e) => { e.stopPropagation(); closeVideoFloat(true); });
 $('#vfClose').addEventListener('click', (e) => { e.stopPropagation(); closeVideoFloat(false); });
@@ -7223,11 +7226,13 @@ $('#delYes').addEventListener('click', async () => {
   currentTake = null; $('#player').hidden = true; $('#panel-takes').classList.remove('viewing'); refreshTakes(); toast('Recording deleted');
 });
 const nativeShare = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standShare;
-async function shareBlob(blob, name) {
+// (to: one app to send it straight to, in the iPad app: 'instagram', 'tiktok', 'youtube', 'facebook', 'whatsapp')
+window.standShared = (r) => { if (r && r.how === 'app' && r.to !== 'whatsapp') toast('The video is in Photos too: choose it there if it is not already chosen.', 4500); };
+async function shareBlob(blob, name, to) {
   if (nativeShare) {
     const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
     $('#toast').hidden = true;
-    nativeShare.postMessage({ name, data: b64 });
+    nativeShare.postMessage({ name, data: b64, to: to || '' });
     return;
   }
   const file = new File([blob], name, { type: blob.type });

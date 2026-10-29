@@ -5,7 +5,7 @@
 // showing through), any size and place on the picture, images, trimming, vertical or square
 // formats, and an export that is saved in Recordings and ready to share.
 import { db, uid } from './db.js';
-import { getCtx } from './audio.js';
+import { getCtx, wantAudio } from './audio.js';
 import { detectPitch } from './tuner.js';
 import { analyse, staffEvents } from './omr.js';
 import { makeImpulse, ROOMS, computePeaks, peakOf, encodeWav } from './recorder.js';
@@ -69,7 +69,64 @@ export async function openStudio(takeId) {
   if (ST.media.readyState < 2) await new Promise((res) => { const done = () => { ST.media.removeEventListener('loadeddata', done); ST.media.removeEventListener('seeked', done); res(); }; ST.media.addEventListener('loadeddata', done); ST.media.addEventListener('seeked', done); setTimeout(done, 2500); });
   sizeCanvas(); renderSide(); renderTimeline(); drawWave(); frame();
   ST.media.addEventListener('seeked', () => frame());
-  ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); });
+  ST.media.addEventListener('ended', () => { ST.playing = false; syncPlay(); lsStop(); });
+  // the sound heard as it will be in the video (room, level): played alongside the picture
+  ST.pk = ST.pcm ? peakOf(ST.pcm) : 1; LS.buf = null;
+  ST.media.addEventListener('playing', () => lsStart());
+  ST.media.addEventListener('pause', () => lsStop());
+  ST.media.addEventListener('seeked', () => { if (!ST.media.paused) lsStart(); });
+}
+// ---------- the sound while you watch, with the Sound settings ----------
+// The recording's own sound is played by the sound system (with the room and the level chosen),
+// in step with the picture, which plays silent; before, the picture's own sound played and the
+// settings were only heard in the finished video.
+const LS = { ctx: null, src: null, buf: null, irs: new Map() };
+function lsGraph() {
+  const ctx = getCtx();
+  if (LS.ctx !== ctx) {
+    LS.ctx = ctx; LS.buf = null; LS.irs.clear();
+    LS.level = ctx.createGain(); LS.dry = ctx.createGain(); LS.conv = ctx.createConvolver(); LS.wet = ctx.createGain();
+    LS.level.connect(LS.dry).connect(ctx.destination);
+    LS.level.connect(LS.conv).connect(LS.wet).connect(ctx.destination);
+  }
+  lsApply();
+  return ctx;
+}
+function lsApply() {
+  if (!LS.ctx || !ST.P) return;
+  const t = LS.ctx.currentTime, S = ST.P.sound || {};
+  LS.level.gain.setTargetAtTime(S.level !== false && ST.pk > 0.001 ? Math.min(8, 0.89 / ST.pk) : 1, t, 0.03);
+  const room = ROOMS[S.room];
+  if (room) {
+    if (!LS.irs.has(S.room)) LS.irs.set(S.room, makeImpulse(LS.ctx, room));
+    if (LS.conv.buffer !== LS.irs.get(S.room)) LS.conv.buffer = LS.irs.get(S.room);
+  }
+  LS.wet.gain.setTargetAtTime(room ? (S.wet ?? 0.18) * 0.9 : 0, t, 0.03);
+}
+function lsStop() {
+  if (LS.src) { const s = LS.src; LS.src = null; try { s.onended = null; s.stop(); } catch {} }
+  wantAudio(false, 'studio');
+}
+function lsStart() {
+  lsStop();
+  const m = ST.media;
+  if (!m || m.paused || ST.exporting || !ST.pcm) return;
+  // (very long recordings: their own sound, as before; the copy for the sound system would be too big)
+  if (ST.pcm.length > ST.sr * 60 * 15) { m.muted = false; return; }
+  const ctx = lsGraph();
+  if (!LS.buf || LS.buf.sampleRate !== ST.sr || LS.bufFor !== ST.pcm) { LS.buf = ctx.createBuffer(1, Math.max(1, ST.pcm.length), ST.sr); LS.buf.copyToChannel(ST.pcm, 0); LS.bufFor = ST.pcm; }
+  m.muted = true;
+  const src = ctx.createBufferSource(); src.buffer = LS.buf; src.playbackRate.value = m.playbackRate || 1; src.connect(LS.level);
+  const at = Math.max(0, Math.min(LS.buf.duration - 0.01, m.currentTime));
+  const when = ctx.currentTime + 0.01; src.start(when, at);
+  LS.src = src; LS.c0 = when; LS.m0 = at;
+  wantAudio(true, 'studio');
+}
+// (called every frame while playing: the sound kept with the picture)
+function lsKeep() {
+  if (!LS.src || !ST.media || ST.media.paused || LS.ctx !== getCtx()) { if (LS.src && LS.ctx !== getCtx()) lsStart(); return; }
+  const heard = LS.m0 + (LS.ctx.currentTime - LS.c0) * (ST.media.playbackRate || 1);
+  if (Math.abs(heard - ST.media.currentTime) > 0.12 && !ST.media.seeking) lsStart();
 }
 async function save() {
   if (!ST.P) return;
@@ -77,7 +134,7 @@ async function save() {
 }
 let saveT; function saveSoon() { clearTimeout(saveT); saveT = setTimeout(save, 600); }
 function close() {
-  pause(); save();
+  pause(); lsStop(); save();
   $('#studio').hidden = true; document.body.classList.remove('in-studio');
   if (ST.media) { ST.media.removeAttribute('src'); ST.media.load(); }
   if (ST.url) URL.revokeObjectURL(ST.url); ST.url = null;
@@ -415,34 +472,76 @@ async function autoSync(o) {
     D.toast(best.good > 0.55 ? `Lined up with your playing (${Math.round(best.good * 100)}% of the notes matched).` : 'Lined up as well as possible. Check the bars on the timeline, or use Tap along.', 4200);
   } catch (err) { console.error(err); busy(null); D.toast('Following the playing did not work here. Use Tap along.'); }
 }
+// Tap along: a tap on each bar's first beat. A tap lands a little off the beat it means (the finger,
+// and the sound reaching the ear a moment after the picture's clock), so each tap is then drawn to
+// the note that starts nearest to it in the recording, when one starts clearly there.
 function startTap(o) {
   pause();
   ST.tapping = { o, k: 0, times: [] };
   const t0 = Math.max(ST.P.trim.a, (o.times ? o.times[0] : ST.P.trim.a) - 2);
   ST.media.currentTime = t0;
   $('#stTap').hidden = false; $('#stTapInfo').textContent = 'Tap on the first beat of bar 1';
+  // (the notes' starts, found while you tap)
+  if (ST.pcm && !(ST.onsets && ST.onsets.a === ST.P.trim.a && ST.onsets.b === ST.P.trim.b)) {
+    const a = ST.P.trim.a, b = ST.P.trim.b;
+    ST.onsets = { a, b, list: null, job: onsetsOf(ST.pcm, ST.sr, a, b).then((l) => { if (ST.onsets && ST.onsets.a === a && ST.onsets.b === b) ST.onsets.list = l; return l; }).catch(() => null) };
+  }
   play();
+}
+// the clock of what is heard: the media's own time, made smooth between its updates
+function heardTime() {
+  const m = ST.media, now = performance.now(), ct = m.currentTime;
+  const c = ST.clk;
+  if (!c || c.ct !== ct || m.paused) ST.clk = { ct, p: now };
+  const at = ST.clk.ct + (m.paused ? 0 : Math.min(0.3, (now - ST.clk.p) / 1000) * (m.playbackRate || 1));
+  return at;
 }
 function tap() {
   const T = ST.tapping; if (!T) return;
-  const t = ST.media.currentTime;
+  const t = heardTime();
   T.times.push(t); T.k++;
   const n = T.o.layout.bars.length;
   $('#stTapInfo').textContent = T.k < n ? `Bar ${T.k + 1} of ${n}` : 'Tap where the last bar ends';
   if (T.k > n) finishTap();
 }
-function finishTap() {
+// each tap to the clearest note start near it (from a little before to a little after the tap)
+export function snapTaps(times, onsets, sr = 48000, win = [-0.2, 0.12]) {
+  if (!onsets || onsets.length < 2) return times.slice();
+  // (a note start is found a little early, by most of the listening window: put back where it is heard)
+  const late = 3072 / sr - 0.012;
+  onsets = onsets.map((x) => ({ t: x.t + late, fl: x.fl }));
+  const fls = onsets.map((x) => x.fl).sort((x, y) => x - y), med = fls[fls.length >> 1] || 1;
+  const out = times.map((t) => {
+    let best = null, bs = 0;
+    for (const on of onsets) {
+      const d = on.t - t; if (d < win[0] || d > win[1]) continue;
+      const sc = (on.fl / med) * Math.exp(-Math.pow((d + 0.03) / 0.09, 2));
+      if (sc > bs) { bs = sc; best = on.t; }
+    }
+    return best !== null && bs > 0.45 ? best : t - 0.03;
+  });
+  for (let i = 1; i < out.length; i++) if (out[i] <= out[i - 1] + 0.05) out[i] = Math.max(times[i], out[i - 1] + 0.05);
+  return out;
+}
+async function finishTap() {
   const T = ST.tapping; if (!T) return; ST.tapping = null;
   $('#stTap').hidden = true;
+  pause();
   const n = T.o.layout.bars.length;
   if (T.times.length >= 2) {
-    const times = T.times.slice(0, n + 1);
+    let raw = T.times.slice(0, n + 1);
+    if (ST.onsets && (ST.onsets.list || ST.onsets.job)) {
+      if (!ST.onsets.list) busy('Lining up your taps…', 'Listening for the notes.', 0.5);
+      const list = ST.onsets.list || await ST.onsets.job; busy(null);
+      raw = snapTaps(raw, list, ST.sr);
+    }
+    const times = raw;
     const pace = (times[times.length - 1] - times[0]) / (times.length - 1);
     while (times.length < n + 1) times.push(Math.min(ST.P.trim.b, times[times.length - 1] + pace));
     T.o.times = times; T.o.synced = 'tap';
     saveSoon(); D.toast('Bars set from your taps.', 2200);
   }
-  pause(); renderSide(); renderTimeline(); frame();
+  renderSide(); renderTimeline(); frame();
 }
 
 // =====================================================================
@@ -468,6 +567,31 @@ function sizeCanvas() {
   ST.view = { W, H, q, k };
 }
 let blurC = null;
+// The video, covering the frame, very soft and a little darker: behind a video shown whole.
+function softBack(m, W, H) {
+  const vw = m.videoWidth, vh = m.videoHeight;
+  if (!blurC) blurC = { a: document.createElement('canvas'), b: document.createElement('canvas'), out: document.createElement('canvas') };
+  // the frame's shape at 40 px across, the picture covering it
+  const sw = W >= H ? 40 : Math.round(40 * W / H), sh = W >= H ? Math.round(40 * H / W) : 40;
+  const A = blurC.a; A.width = sw; A.height = sh;
+  const ga = A.getContext('2d'); ga.imageSmoothingEnabled = true; ga.imageSmoothingQuality = 'high';
+  const cov = Math.max(sw / vw, sh / vh); ga.drawImage(m, (sw - vw * cov) / 2, (sh - vh * cov) / 2, vw * cov, vh * cov);
+  // grown back in steps of two, to about a quarter of the frame
+  let src = A, w = sw, h = sh; const tw = Math.max(sw, Math.round(W / 4)), th = Math.max(sh, Math.round(H / 4));
+  let flip = false;
+  while (w < tw) {
+    const nw = Math.min(tw, w * 2), nh = Math.min(th, h * 2);
+    const D = flip ? blurC.a : blurC.b; if (D === src) break;
+    D.width = nw; D.height = nh; const gd = D.getContext('2d'); gd.imageSmoothingEnabled = true; gd.imageSmoothingQuality = 'high';
+    gd.drawImage(src, 0, 0, w, h, 0, 0, nw, nh);
+    src = D; w = nw; h = nh; flip = !flip;
+  }
+  const O = blurC.out; O.width = w; O.height = h;
+  const go = O.getContext('2d'); go.imageSmoothingEnabled = true; go.imageSmoothingQuality = 'high';
+  go.drawImage(src, 0, 0, w, h);
+  go.fillStyle = 'rgba(0,0,0,0.28)'; go.fillRect(0, 0, w, h);
+  return O;
+}
 // Draw the picture at time t into ctx sized W x H (any scale).
 function drawFrame(g, W, H, t, forExport) {
   const P = ST.P, m = ST.media;
@@ -479,9 +603,9 @@ function drawFrame(g, W, H, t, forExport) {
     const cover = Math.max(W / vw, H / vh), contain = Math.min(W / vw, H / vh);
     if (P.fit === 'fit') {
       // a soft blurred copy fills the space around a fitted video
-      if (!blurC) { blurC = document.createElement('canvas'); blurC.width = 48; blurC.height = 48; }
-      const bg = blurC.getContext('2d'); bg.drawImage(m, 0, 0, 48, 48);
-      g.save(); g.globalAlpha = 0.55; g.imageSmoothingQuality = 'high'; g.drawImage(blurC, -W * 0.1, -H * 0.1, W * 1.2, H * 1.2); g.restore();
+      // (a real blur, smooth at any size: the picture made very small, then grown back in gentle
+      // steps, each step smoothing the last; one big step from a tiny picture showed squares)
+      g.save(); g.drawImage(softBack(m, W, H), 0, 0, W, H); g.restore();
       const dw = vw * contain, dh = vh * contain;
       drawVideo(g, m, (W - dw) / 2, (H - dh) / 2, dw, dh);
     } else {
@@ -568,11 +692,15 @@ function drawScore(g, W, H, o, t) {
       const tSwitch = o.times[lastPrev] + 0.72 * (o.times[lastPrev + 1] - o.times[lastPrev]);
       fade = clamp((t - tSwitch) / 0.28, 0, 1);
     }
-    if (fade < 1 && si > 0) { const [p0, p1] = view(si - 1); paint(p0, p1, 1 - fade, null, fullW); }
+    // (the paper stays; the old line's music goes, then the new one's comes: two lines faded over
+    // each other at once showed a ghost of one in the other)
+    if (fade < 1 && si > 0) {
+      if (fade < 0.5) { const [p0, p1] = view(si - 1); paint(p0, p1, 1, null, fullW, 1 - fade * 2); }
+      else { const [v0, v1] = view(si); paint(v0, v1, 1, null, fullW, fade * 2 - 1); }
+      return;
+    }
     const [v0, v1] = view(si);
-    const cur = b >= 0 && b < n && bars[b].seg === si ? bars[b].x0 + f * (bars[b].x1 - bars[b].x0) : null;
-    paint(v0, v1, fade, null, fullW);
-    void cur;
+    paint(v0, v1, 1, null, fullW);
     return;
   }
   if (o.mode === 'static') { vx0 = 0; vx1 = L.width; }
@@ -591,7 +719,7 @@ function drawScore(g, W, H, o, t) {
     if (b >= 0 && b < n) cursor = pos;
   }
   paint(vx0, vx1, 1, cursor, null);
-  function paint(vx0, vx1, alpha, cursor, fullW) {
+  function paint(vx0, vx1, alpha, cursor, fullW, inkA = 1) {
   const vw = vx1 - vx0, vh = L.height;
   const band = !!o.band && o.mode === 'scroll';
   const boxW0 = band ? W : W * o.size, scale = boxW0 / (fullW || vw), boxW = vw * scale, boxH = vh * scale * (band ? o.size / 0.96 : 1);
@@ -600,7 +728,7 @@ function drawScore(g, W, H, o, t) {
   const x = cx - boxW / 2, y = cy - boxH / 2;
   // only the part of the strip that exists (an endless line starts and ends in blank paper)
   const sx0 = Math.max(0, vx0), sx1 = Math.min(L.width, vx1);
-  const blit = (img) => { if (sx1 > sx0) g.drawImage(img, sx0, 0, sx1 - sx0, vh, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); };
+  const blit = (img) => { if (sx1 > sx0 && inkA > 0.001) { const a0 = g.globalAlpha; g.globalAlpha = a0 * inkA; g.drawImage(img, sx0, 0, sx1 - sx0, vh, x + (sx0 - vx0) * scale, y, (sx1 - sx0) * scale, boxH); ; g.globalAlpha = a0; } };
   o._box = { x: x - pad, y: y - pad, w: boxW + pad * 2, h: boxH + pad * 2, W, H };
   g.save(); g.globalAlpha = (o.opacity ?? 1) * alpha;
   if (o.look !== 'lines') {
@@ -672,7 +800,7 @@ function frame() {
   if (o && o._box && !ST.playing) { g.save(); g.strokeStyle = 'rgba(255,255,255,0.9)'; g.setLineDash([12, 8]); g.lineWidth = 3 / q; g.strokeRect(o._box.x, o._box.y, o._box.w, o._box.h); g.restore(); }
   updateHead();
 }
-function loop() { frame(); if (ST.playing) ST.raf = requestAnimationFrame(loop); }
+function loop() { frame(); lsKeep(); if (ST.playing) ST.raf = requestAnimationFrame(loop); }
 function play() {
   if (ST.media.currentTime >= ST.P.trim.b - 0.05 || ST.media.currentTime < ST.P.trim.a) ST.media.currentTime = ST.P.trim.a;
   ST.media.play().catch(() => {}); ST.playing = true; syncPlay(); loop();
@@ -907,7 +1035,7 @@ function renderLook(side) {
     const lk = ST.P.look || (ST.P.look = { preset: 'natural', adj: {} });
     if (lk.auto && lk.autoOn !== false) { lk.autoOn = false; saveSoon(); frame(); renderSide(); return; }
     autoB.disabled = true; autoB.querySelector('span').textContent = 'Looking at the video…';
-    try { lk.auto = autoLook(await grabFrames(6)); lk.autoOn = true; if (lk.autoAmt === undefined) lk.autoAmt = 1; } catch (e) { console.warn(e); }
+    try { const fr = await grabFrames(8); if (!fr.length) throw new Error('no frames'); lk.auto = autoLook(fr); lk.autoOn = true; if (lk.autoAmt === undefined) lk.autoAmt = 1; } catch (e) { console.warn(e); D.toast('The video could not be looked at just now. Play it for a moment, then try again.', 4000); }
     saveSoon(); frame(); renderSide();
   });
   autoRow.append(autoB);
@@ -942,8 +1070,13 @@ async function grabFrames(n) {
   for (let i = 0; i < n; i++) {
     const t = a + ((b - a) * (i + 0.5)) / n;
     await new Promise((res) => { const done = () => { m.removeEventListener('seeked', done); res(); }; m.addEventListener('seeked', done); m.currentTime = t; setTimeout(done, 1500); });
-    const c = document.createElement('canvas'); const k = 160 / Math.max(m.videoWidth, m.videoHeight); c.width = Math.round(m.videoWidth * k); c.height = Math.round(m.videoHeight * k);
-    c.getContext('2d').drawImage(m, 0, 0, c.width, c.height); out.push(c);
+    // (the new frame must be there before it is copied: on an iPad it comes a moment after the jump)
+    await new Promise((res) => { let ok = false; const go = () => { if (!ok) { ok = true; res(); } }; if (m.requestVideoFrameCallback) m.requestVideoFrameCallback(go); setTimeout(go, 160); });
+    const c = document.createElement('canvas'); const k = 192 / Math.max(m.videoWidth, m.videoHeight); c.width = Math.round(m.videoWidth * k); c.height = Math.round(m.videoHeight * k);
+    const g2 = c.getContext('2d', { willReadFrequently: true }); g2.drawImage(m, 0, 0, c.width, c.height);
+    // (an empty frame, not yet drawn, is not looked at)
+    const d = g2.getImageData(0, 0, c.width, c.height).data; let sum = 0; for (let j = 0; j < d.length; j += 16) sum += d[j] + d[j + 1] + d[j + 2];
+    if (sum / (d.length / 16) > 4) out.push(c);
   }
   m.currentTime = back;
   return out;
@@ -970,10 +1103,10 @@ function renderFormat(side) {
   side.append(el('div', 'ctl-head', 'Trim'));
   side.append(el('p', 'hint', `From ${fmt(ST.P.trim.a)} to ${fmt(ST.P.trim.b)}. Drag the dark handles on the timeline.`));
   const sd = el('section', 'sub-card'); sd.append(el('h3', '', 'Sound'));
-  sd.append(seg([['dry', 'Dry'], ['studio', 'Studio'], ['hall', 'Hall'], ['church', 'Church']], ST.P.sound.room, (v) => { ST.P.sound.room = v; saveSoon(); renderSide(); }));
-  sd.append(slider('Room', Math.round((ST.P.sound.wet ?? 0.18) * 100), 0, 100, 1, (x) => x + '%', (v) => { ST.P.sound.wet = v / 100; saveSoon(); }));
+  sd.append(seg([['dry', 'Dry'], ['studio', 'Studio'], ['hall', 'Hall'], ['church', 'Church']], ST.P.sound.room, (v) => { ST.P.sound.room = v; saveSoon(); lsApply(); renderSide(); }));
+  sd.append(slider('Room', Math.round((ST.P.sound.wet ?? 0.18) * 100), 0, 100, 1, (x) => x + '%', (v) => { ST.P.sound.wet = v / 100; saveSoon(); lsApply(); }));
   const l = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = ST.P.sound.level !== false; l.append(cb, document.createTextNode(' Bring the sound to a good level'));
-  cb.addEventListener('change', () => { ST.P.sound.level = cb.checked; saveSoon(); }); sd.append(l);
+  cb.addEventListener('change', () => { ST.P.sound.level = cb.checked; saveSoon(); lsApply(); }); sd.append(l);
   sd.append(el('p', 'hint', 'Room and level are added in the exported video.'));
   side.append(sd);
 }
@@ -1023,6 +1156,7 @@ async function exportVideo() {
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   let cancelled = false;
   ST.busyCancel = () => { cancelled = true; try { rec.stop(); } catch {} ST.media.pause(); };
+  ST.exporting = true; lsStop();
   busy('Making the video…', 'It plays once while it is recorded.', 0);
   const done = new Promise((res) => { rec.onstop = res; });
   ST.media.muted = !!src;
@@ -1050,7 +1184,7 @@ async function exportVideo() {
   });
   try { rec.stop(); } catch {}
   await done;
-  ST.media.pause(); ST.media.muted = false;
+  ST.media.pause(); ST.media.muted = false; ST.exporting = false;
   if (src) try { src.stop(); } catch {}
   if (mediaSrc) try { mediaSrc.disconnect(); } catch {}
   busy(null);
@@ -1070,7 +1204,38 @@ async function exportVideo() {
   D.onSaved && D.onSaved(take);
   D.toast('Saved in Recordings.', 2500);
   const ext = blob.type.includes('webm') ? '.webm' : '.mp4';
-  await D.shareBlob(blob, (take.name || 'Studio').replace(/[\\/:*?"<>|]+/g, '') + ext);
+  shareChooser(blob, (take.name || 'Studio').replace(/[\\/:*?"<>|]+/g, '') + ext);
+}
+// Where the finished video goes: straight to one of the apps people post in (the video is put in
+// Photos and that app opens), or anywhere else with the usual share sheet.
+// (plain symbols in the app's own style, not the apps' logos)
+const SOCIAL = [
+  ['instagram', 'Instagram', 'Reels and posts · 9:16 or 4:5', '<path d="M12 19s-6.5-4-6.5-8.6A3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 6.5 2c0 4.6-6.5 8.6-6.5 8.6z"/>'],
+  ['tiktok', 'TikTok', 'Upright · 9:16', '<circle cx="8.5" cy="17" r="2.5"/><path d="M11 17V5l7 2v3"/>'],
+  ['youtube', 'YouTube', 'Shorts 9:16 · videos 16:9', '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M8 5v14M16 5v14M4 9.5h4M4 14.5h4M16 9.5h4M16 14.5h4"/>'],
+  ['facebook', 'Facebook', 'Any shape', '<circle cx="9" cy="9" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="10" r="2.4"/><path d="M15 14.2a4.5 4.5 0 0 1 5.5 4.8"/>'],
+  ['whatsapp', 'WhatsApp', 'To a person or a group', '<path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4 3.5V16h0.5A2.5 2.5 0 0 1 5 13.5z"/>'],
+];
+export function shareChooser(blob, name) {
+  const native = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standShare);
+  const wrap = el('div', 'st-busy st-share'); const card = el('div', 'st-busy-card');
+  card.append(el('b', '', 'Share your video'), el('span', 'hint', 'It is saved in Recordings. Send it to:'));
+  const grid = el('div', 'st-share-grid');
+  const go = (to) => { wrap.remove(); D.shareBlob(blob, name, to); };
+  if (native) for (const [k, label, tip, svg] of SOCIAL) {
+    const b = el('button', 'st-share-btn');
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+    b.append(el('span', 'st-share-name', label), el('span', 'st-share-tip', tip));
+    b.addEventListener('click', () => go(k)); grid.append(b);
+  }
+  const more = el('button', 'st-share-btn');
+  more.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M6 11v8h12v-8"/></svg>';
+  more.append(el('span', 'st-share-name', 'Other apps'), el('span', 'st-share-tip', 'Messages, Mail, Files, AirDrop…'));
+  more.addEventListener('click', () => go('')); grid.append(more);
+  const close = el('button', 'btn small', 'Not now'); close.addEventListener('click', () => wrap.remove());
+  card.append(grid, close); wrap.append(card);
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
+  $('#studio').append(wrap);
 }
 
 // =====================================================================

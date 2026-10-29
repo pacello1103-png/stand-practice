@@ -88,6 +88,18 @@ function afterMicChange(what) {
   }, 700);
 }
 export function markStale() { if (ctx) stale = true; }
+// The camera's own microphone (video recording through the web view) changes how iOS sends the
+// sound out just as the microphone does: said here too, so the sound that plays afterwards (a
+// video played back, the metronome) is never left silent. While the camera records, the sound
+// system is kept, never replaced (recording: holdSound).
+let camMic = false;
+export function cameraMic(on) {
+  if (on === camMic) return;
+  camMic = on; micChangedAt = performance.now();
+  alog('camera microphone ' + (on ? 'open' : 'closed'));
+  setSession(on || micStream ? 'play-and-record' : 'playback');
+  afterMicChange(on ? 'opened' : 'closed');
+}
 // The metronome, the drone and scales ask for sound to keep coming: an interruption (a call, a
 // lock, the mic starting) is then undone at once. Each asks for itself, so one stopping never
 // leaves another without its watch.

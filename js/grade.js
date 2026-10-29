@@ -225,19 +225,54 @@ export function autoLook(frames) {
     // (in light: the greys made grey, most of the way, so a warm room stays a little warm)
     const lin = (v) => Math.pow(v / 255, 2.2);
     const ar = lin(sr / nW), ag = lin(sg / nW), ab = lin(sb / nW);
-    out.wbr = Math.max(-0.4, Math.min(0.6, (ag / Math.max(1e-3, ar) - 1) * 0.8));
-    out.wbb = Math.max(-0.4, Math.min(0.6, (ag / Math.max(1e-3, ab) - 1) * 0.8));
+    out.wbr = Math.max(-0.4, Math.min(0.6, (ag / Math.max(1e-3, ar) - 1) * 0.65));
+    out.wbb = Math.max(-0.4, Math.min(0.6, (ag / Math.max(1e-3, ab) - 1) * 0.65));
   }
   // black point
   if (p1 > 14) out.black = Math.min(0.2, (p1 - 10) / 255);
   // colour: dull pictures a little richer
   const sat = satSum / n;
-  out.colour = Math.max(0, Math.min(0.25, (0.3 - sat) * 0.8));
+  out.colour = Math.max(0.04, Math.min(0.3, (0.32 - sat) * 0.9));
   // noise and detail
   const nz = nN ? noise / nN : 0;
   out.denoise = Math.max(0, Math.min(0.8, (nz - 2.2) / 4));
   out.sharp = Math.max(0.05, 0.22 - out.denoise * 0.25);
-  out.clarity = 0.08;
+  out.clarity = 0.1;
+  // a dark or foggy video: the black point only for a real veil, never deeper than the darkest
+  // real shadows (in a dim, noisy picture the darkest dots are noise, not a veil)
+  if (out.black) out.black = Math.min(out.black, Math.max(0, (p1 - 10) / 255) * (p50 < 90 ? 0.4 : 1), 0.12);
+  // the exposure, found by trying it: the picture as the look will make it (black point, light,
+  // contrast, shadows), the light chosen so its middle lands on a pleasant level. (The light works
+  // in real light, not in the picture's numbers: set from those alone it came out far too weak, and
+  // with the black point and contrast a dark video came out darker than it went in.)
+  const sample = []; for (let i = 0; i < lum.length; i += Math.max(1, Math.floor(lum.length / 3000))) sample.push(lum[i] / 255);
+  const look = (light) => {
+    const v = sample.map((l0) => {
+      let c = Math.max(0, (l0 - (out.black || 0)) / Math.max(0.5, 1 - (out.black || 0)));
+      let lin = Math.pow(c, 2.2) * Math.pow(2, light);
+      lin *= Math.pow(2, (out.shadows || 0) * 0.9 * (1 - Math.min(1, Math.max(0, (lin - 0.02) / 0.33))));
+      if (lin > 0.8) lin = 0.8 + 0.2 * (1 - Math.exp(-3 * (lin - 0.8) / 0.6)) / 0.95;
+      const g = Math.min(1, Math.pow(lin, 1 / 2.2));
+      return g + (out.contrast || 0) * (g - 0.5) * (1 - Math.abs(g - 0.5) * 1.4);
+    }).sort((a, b) => a - b);
+    const q = (f) => v[Math.min(v.length - 1, Math.floor(f * v.length))];
+    return { key: 0.5 * q(0.5) + 0.5 * q(0.75), top: q(0.97) };
+  };
+  // (a dark scene, a black suit or a piano, stays a little darker than a bright one)
+  const want = (0.5 * p50 + 0.5 * p75) < 60 ? 0.44 : 0.48;
+  let lo = -1.2, hi = 2.2;
+  for (let it = 0; it < 22; it++) { const m = (lo + hi) / 2; if (look(m).key < want) lo = m; else hi = m; }
+  // ...but the bright parts (a face, a shirt, a window) never pushed to white: a dark suit or a
+  // dark room in most of the picture is not a dark video
+  let lo2 = -1.2, hi2 = 2.2;
+  for (let it = 0; it < 22; it++) { const m = (lo2 + hi2) / 2; if (look(m).top < 0.93) lo2 = m; else hi2 = m; }
+  // (never more than about three times the light: past that a phone video only shows its noise)
+  out.light = Math.min(1.6, (lo + hi) / 2, Math.max(0, (lo2 + hi2) / 2));
+  // (a dark video made brighter: its noise shows more, so it is smoothed a little more)
+  if (out.light > 0.6) out.denoise = Math.min(0.85, (out.denoise || 0) + (out.light - 0.6) * 0.25);
+  out.sharp = Math.max(0.05, 0.24 - (out.denoise || 0) * 0.25);
+  // a gentle frame around the player
+  out.vignette = 0.1;
   for (const k of Object.keys(out)) out[k] = +out[k].toFixed(3);
   return out;
 }

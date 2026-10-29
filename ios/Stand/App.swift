@@ -4,6 +4,7 @@ import AVFoundation
 import ARKit
 import CoreMotion
 import Vision
+import Photos
 
 // Stand for iPad: a native shell around the web app in ../www.
 // The page is served from the app bundle through a custom URL scheme (stand://app/)
@@ -203,6 +204,60 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { orientationLock ?? .all }
 
     // MARK: talking to the page
+    private func presentShareSheet(_ url: URL) {
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = view
+            pop.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+            pop.permittedArrowDirections = []
+        }
+        present(sheet, animated: true)
+    }
+    private var docController: UIDocumentInteractionController?
+    // A video for one app: kept in Photos (where every app can take it from), then that app opened.
+    private func shareTo(_ app: String, _ file: URL) {
+        let done: (Bool, String) -> Void = { [weak self] ok, how in
+            DispatchQueue.main.async { self?.send("standShared", ["to": app, "ok": ok, "how": how]) }
+        }
+        if app == "whatsapp" {
+            // (WhatsApp takes a video given to it directly)
+            let wa = file.deletingPathExtension().appendingPathExtension("wam")
+            try? FileManager.default.removeItem(at: wa); try? FileManager.default.copyItem(at: file, to: wa)
+            let dc = UIDocumentInteractionController(url: wa); dc.uti = "net.whatsapp.movie"; docController = dc
+            let ok = dc.presentOpenInMenu(from: CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1), in: view, animated: true)
+            if !ok { presentShareSheet(file) }
+            done(ok, ok ? "app" : "sheet")
+            return
+        }
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async { self.presentShareSheet(file) }; done(false, "sheet"); return
+            }
+            final class Box { var id = "" }
+            let box = Box()
+            PHPhotoLibrary.shared().performChanges({
+                box.id = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: file)?.placeholderForCreatedAsset?.localIdentifier ?? ""
+            }) { saved, _ in
+                DispatchQueue.main.async {
+                    guard saved else { self.presentShareSheet(file); done(false, "sheet"); return }
+                    let id = box.id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? box.id
+                    let tries: [String]
+                    switch app {
+                    case "instagram": tries = ["instagram://library?LocalIdentifier=\(id)", "instagram://app"]
+                    case "tiktok": tries = ["snssdk1233://", "tiktok://", "snssdk1128://"]
+                    case "youtube": tries = ["youtube://", "vnd.youtube://"]
+                    case "facebook": tries = ["fb://", "facebook://"]
+                    default: tries = []
+                    }
+                    func next(_ i: Int) {
+                        guard i < tries.count, let u = URL(string: tries[i]) else { self.presentShareSheet(file); done(true, "sheet"); return }
+                        UIApplication.shared.open(u, options: [:]) { ok in if ok { done(true, "app") } else { next(i + 1) } }
+                    }
+                    next(0)
+                }
+            }
+        }
+    }
     private func send(_ function: String, _ payload: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
@@ -247,13 +302,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             let safe = name.replacingOccurrences(of: "/", with: "-")
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(safe)
             do { try data.write(to: url, options: .atomic) } catch { return }
-            let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            if let pop = sheet.popoverPresentationController {
-                pop.sourceView = view
-                pop.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-                pop.permittedArrowDirections = []
+            // straight to one app (Instagram, TikTok, YouTube, Facebook, WhatsApp): the video goes
+            // into Photos and that app opens with it; if the app is not there, the share sheet
+            if let to = body["to"] as? String, !to.isEmpty {
+                shareTo(to, url)
+                return
             }
-            present(sheet, animated: true)
+            presentShareSheet(url)
         case "standOpen":
             guard let s = body["url"] as? String, let url = URL(string: s) else { return }
             let meta: [String: Any] = ["title": body["title"] as? String ?? "", "composer": body["composer"] as? String ?? ""]

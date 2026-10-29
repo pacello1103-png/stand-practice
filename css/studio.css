@@ -111,3 +111,13 @@
   .st-empty > svg, .st-empty > span { display: none; }
   .st-empty b { font-size: 13px; }
 }
+
+/* sharing the finished video, straight to an app */
+.st-share .st-busy-card { width: min(460px, calc(100% - 32px)); }
+.st-share-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.st-share-btn { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; text-align: left; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line, rgba(127,127,127,.25)); background: var(--surface, transparent); color: inherit; font: inherit; cursor: pointer; }
+.st-share-btn:active { transform: scale(.98); }
+.st-share-btn svg { grid-row: 1 / 3; width: 30px; height: 30px; color: var(--accent, currentColor); }
+.st-share-name { font-weight: 600; font-size: 15px; }
+.st-share-tip { font-size: 12px; opacity: .65; }
+@media (max-width: 420px) { .st-share-grid { grid-template-columns: 1fr; } }

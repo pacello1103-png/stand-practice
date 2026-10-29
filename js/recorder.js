@@ -515,24 +515,27 @@ export class Player {
     if (this.loop && this.b > this.a) {
       src.loop = true; src.loopStart = this.a / rate; src.loopEnd = this.b / rate;
     }
-    // the picture must be ready to move with the sound: wait a moment for it (a video that is
-    // still loading used to stay still while the sound played)
-    if (this.video && this.video.readyState < 2) {
-      const v = this.video;
-      await new Promise((r) => { const done = () => { v.removeEventListener('canplay', done); v.removeEventListener('loadeddata', done); clearTimeout(t); r(); }; const t = setTimeout(done, 1500); v.addEventListener('canplay', done); v.addEventListener('loadeddata', done); try { v.load && v.readyState === 0 && v.load(); } catch {} });
-      if (rate !== this.rate || this.src || me !== this._playTok) return;
-    }
-    const when = ctx.currentTime + 0.02;
-    src.start(when, from / rate);
+    // A video: the picture leads and the sound joins it. The picture is put in place and set going
+    // first (on an iPad a video takes a moment to find its place and start); the sound then starts
+    // where the picture actually is. Starting both at once left the picture behind, and catching it
+    // up by jumping its time froze it again and again.
     if (this.video) {
       const v = this.video;
+      const wait = (evs, ms) => new Promise((r) => { const done = () => { for (const e of evs) v.removeEventListener(e, done); clearTimeout(t); r(); }; const t = setTimeout(done, ms); for (const e of evs) v.addEventListener(e, done); });
+      if (v.readyState < 2) { try { v.readyState === 0 && v.load && v.load(); } catch {} await wait(['canplay', 'loadeddata'], 1500); }
+      if (rate !== this.rate || this.src || me !== this._playTok) return;
       try {
-        v.muted = true; v.playbackRate = rate; v.currentTime = from;
-        const pr = v.play();
-        // not allowed (yet): try once more a moment later; syncVideo keeps trying while playing
-        if (pr && pr.catch) pr.catch(() => setTimeout(() => { if (this.playing && v.paused) v.play().catch(() => {}); }, 250));
+        v.muted = true; v.playbackRate = rate;
+        if (Math.abs(v.currentTime - from) > 0.03) { const sk = wait(['seeked'], 900); v.currentTime = from; await sk; }
+        if (rate !== this.rate || this.src || me !== this._playTok) return;
+        if (v.paused) { const pl = wait(['playing'], 700); const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); await pl; }
       } catch {}
+      if (rate !== this.rate || this.src || me !== this._playTok) { try { v.pause(); } catch {} return; }
+      // (where the picture is now, if it is near where it was asked to be)
+      if (!v.paused && Math.abs(v.currentTime - from) < 1) from = Math.max(0, Math.min(this.duration - 0.05, v.currentTime));
     }
+    const when = ctx.currentTime + 0.01;
+    src.start(when, from / rate);
     this.src = src; this.startTime = when; this.startOffset = from / rate; this.startPerf = performance.now() + 20; this.ctxPlaying = ctx;
     this.playing = true; wantAudio(true, 'player');
     src.onended = () => { if (this.src === src) { this.playing = false; wantAudio(false, 'player'); this.pos = this.loop ? this.a : 0; this._videoTo(this.pos, true); this._emit(); } };
@@ -552,7 +555,15 @@ export class Player {
     // A small drift is corrected by speeding up or slowing down the picture a little: jumping the
     // time (setting currentTime) is what makes the picture stutter. Only a big gap is jumped over.
     const d = t - v.currentTime;
-    if (Math.abs(d) > 0.6) { v.currentTime = t; if (Math.abs(v.playbackRate - this.rate) > 1e-3) v.playbackRate = this.rate; return; }
+    if (Math.abs(d) > 0.6) {
+      if (v.seeking) return;
+      // (the sound went round its loop: the picture follows it back)
+      if (this.loop && this.b > this.a && d < 0) { v.currentTime = t; return; }
+      // (the picture fell behind or ran ahead: the sound moves to it; jumping the picture is what
+      // made it stand still. A picture still waiting for its data is let be until it moves again)
+      if (v.readyState < 3) return;
+      this._soundTo(v.currentTime); return;
+    }
     // Changing the speed itself costs a frame on iPad, so it changes rarely: nothing while the
     // picture is within 60 ms, then a fixed 2% (or 5% for a bigger gap) until it is back in step.
     const ad = Math.abs(d);
@@ -561,6 +572,17 @@ export class Player {
     this._vk = k;
     const target = this.rate * (1 + k);
     if (Math.abs(v.playbackRate - target) > 1e-3) v.playbackRate = target;
+  }
+  _soundTo(pos) {
+    const buf = this.cache.get(this.rate.toFixed(3)); if (!buf || !this.playing) return;
+    const ctx = getCtx(), rate = this.rate;
+    this._stopSource();
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(this.out);
+    if (this.loop && this.b > this.a) { src.loop = true; src.loopStart = this.a / rate; src.loopEnd = this.b / rate; }
+    const when = ctx.currentTime + 0.01; pos = Math.max(0, Math.min(this.duration - 0.05, pos));
+    src.start(when, pos / rate);
+    this.src = src; this.startTime = when; this.startOffset = pos / rate; this.startPerf = performance.now() + 10; this.ctxPlaying = ctx;
+    src.onended = () => { if (this.src === src) { this.playing = false; wantAudio(false, 'player'); this.pos = this.loop ? this.a : 0; this._videoTo(this.pos, true); this._emit(); } };
   }
   async setRate(r) {
     if (Math.abs(r - this.rate) < 1e-4) return;

@@ -56,6 +56,12 @@ const BODY = {
   piano: [['highshelf', 2500, -4], ['highshelf', 7000, -4]],
   // (the sections: their recordings are already heard from a distance, only the warmth is added;
   // the solo instruments' top cut made a whole orchestra sound muffled next to real recordings)
+  // (the solo strings recorded close at Iowa: their own colour, full to the top, only a little warmth)
+  // (measured against a real quartet recording: a little wood at 900 Hz, the close microphone's edge
+  // at 6 kHz softened, the top kept open; the lower instruments their room's depth)
+  violin_iowa: [['peaking', 900, 2.5, 0.8], ['peaking', 6000, -5, 1.3], ['highshelf', 9000, 2]],
+  viola_iowa: [['lowshelf', 200, 2], ['peaking', 900, 2.5, 0.8], ['peaking', 6000, -5, 1.3], ['highshelf', 9000, 2]],
+  cello_iowa: [['lowshelf', 180, 8], ['peaking', 900, 2.5, 0.8], ['peaking', 6000, -5, 1.3], ['highshelf', 9000, 2]],
   sec_violin: [], sec_viola: [['lowshelf', 350, 2]], sec_cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1]],
 };
 // The wood's own resonances of each instrument (the main modes of the body and many smaller ones
@@ -208,7 +214,7 @@ export class Sampler {
     // the solo strings of a quartet or a sonata: every note recorded at three strengths and without
     // vibrato (University of Iowa), the player's vibrato added, continuous from note to note
     const IOWA = { violin: 'iv_sus', viola: 'ia_sus', cello: 'ic_sus' };
-    if (kind === 'sus' && IOWA[sid] && I.n[IOWA[sid]] && !this.plain && (globalThis.__iowaS ?? 0)) {
+    if (kind === 'sus' && IOWA[sid] && I.n[IOWA[sid]] && !this.plain && (globalThis.__iowaS ?? 1)) {
       const set = IOWA[sid], list = I.n[set]; let best = list[0];
       for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
       if (Math.abs(best - midi) <= 3) {
@@ -394,7 +400,8 @@ export class Sampler {
       let node = ch.input;
       ch.body = [];
       const SEC = { violins: 'violin', violas: 'viola', cellos: 'cello', basses: 'bass' };
-      const bk = SEC[sid] ? ((globalThis.__hiFix ?? 1) ? 'sec_' : '') + SEC[sid] : sid === 'cello' && !this.plain && (globalThis.__solo ?? 1) && (globalThis.__vc3 ?? 0) ? 'cello_solo3' : (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
+      const iowaOn = /^(violin|viola|cello)$/.test(sid) && !this.plain && (globalThis.__iowaS ?? 1);
+      const bk = iowaOn ? sid + '_iowa' : SEC[sid] ? ((globalThis.__hiFix ?? 1) ? 'sec_' : '') + SEC[sid] : sid === 'cello' && !this.plain && (globalThis.__solo ?? 1) && (globalThis.__vc3 ?? 0) ? 'cello_solo3' : (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
       const pureBody = sid === 'piano' && (globalThis.__pianoPure ?? 1) && !this.plain;
       for (const [type, f, gdb, q] of (pureBody && !globalThis.__bodyEq ? [] : ((globalThis.__bodyEq || BODY)[bk] || []))) {
         const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gdb; if (q) b.Q.value = q;
@@ -403,7 +410,7 @@ export class Sampler {
       // the wood's own resonances, fixed in place while the pitch moves: with the vibrato each harmonic
       // passes across them and the colour shimmers band by band, as a real instrument's does (a
       // recording played faster or slower carries its resonances along with it, and stays flat)
-      const RES = (globalThis.__res || ((globalThis.__iowaS ?? 0) && (globalThis.__resOn ?? 1) ? BODY_RES : {}))[sid];
+      const RES = (globalThis.__res || ((globalThis.__iowaS ?? 1) && (globalThis.__resOn ?? 1) ? BODY_RES : {}))[sid];
       if (RES && !this.plain) for (const [f, gdb, q] of RES) { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.gain.value = gdb; b.Q.value = q; node.connect(b); node = b; ch.body.push(b); }
       // (the orchestra's recordings, made close and soft at the top: the air a hall recording keeps)
       const air = (globalThis.__hiFix ?? 1) && !this.plain && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__air ?? 3) : 0;
@@ -436,7 +443,7 @@ export class Sampler {
     ch.high.gain.setTargetAtTime(mix.high * 12, t, 0.02);
     // (the concert grand: its recordings are heard as they are, the brightness control only takes away)
     // (the instruments recorded for real: heard as recorded, the brightness control only takes away)
-    const pureCh = ((globalThis.__openAll ?? 0) || ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) || ((globalThis.__soloOpen ?? 0) && /^(violin|viola|cello|bass)$/.test(ch.sid))) && !this.plain || ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
+    const pureCh = ((globalThis.__openAll ?? 0) || ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) || (((globalThis.__soloOpen ?? 0) || (globalThis.__iowaS ?? 1)) && /^(violin|viola|cello|bass)$/.test(ch.sid))) && !this.plain || ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
     ch.bright.frequency.setTargetAtTime(pureCh ? Math.min(22000, 1500 * Math.pow(14, Math.min(1, mix.bright + 0.5))) : 1500 * Math.pow(14, mix.bright), t, 0.02);
     const pn = mix.pan ?? DEFAULT_PAN[ch.sid] ?? 0;
     if (ch.stage) {
@@ -489,7 +496,7 @@ export class Sampler {
     // (the grand piano's three recordings already have the colour of each strength)
     const ownColour = sample.set === 'grand' || sample.set === 'grand2';
     // (one loud recording only: softer is also darker, as with the general sounds, a little less so)
-    tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? (globalThis.__toneLo ?? ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? 6000 : 3000)) + Math.pow(vel, 1.4) * 17000 : (globalThis.__toneSyn ? globalThis.__toneSyn[0] + Math.pow(vel, globalThis.__toneSyn[2]) * globalThis.__toneSyn[1] : 900 + Math.pow(vel, 1.7) * 17000);
+    tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? (globalThis.__toneLo ?? ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid] || /^i[vac]_sus$/.test(sample.set || '')) ? 6000 : 3000)) + Math.pow(vel, 1.4) * 17000 : (globalThis.__toneSyn ? globalThis.__toneSyn[0] + Math.pow(vel, globalThis.__toneSyn[2]) * globalThis.__toneSyn[1] : 900 + Math.pow(vel, 1.7) * 17000);
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
     // quick sweep up from a warm sound), and the top is kept smooth.
     const bowed = BOWED.has(sid) && !real;
@@ -552,7 +559,7 @@ export class Sampler {
     let atk = pure ? 0.0015 : Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
     // (a string player's start: the bow takes the string, never a scrape louder than the note; slurred,
     // the new note grows out of the old one)
-    if (iowaS) atk = connect ? (globalThis.__legAtk ?? 0.07) : accented ? 0.018 : Math.min(0.09, (globalThis.__bowAtk ?? 0.045) + (dur > 1 ? 0.025 : 0));
+    if (iowaS) atk = connect ? (globalThis.__legAtk ?? 0.07) : accented ? 0.018 : Math.min(0.09, (globalThis.__bowAtk ?? 0.035) + (dur > 1 ? 0.025 : 0));
     let hold = dur;
     if (opts.art === 'stacc') hold = Math.min(dur, Math.max(0.07, dur * 0.42));
     else if (opts.art === 'stacciss') hold = Math.min(dur, Math.max(0.05, dur * 0.25));
@@ -595,15 +602,55 @@ export class Sampler {
     // touch, unevenly, as the next one comes
     let vibG = null;
     if (iowaS && (globalThis.__cvib ?? 1) && !decaying) {
+      // A player's vibrato is part of the phrasing, never the same twice (measured on string players:
+      // 5-7 a second, about a quarter of a semitone wide; wider on louder, higher, longer and more
+      // expressive notes, narrower at the end of a phrase; it comes in after the bow has taken the
+      // string, grows with the note's swell, speeds up a little as the note ends):
+      // each note gets its own width and speed, around the instrument's own.
       const V = this.vibFor(ch);
-      const base = { violin: 10, viola: 9.5, cello: 9 }[sid] || 9.5;
-      const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * (dur < 0.25 ? 0.7 : 1);
+      const R = Math.random;
+      const base = { violin: 11, viola: 10.5, cello: 10 }[sid] || 10.5;
+      const centre = { violin: 76, viola: 64, cello: 52 }[sid] || 64;
+      const charge = Math.max(-0.15, Math.min(0.2, (midi - centre) * 0.012));
+      const lenF = dur < 0.18 ? 0.25 : dur < 0.3 ? 0.55 : dur < 0.6 ? 0.85 : dur < 1.2 ? 1 : 1.1;
+      const own = 0.82 + R() * 0.4;   // (this note's own)
+      const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * lenF * own * (1 + charge) * (opts.phraseEnd ? 0.8 : 1);
       const k = src.playbackRate.value * (Math.pow(2, cents / 1200) - 1);
       vibG = ctx.createGain(); vibG.gain.value = 0;
-      vibG.gain.setValueAtTime(k * (connect ? 0.8 : 0.4), t);
-      vibG.gain.linearRampToValueAtTime(k, t + Math.min(0.4, Math.max(0.12, dur * 0.45)));
-      if (dur > 0.5) { vibG.gain.setValueAtTime(k, t + dur - 0.2); vibG.gain.linearRampToValueAtTime(k * (0.72 + Math.random() * 0.2), t + dur); }
+      // (it opens as the note settles: slurred, it carries on from the note before)
+      const delay = connect ? 0 : 0.05 + R() * 0.1, grow = Math.min(dur * 0.6, (connect ? 0.12 : 0.22) + R() * 0.25 + (dur > 1.5 ? 0.2 : 0));
+      vibG.gain.setValueAtTime(k * (connect ? 0.75 + R() * 0.15 : 0.12 + R() * 0.15), t);
+      if (delay) vibG.gain.setValueAtTime(k * 0.2, t + delay);
+      vibG.gain.linearRampToValueAtTime(k * (0.9 + R() * 0.1), t + delay + Math.max(0.06, grow));
+      // (with the swell of a long note it warms and widens; it eases again, unevenly, as the note ends)
+      if (opts.env && opts.env.length) for (const [et, ev] of opts.env) if (et > t + delay + grow && et < t + dur) vibG.gain.linearRampToValueAtTime(k * Math.max(0.6, Math.min(1.3, 0.75 + (ev - 0.85) * 1.5)), et);
+      if (dur > 0.45) { const tail = Math.min(0.3, dur * 0.25); vibG.gain.linearRampToValueAtTime(k * (0.9 + R() * 0.15), t + dur - tail); vibG.gain.linearRampToValueAtTime(k * (connect || opts.legato ? 0.7 + R() * 0.2 : 0.5 + R() * 0.3), t + dur); }
       V.connect(vibG).connect(src.playbackRate);
+      // its speed: this note's own, a touch faster towards the end of a long note
+      if (V.playbackRate && dur > 0.25) {
+        const sp = (0.93 + R() * 0.12) * (1 + Math.min(0.06, Math.max(-0.04, vel - 0.55) * 0.12));
+        V.playbackRate.setTargetAtTime(sp, t, 0.08);
+        if (dur > 0.9) V.playbackRate.setTargetAtTime(sp * (1.05 + R() * 0.06), t + dur * 0.7, 0.15);
+      }
+      // a fresh bow: the pitch settles from a hair below as the string takes it (only a few cents)
+      if (!connect && dur > 0.15 && !(globalThis.__noScoop)) {
+        const r0 = src.playbackRate.value, c0 = -(4 + R() * 8) * (accented ? 0.5 : 1);
+        src.playbackRate.setValueAtTime(r0 * Math.pow(2, c0 / 1200), t);
+        src.playbackRate.setTargetAtTime(r0, t + 0.01, 0.03 + R() * 0.03);
+      }
+    }
+    // the bow hair biting the string at a fresh stroke: rosin and wood, short and well under the note
+    if (iowaS && !connect && !decaying && this.noise && (globalThis.__bowNoise ?? 1)) {
+      const n = ctx.createBufferSource(); n.buffer = this.noise;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1400 + midi * 14 + Math.random() * 400; bp.Q.value = 0.55;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6500;
+      const ng = ctx.createGain();
+      const nl = level * (globalThis.__bowNoise ?? 1) * 0.028 * (accented ? 1.6 : 1) * (0.5 + Math.min(1, vel) * 0.7) * (0.8 + Math.random() * 0.4);
+      ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(nl, t + 0.006 + Math.random() * 0.006);
+      ng.gain.setTargetAtTime(nl * 0.25, t + 0.02, 0.02); ng.gain.setTargetAtTime(0, t + 0.06, 0.03);
+      n.connect(bp).connect(lp).connect(ng).connect(ch.input);
+      n.start(t, Math.random() * 0.5); n.stop(t + 0.25);
+      n.onended = () => { try { ng.disconnect(); } catch {} };
     }
     // a slurred step in strings, winds and voices: the pitch slides in from the note before
     if (connect && opts.from !== undefined && SLIDES.has(sid) && Math.abs(opts.from - midi) >= 2 && Math.abs(opts.from - midi) <= 12) {
@@ -648,7 +695,7 @@ export class Sampler {
       for (const [et, ev] of opts.env) if (et > t + atk && et < t + hold) {
         g.gain.linearRampToValueAtTime(level * ev, et);
         // louder is brighter: the tone opens up in a crescendo and closes in a diminuendo
-        if (!ownColour) tone.frequency.linearRampToValueAtTime(Math.min(20000, (900 + Math.pow(Math.min(1, vel * ev), 1.7) * 17000)), et);
+        if (!ownColour) tone.frequency.linearRampToValueAtTime(Math.min(20000, iowaS ? 6000 + Math.pow(Math.min(1, vel * ev), 1.4) * 17000 : (900 + Math.pow(Math.min(1, vel * ev), 1.7) * 17000)), et);
       }
     }
     if ((opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'fp') && !decaying && !pure && hold > 0.25) {
