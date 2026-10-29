@@ -182,6 +182,7 @@ final class StandNativeExtras: NSObject {
     }
 
     private func reportPeers() {
+        if !Thread.isMainThread { DispatchQueue.main.async { self.reportPeers() }; return }
         let s = session
         let n = s?.connectedPeers.count ?? 0
         let names = s?.connectedPeers.map { $0.displayName } ?? []
@@ -220,6 +221,7 @@ private final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
 
 extension StandNativeExtras: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        StandLog.write("link: \(peerID.displayName) " + (state == .connected ? "connected" : state == .connecting ? "connecting" : "not connected"))
         reportPeers()
         if state == .notConnected {
             DispatchQueue.main.async { self.invited.removeValue(forKey: peerID) }
@@ -279,8 +281,15 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
                     withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         // only Stand invites (the context says so); one link at a time
         let ok = context.flatMap { String(data: $0, encoding: .utf8) } == "stand"
-        DispatchQueue.main.async { self.lastInvitation = Date() }
-        invitationHandler(ok && session != nil, session)
+        // (the link's state is only ever touched on the main thread: an invitation arriving while the
+        // link was being stopped read a session half taken down)
+        DispatchQueue.main.async {
+            self.lastInvitation = Date()
+            let s = self.session
+            // (already linked to that device: no second link to it, which made the two drop each other)
+            let already = s?.connectedPeers.contains(peerID) ?? false
+            invitationHandler(ok && s != nil && !already, s)
+        }
     }
     func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
         js("window.standPeerError && window.standPeerError(\(jsValue(error.localizedDescription)))")
@@ -289,7 +298,10 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
 
 extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
-        guard info?["app"] == "stand", let s = session else { return }
+        DispatchQueue.main.async { self.found(browser, peerID, info) }
+    }
+    private func found(_ browser: MCNearbyServiceBrowser, _ peerID: MCPeerID, _ info: [String: String]?) {
+        guard info?["app"] == "stand", let s = session, browser === self.browser else { return }
         // only one of the two invites the other (the one with the smaller token); but when that one
         // cannot see this device (it happens: one side finds the other first), this one invites
         // after a few seconds instead
