@@ -129,7 +129,9 @@ final class StandNativeExtras: NSObject {
     // MARK: - The link
 
     private func startPeer(name: String) {
-        displayName = String(name.prefix(50))
+        // (the device itself decides "iPhone" or "iPad": the two must never announce the same name)
+        let kind = UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
+        displayName = name.hasPrefix("Stand ") ? "Stand " + kind : String(name.prefix(50))
         if session != nil { reportPeers(); restartDiscovery(); return }
         let id = Self.savedPeerID(displayName)
         // (always encrypted, the same on both sides: "optional" made the two sometimes argue and drop)

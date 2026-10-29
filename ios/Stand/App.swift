@@ -29,6 +29,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureAudioSession()
         StandDiagnostics.shared.start()
         StandLog.write("app started \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] ?? "") (\(Bundle.main.infoDictionary?["CFBundleVersion"] ?? ""))")
+        StandRunWatch.start()
         UIApplication.shared.isIdleTimerDisabled = true   // the screen stays on while you practise
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = WebViewController()
@@ -883,5 +884,44 @@ final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
 
     private func emit(_ message: [String: Any]) {
         DispatchQueue.main.async { self.onEvent?(message) }
+    }
+}
+
+// Was the last run ended while the app was open (a crash, or iOS closing it for memory)? A marker file
+// is there while the app is in front and taken away when it goes to the background; finding it at
+// start means the run before did not end normally. Memory warnings and uncaught exceptions are logged
+// too (the exception's reason is written right away, before the app goes).
+enum StandRunWatch {
+    private static let marker = StandLog.dir.appendingPathComponent(".running")
+    private static var lastWarning = Date.distantPast
+    static func start() {
+        if let at = (try? FileManager.default.attributesOfItem(atPath: marker.path))?[.modificationDate] as? Date {
+            StandLog.write("the run before ended while the app was open (last sign of life " + ISO8601DateFormatter().string(from: at) + ")")
+        }
+        set(true)
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in StandRunWatch.set(false) }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in StandRunWatch.set(true) }
+        nc.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in StandRunWatch.set(false) }
+        nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+            if Date().timeIntervalSince(StandRunWatch.lastWarning) > 5 { StandRunWatch.lastWarning = Date(); StandLog.write("memory warning (\(StandRunWatch.footprintMB()) MB in use)") }
+        }
+        NSSetUncaughtExceptionHandler { e in
+            let line = ISO8601DateFormatter().string(from: Date()) + "  exception: \(e.name.rawValue): \(e.reason ?? "") | " + e.callStackSymbols.prefix(12).joined(separator: " | ") + "\n"
+            let url = StandLog.dir.appendingPathComponent("events.log")
+            if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+        }
+        // a sign of life every 20 s while open, so the time of the end is known
+        Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in
+            if UIApplication.shared.applicationState != .background { StandRunWatch.set(true) }
+        }
+    }
+    private static func set(_ on: Bool) {
+        if on { try? Data().write(to: marker) } else { try? FileManager.default.removeItem(at: marker) }
+    }
+    static func footprintMB() -> Int {
+        var info = task_vm_info_data_t(); var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let r = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
+        return r == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 }

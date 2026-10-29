@@ -98,7 +98,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   const fullOrder = playOrder(score, 0);
   const info = staffInfo(score);
   // a second voice plays like one more staff of the same instrument
-  for (const x of [...info]) if (x.st.v2 && x.st.v2.some((b) => b.some((e) => !e.rest))) info.push({ ...x, st: voiceView(x.st, 2, score) });
+  for (const x of [...info]) for (const v of [2, 3, 4]) { const vb = x.st['v' + v]; if (vb && vb.some((b) => b && b.some((e) => !e.rest))) info.push({ ...x, st: voiceView(x.st, v, score) }); }
   const spans = score.spans || [];
   // ---- the time map: tempo, rit./accel., fermatas, caesuras, a closing ritardando
   const tempoSpans = spans.filter((q) => q.kind === 'rit' || q.kind === 'accel');
@@ -249,7 +249,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       }
     }
     // hairpins drawn as lines over notes: the level moves smoothly from the first note to the end
-    const vNo = st.voice === 2 ? 2 : 1;
+    const vNo = st.voice >= 2 ? st.voice : 1;
     const inSp = (f, sp) => (f.m > sp.a.m || (f.m === sp.a.m && f.pos >= sp.a.pos)) && (f.m < sp.b.m || (f.m === sp.b.m && f.pos <= sp.b.pos));
     for (const sp of spans.filter((q) => q.kind === 'hairpin' && q.st === st.id && (q.v || 1) === vNo)) {
       // every pass through the music (repeats) gets its own swell
@@ -432,7 +432,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           }
           // separate bows (or tonguings) without a slur: the sound hardly stops between notes, only
           // the change of bow is heard (players keep the line; the old 13% gap sounded like a keyboard)
-          const DT = globalThis.__detache ?? (BOWED_SET.test(sid) ? [0.97, 0.99] : [0.9, 0.95]);
+          // (the solo strings recorded without vibrato: a separate bow is heard as a small break, larger than a slur's)
+          const DT = globalThis.__detache ?? ((globalThis.__iowaS ?? 0) && /^(violin|viola|cello)$/.test(sid) ? [0.9, 0.95] : BOWED_SET.test(sid) ? [0.97, 0.99] : [0.9, 0.95]);
           if (!f.slurred && !art && dur > 0.12) base.dur = dur * (dur < 0.4 ? DT[0] : DT[1]);
           if (VIBRATO[sid] && dur > 0.32 && art !== 'stacc' && art !== 'stacciss') base.vib = VIBRATO[sid];
           // long notes breathe: a little swell, then ease off

@@ -1533,13 +1533,15 @@ body.touring #score.chrome-off .topbar { transform: none; opacity: 1; pointer-ev
 body.touring #score.chrome-off .inkbar { opacity: 1; }
 
 /* Compose › Transpose: one row per interval, with up and down */
-.tp-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; }
-.tp-row { display: grid; grid-template-columns: 38px 1fr 46px 46px; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border-radius: 10px; }
-.tp-row:nth-child(odd) { background: var(--sunk); }
-.tp-sym { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
-.tp-name { font-size: 14px; }
-.tp-go { height: 34px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink); font-size: 13px; }
-.tp-go:active { background: var(--accent); color: var(--accent-ink); }
+.tp-dir { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 3px; border-radius: 12px; background: var(--sunk); margin: 4px 0 10px; }
+.tp-dirb { height: 34px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--muted); background: transparent; }
+.tp-dirb.on { background: var(--surface-solid); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.tp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.tp-int { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 54px; border-radius: 11px; background: var(--sunk); color: var(--ink); }
+.tp-int b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tp-int small { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.tp-int:active { background: var(--accent); color: var(--accent-ink); }
+.tp-int:active small { color: inherit; }
 .bk-what { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--sunk); }
 .bk-what .check { align-items: flex-start; }
 .bk-what small { font-size: 12.5px; line-height: 1.35; }
@@ -1769,3 +1771,6 @@ body:not(.phone) .phs-bar { display: none; }
 
 /* taken out of the app (kept in the page only so nothing that refers to them breaks) */
 .cut-out { display: none !important; }
+
+.cp-voices button { white-space: nowrap; font-size: 13px; padding-left: 2px; padding-right: 2px; }
+.tp-key select, .tp-key .cp-select { width: 100%; }

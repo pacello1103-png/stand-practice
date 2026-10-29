@@ -46,14 +46,10 @@ export const DEFAULT_PAN = { violin: -0.45, viola: 0.15, cello: 0.35, bass: 0.55
 // Siciliana and Ricci's Sarabande; viola: between the two)
 const BODY = {
   cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1], ['peaking', 3000, -4, 0.8]],
-  // (next to two string quartet recordings the violin and viola lacked their middle, 0.6-2.5 kHz,
-  // and had too much below 300 Hz: the cello, matched to cellists' recordings, keeps its own)
-  violin: [['peaking', 3500, -7, 0.6], ['highshelf', 7000, -3.5], ['peaking', 1800, -2, 1], ['lowshelf', 250, -3], ['peaking', 1100, 2.5, 0.8]],
+  violin: [['peaking', 3500, -9, 0.6], ['highshelf', 7000, -5], ['peaking', 1800, -2, 1]],
   viola: [['lowshelf', 350, 2], ['peaking', 3200, -6, 0.6], ['highshelf', 7000, -3]],
-  // (a little less of the cello's low body and of the violin's top cut, and the top kept open: next to
-  // real string quartet recordings, the four sounded thick and veiled)
-  cello_solo: [['peaking', 400, 3, 0.7], ['peaking', 3500, -5, 0.8], ['highshelf', 7000, -2]],
-  viola_solo: [['peaking', 3200, -4, 0.7], ['highshelf', 7000, -2], ['lowshelf', 250, -3], ['peaking', 1100, 2.5, 0.8]],
+  cello_solo: [['peaking', 400, 4.5, 0.7], ['peaking', 3500, -5, 0.8], ['highshelf', 7000, -2]],
+  viola_solo: [['peaking', 3200, -4, 0.7], ['highshelf', 7000, -2]],
   // (the solo cello at three strengths: thinner recordings, given the body of the other's)
   cello_solo3: [['peaking', 400, 4.5, 0.7], ['lowshelf', 600, 7.5], ['peaking', 520, 4, 1.2], ['peaking', 2000, -3, 0.9], ['highshelf', 7000, 3]],
   // (the grand was recorded close to its strings: heard from the hall, its top is softer)
@@ -61,6 +57,13 @@ const BODY = {
   // (the sections: their recordings are already heard from a distance, only the warmth is added;
   // the solo instruments' top cut made a whole orchestra sound muffled next to real recordings)
   sec_violin: [], sec_viola: [['lowshelf', 350, 2]], sec_cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1]],
+};
+// The wood's own resonances of each instrument (the main modes of the body and many smaller ones
+// above): fixed while the pitch moves, so the vibrato makes the colour shimmer as on the instrument
+const BODY_RES = {
+  violin: [[280, 3, 8], [460, 3.5, 10], [540, 3, 12], [720, 2, 12], [1050, 2.5, 14], [1450, 2, 16], [2050, 3, 14], [2600, 3, 16], [3300, 2, 18], [4400, 1.5, 18]],
+  viola: [[230, 3, 8], [390, 3.5, 10], [470, 3, 12], [640, 2, 12], [910, 2.5, 14], [1250, 2, 16], [1800, 3, 14], [2300, 2.5, 16], [3000, 2, 18]],
+  cello: [[100, 3, 7], [175, 3.5, 9], [205, 3, 10], [290, 2, 12], [420, 2.5, 12], [610, 2, 14], [900, 2.5, 14], [1300, 2, 16], [1900, 2.5, 16], [2600, 2, 18]],
 };
 export const DEFAULT_MIX = () => ({ vol: 0.8, pan: null, low: 0, high: 0, bright: 0.5, attack: 0, release: 1, reverb: 0.35, mute: false, solo: false });
 
@@ -201,6 +204,21 @@ export class Sampler {
       const list = PL[want]; let best = list[0];
       for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
       return this.load(PERC[sid], best, want, 'sus');
+    }
+    // the solo strings of a quartet or a sonata: every note recorded at three strengths and without
+    // vibrato (University of Iowa), the player's vibrato added, continuous from note to note
+    const IOWA = { violin: 'iv_sus', viola: 'ia_sus', cello: 'ic_sus' };
+    if (kind === 'sus' && IOWA[sid] && I.n[IOWA[sid]] && !this.plain && (globalThis.__iowaS ?? 0)) {
+      const set = IOWA[sid], list = I.n[set]; let best = list[0];
+      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      if (Math.abs(best - midi) <= 3) {
+        // (pp below 0.3, mf about 0.52, ff above 0.74: between two, both recordings, the softer giving way)
+        const B = [[0.3, 0.48, 'p', 'm'], [0.56, 0.74, 'm', 'f']];
+        const v0 = span ? (Math.min(...span) + Math.max(...span)) / 2 : vel;
+        const [lo, hi, la, lb] = v0 < 0.52 ? B[0] : B[1];
+        const [a, b] = await Promise.all([this.load(set, best, la, 'sus'), this.load(set, best, lb, 'sus')]);
+        return Object.assign(Object.create(b), { pair: a, w: Math.max(0, Math.min(1, (vel - lo) / (hi - lo))), xf: !!span, xfr: [lo, hi], iowa: true });
+      }
     }
     const SOLO = { cello: (globalThis.__vc3 ?? 0) && I.n.vc_solo3 ? 'vc_solo3' : 'vc_solo', viola: 'va_solo', ...((globalThis.__vlSolo ?? 1) ? { violin: 'vl_solo' } : {}) };
     // (a solo instrument recorded at three strengths: the recording of the strength played, of the
@@ -385,7 +403,7 @@ export class Sampler {
       // the wood's own resonances, fixed in place while the pitch moves: with the vibrato each harmonic
       // passes across them and the colour shimmers band by band, as a real instrument's does (a
       // recording played faster or slower carries its resonances along with it, and stays flat)
-      const RES = (globalThis.__res || {})[sid];
+      const RES = (globalThis.__res || ((globalThis.__iowaS ?? 0) && (globalThis.__resOn ?? 1) ? BODY_RES : {}))[sid];
       if (RES && !this.plain) for (const [f, gdb, q] of RES) { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.gain.value = gdb; b.Q.value = q; node.connect(b); node = b; ch.body.push(b); }
       // (the orchestra's recordings, made close and soft at the top: the air a hall recording keeps)
       const air = (globalThis.__hiFix ?? 1) && !this.plain && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__air ?? 3) : 0;
@@ -418,7 +436,7 @@ export class Sampler {
     ch.high.gain.setTargetAtTime(mix.high * 12, t, 0.02);
     // (the concert grand: its recordings are heard as they are, the brightness control only takes away)
     // (the instruments recorded for real: heard as recorded, the brightness control only takes away)
-    const pureCh = ((globalThis.__openAll ?? 0) || ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) || ((globalThis.__soloOpen ?? 1) && /^(violin|viola|cello|bass)$/.test(ch.sid))) && !this.plain || ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
+    const pureCh = ((globalThis.__openAll ?? 0) || ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) || ((globalThis.__soloOpen ?? 0) && /^(violin|viola|cello|bass)$/.test(ch.sid))) && !this.plain || ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
     ch.bright.frequency.setTargetAtTime(pureCh ? Math.min(22000, 1500 * Math.pow(14, Math.min(1, mix.bright + 0.5))) : 1500 * Math.pow(14, mix.bright), t, 0.02);
     const pn = mix.pan ?? DEFAULT_PAN[ch.sid] ?? 0;
     if (ch.stage) {
@@ -443,7 +461,7 @@ export class Sampler {
     // two recordings blended (soft and loud): each played, their levels sharing the note (equal power)
     if (sample.pair && sample.xf && opts.env && opts.env.length && !opts.blend) {
       // (each recording's share follows the dynamic through the note)
-      const hu = (Math.random() - 0.5) * 4, W = (v) => Math.max(0, Math.min(1, (v - XF[0]) / (XF[1] - XF[0]))) * Math.PI / 2;
+      const R2 = sample.xfr || XF, hu = (Math.random() - 0.5) * 4, W = (v) => Math.max(0, Math.min(1, (v - R2[0]) / (R2[1] - R2[0]))) * Math.PI / 2;
       const ca = Math.max(0.03, Math.cos(W(vel))), cb = Math.max(0.03, Math.sin(W(vel)));
       this.noteOn(ch, sample.pair, midi, t, dur, vel, { ...opts, blend: ca, human: hu, env: opts.env.map(([et, ev]) => [et, ev * Math.max(0.03, Math.cos(W(vel * ev))) / ca]) });
       opts = { ...opts, blend: cb, human: hu, env: opts.env.map(([et, ev]) => [et, ev * Math.max(0.03, Math.sin(W(vel * ev))) / cb]) };
@@ -521,7 +539,7 @@ export class Sampler {
     // set against the piano)
     // (about mf every instrument is as loud as before; from there to pp and ff the range is a real
     // player's, the orchestra's and the soloists' alike: the old one was half of it)
-    const dynR = !(globalThis.__hiFix ?? 1) ? 26 : (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__dynR ?? 34) : /^(violin|viola|cello|bass)$/.test(sid) ? (globalThis.__dynRs ?? 36) : 26;
+    const dynR = !(globalThis.__hiFix ?? 1) ? 26 : (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__dynR ?? 34) : /^(violin|viola|cello|bass)$/.test(sid) ? (globalThis.__dynRs ?? 26) : 26;
     let level = layered3 ? Math.pow(10, (-(globalThis.__l3Range ?? 8) + (globalThis.__l3Range ?? 8) * Math.max(0, Math.min(1.1, vel))) / 20) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) : pure ? Math.pow(Math.max(0.02, Math.min(1, vel)), globalThis.__g2vt ?? 1.46) * (sample.gain || 4) * 0.9 : (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) * Math.pow(Math.max(0.05, Math.min(1, vel)), globalThis.__g2vt ?? 0) : sample.real ? Math.pow(10, (-11.7 + dynR * (Math.max(0, Math.min(1.1, vel)) - 0.55)) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1) * (sample.alt && !opts.ens ? (globalThis.__ensMain ?? 0.79) : 1);
     if ((opts.art === 'acc' || opts.art === 'marc') && !pure) level = Math.min(1.15, level * 1.3);
     // a connected (slurred) note starts past the sample's attack and fades in: no new bow or tongue
@@ -530,7 +548,11 @@ export class Sampler {
     const accented = opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'stacc' || opts.art === 'stacciss';
     const shape = !decaying && !accented && !connect;
     const lenAtk = shape ? (dur > 1.2 ? 0.075 : dur > 0.6 ? 0.045 : dur > 0.25 ? 0.02 : 0.006) * (1.15 - vel * 0.5) * (real ? (globalThis.__lenAtkF ?? 0.4) : 1) : 0;
-    const atk = pure ? 0.0015 : Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
+    const iowaS = /^i[vac]_sus$/.test(sample.set || '');
+    let atk = pure ? 0.0015 : Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
+    // (a string player's start: the bow takes the string, never a scrape louder than the note; slurred,
+    // the new note grows out of the old one)
+    if (iowaS) atk = connect ? (globalThis.__legAtk ?? 0.07) : accented ? 0.018 : Math.min(0.09, (globalThis.__bowAtk ?? 0.045) + (dur > 1 ? 0.025 : 0));
     let hold = dur;
     if (opts.art === 'stacc') hold = Math.min(dur, Math.max(0.07, dur * 0.42));
     else if (opts.art === 'stacciss') hold = Math.min(dur, Math.max(0.05, dur * 0.25));
@@ -541,6 +563,7 @@ export class Sampler {
     if ((opts.art === 'stacc' || opts.art === 'acc' || opts.art === 'marc') && !decaying && !bowed) offset = 0.02;
     if (connect) offset = Math.min(0.09, (sample.buf.duration || 1) * 0.1);
     offset = Math.max(offset, skip);
+    if (iowaS) offset = Math.max(offset, connect ? (globalThis.__legSkip ?? 0.12) : accented ? 0 : 0.015);
     if (opts.legato && !decaying) hold = Math.max(hold, dur + 0.05);
     // vibrato: comes in after the start of the note, like a player's
     if (opts.vib && !decaying && (!real || sample.oneLayer) && !sample.ownVib && dur > 0.3) {   // (the real strings play their own vibrato)
@@ -566,6 +589,21 @@ export class Sampler {
         am.gain.setValueAtTime(0, t); am.gain.linearRampToValueAtTime(0, t + Math.min(0.3, dur * 0.25)); am.gain.linearRampToValueAtTime(level * (globalThis.__vibAm ?? 0.07), t + Math.min(0.8, dur * 0.6));
         lfo.connect(am).connect(g.gain);
       }
+    }
+    // the player's vibrato: one, continuous from note to note (each instrument its own), never even:
+    // its speed and width wander a little all the time; it opens as the note settles and narrows a
+    // touch, unevenly, as the next one comes
+    let vibG = null;
+    if (iowaS && (globalThis.__cvib ?? 1) && !decaying) {
+      const V = this.vibFor(ch);
+      const base = { violin: 10, viola: 9.5, cello: 9 }[sid] || 9.5;
+      const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * (dur < 0.25 ? 0.7 : 1);
+      const k = src.playbackRate.value * (Math.pow(2, cents / 1200) - 1);
+      vibG = ctx.createGain(); vibG.gain.value = 0;
+      vibG.gain.setValueAtTime(k * (connect ? 0.8 : 0.4), t);
+      vibG.gain.linearRampToValueAtTime(k, t + Math.min(0.4, Math.max(0.12, dur * 0.45)));
+      if (dur > 0.5) { vibG.gain.setValueAtTime(k, t + dur - 0.2); vibG.gain.linearRampToValueAtTime(k * (0.72 + Math.random() * 0.2), t + dur); }
+      V.connect(vibG).connect(src.playbackRate);
     }
     // a slurred step in strings, winds and voices: the pitch slides in from the note before
     if (connect && opts.from !== undefined && SLIDES.has(sid) && Math.abs(opts.from - midi) >= 2 && Math.abs(opts.from - midi) <= 12) {
@@ -651,8 +689,31 @@ export class Sampler {
     if (SECTION.has(sid) && !opts.tune && !opts.single) this.noteOn(ch, sample, midi, t + 0.012 + Math.random() * 0.01, dur, vel * 0.8, { ...opts, tune: (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 4), single: true });
     const v = { src, g, end: end + rel * 3 };
     this.voices.add(v);
-    src.onended = () => { this.voices.delete(v); try { g.disconnect(); tone.disconnect(); if (cg) cg.disconnect(); } catch {} };
+    src.onended = () => { this.voices.delete(v); try { g.disconnect(); tone.disconnect(); if (cg) cg.disconnect(); if (vibG) vibG.disconnect(); } catch {} };
     return v;
+  }
+  // A channel's vibrato: a slow wave of 5-6 a second whose speed and width wander (a smooth random walk,
+  // as a player's), 37 s long before it repeats, each instrument starting at its own place.
+  vibFor(ch) {
+    const ctx = this.ctx;
+    if (ch.vib && ch.vibCtx === ctx) return ch.vib;
+    const sr = 3000, secs = 37, n = sr * secs, buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+    const rate0 = { violin: 5.8, viola: 5.5, cello: 5.3 }[ch.sid] || 5.5;
+    let rw = 0, dw = 0, rv = 0, dv = 0, ph = 0;
+    const rs = []; for (let i = 0; i < n; i++) { rv += (Math.random() - 0.5) * 0.004; rv *= 0.9995; rw = rw * 0.999 + rv; rs.push(rw); }
+    let mx = 1e-9; for (const x of rs) mx = Math.max(mx, Math.abs(x));
+    const rate = rs.map((x) => rate0 + 0.45 * x / mx);
+    // (whole cycles, so the loop is seamless)
+    let tot = 0; for (const r of rate) tot += r / sr; const kf = Math.round(tot) / tot;
+    for (let i = 0; i < n; i++) {
+      dv += (Math.random() - 0.5) * 0.004; dv *= 0.9995; dw = dw * 0.9993 + dv;
+      ph += 2 * Math.PI * rate[i] * kf / sr;
+      d[i] = Math.sin(ph) * (1 + Math.max(-0.35, Math.min(0.35, dw * 0.35)));
+    }
+    const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true;
+    s.start(ctx.currentTime, Math.random() * secs);
+    ch.vib = s; ch.vibCtx = ctx;
+    return s;
   }
   stopAll(fade = 0.08) {
     if (!this.ctx) return;

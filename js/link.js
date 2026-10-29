@@ -29,7 +29,9 @@ function hubStart() {
   window.standPeerProgress = (id, f, dir) => { const cb = direct.progress.get(id); if (cb) cb(f, dir); for (const w of [...direct.fileProgress]) { try { w(id, f, dir); } catch {} } };
   window.standPeerChunkOk = (id) => { const r = direct.chunk.get(id); if (r) { direct.chunk.delete(id); r(); } };
   window.standPeerSent = (id, err) => { const cb = direct.sent.get(id); if (cb) { direct.sent.delete(id); cb(err); } };
-  try { window.webkit.messageHandlers.standPeer.postMessage({ op: 'start', name: 'Stand ' + (/iPad/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)) ? 'iPad' : 'iPhone') }); } catch {}
+  // (the iPhone's user agent says "like Mac OS X" too: it once called itself "Stand iPad", and two devices
+  // announcing the same name on one Wi-Fi made the link fail over and over)
+  try { window.webkit.messageHandlers.standPeer.postMessage({ op: 'start', name: 'Stand ' + (/iPhone|iPod/.test(navigator.userAgent) ? 'iPhone' : 'iPad') }); } catch {}
 }
 function deliver(m) {
   if (!m || !m.dst) return;

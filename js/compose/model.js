@@ -182,7 +182,7 @@ export function setPickup(score, ticks) {
   const tt = timeAt(score, 0);
   for (const st of allStaves(score)) {
     st.bars[0] = tidyBar((st.bars[0] || []).map((e) => (e.full ? { ...e } : e)).filter((e, i, a) => !(e.full && a.length > 1)), tt);
-    if (st.v2 && st.v2[0]) st.v2[0] = tidyBar(st.v2[0].map((e) => (e.full ? { ...e } : e)), tt);
+    for (const v of VOICES) { const k = voiceKey(v); if (st[k] && st[k][0]) st[k][0] = tidyBar(st[k][0].map((e) => (e.full ? { ...e } : e)), tt); }
   }
 }
 // the number printed for a bar: a pickup bar is bar 0, so the first whole bar is bar 1
@@ -306,7 +306,7 @@ export function addBars(score, n, at = score.measures.length) {
   const hadPickup = at === 0 && n > 0 && pickupOf(score);
   for (let k = 0; k < n; k++) {
     score.measures.splice(at, 0, {});
-    for (const st of allStaves(score)) { st.bars.splice(at, 0, restBar(time)); if (st.v2) st.v2.splice(at, 0, restBar(time)); }
+    for (const st of allStaves(score)) { st.bars.splice(at, 0, restBar(time)); for (const v of VOICES) if (st[voiceKey(v)]) st[voiceKey(v)].splice(at, 0, restBar(time)); }
   }
   // (bars put before the first: the time, key and tempo of the start go to the new first bar, so
   // the music after keeps them without seeming to change there)
@@ -314,7 +314,7 @@ export function addBars(score, n, at = score.measures.length) {
     const old = score.measures[n], first = score.measures[0];
     for (const k of ['time', 'key', 'tempo']) if (old[k] !== undefined && old[k] !== null) { first[k] = old[k]; delete old[k]; }
     // (bars before a pickup: it is no longer at the start, so it becomes a whole bar)
-    if (hadPickup) { delete old.pickup; const full = timeAt(score, n); for (const st of allStaves(score)) { st.bars[n] = tidyBar(st.bars[n], full); if (st.v2 && st.v2[n]) st.v2[n] = tidyBar(st.v2[n], full); } }
+    if (hadPickup) { delete old.pickup; const full = timeAt(score, n); for (const st of allStaves(score)) { st.bars[n] = tidyBar(st.bars[n], full); for (const v of VOICES) { const k = voiceKey(v); if (st[k] && st[k][n]) st[k][n] = tidyBar(st[k][n], full); } } }
   }
   // clef changes stay on their bars
   for (const st of allStaves(score)) if (st.clefs) { const c = {}; for (const [k, v] of Object.entries(st.clefs)) c[+k >= at && +k > 0 ? +k + n : +k] = v; st.clefs = c; }
@@ -342,7 +342,7 @@ export function deleteBars(score, from, n) {
   const keepClef = new Map(allStaves(score).map((st) => [st, clefAt(st, to)]));
   score.measures.splice(from, n);
   for (const st of allStaves(score)) {
-    st.bars.splice(from, n); if (st.v2) st.v2.splice(from, n);
+    st.bars.splice(from, n); for (const v of VOICES) if (st[voiceKey(v)]) st[voiceKey(v)].splice(from, n);
     if (st.clefs) {
       const c = {};
       for (const [k, v] of Object.entries(st.clefs)) { const b = +k; if (b < from) c[b] = v; else if (b > to) c[b - n] = v; }
@@ -360,7 +360,7 @@ export function deleteBars(score, from, n) {
     }
   }
   // the bars that are left are fitted to the time in force (nothing too long or too short)
-  for (let m = from; m < score.measures.length && m < from + 1; m++) { const tt = timeAt(score, m); for (const st of allStaves(score)) { st.bars[m] = tidyBar(st.bars[m], tt); if (st.v2) st.v2[m] = tidyBar(st.v2[m], tt); } }
+  for (let m = from; m < score.measures.length && m < from + 1; m++) { const tt = timeAt(score, m); for (const st of allStaves(score)) { st.bars[m] = tidyBar(st.bars[m], tt); for (const v of VOICES) { const k = voiceKey(v); if (st[k]) st[k][m] = tidyBar(st[k][m], tt); } } }
   if (!score.measures[0].time) score.measures[0].time = [4, 4];
   if (score.measures[0].key === undefined) score.measures[0].key = 0;
   for (const ms of score.measures) if (ms.bar === 'final') delete ms.bar;
@@ -372,7 +372,7 @@ export function setTime(score, m, time) {
   for (let i = m; i < score.measures.length; i++) {
     if (i > m && score.measures[i].time) break;
     const tt = timeAt(score, i);   // (the pickup bar keeps its own length)
-    for (const st of allStaves(score)) { st.bars[i] = tidyBar(st.bars[i].map((e) => (e.full ? { ...e } : e)), tt); if (st.v2) st.v2[i] = tidyBar(st.v2[i].map((e) => (e.full ? { ...e } : e)), tt); }
+    for (const st of allStaves(score)) { st.bars[i] = tidyBar(st.bars[i].map((e) => (e.full ? { ...e } : e)), tt); for (const v of VOICES) { const k = voiceKey(v); if (st[k]) st[k][i] = tidyBar(st[k][i].map((e) => (e.full ? { ...e } : e)), tt); } }
   }
 }
 
@@ -397,28 +397,34 @@ export function removePart(score, partId) {
   return true;
 }
 
-// ---------- a second voice on a staff ----------
-// Voice 2 lives in st.v2 (bars like st.bars). A "view" of a staff for one voice behaves like
-// the staff itself, so the same editing functions work on either voice.
+// ---------- more voices on a staff (up to four) ----------
+// Voice 1 is st.bars; voices 2, 3 and 4 live in st.v2, st.v3 and st.v4 (bars like st.bars). A "view" of a
+// staff for one voice behaves like the staff itself, so the same editing functions work on any voice.
+export const VOICES = [2, 3, 4];
+export const voiceKey = (v) => 'v' + v;
+// (the bars of each voice a staff has, the first one included)
+export function voiceBarsOf(st) { const b = st.base || st; const out = [[1, b.bars]]; for (const v of VOICES) if (b[voiceKey(v)]) out.push([v, b[voiceKey(v)]]); return out; }
 export function voiceView(st, v, score) {
-  if (v !== 2) return st.base || st;
-  const base = st.base || st;
-  if (!base.v2) base.v2 = base.bars.map((b, m) => restBar(score ? timeAt(score, m) : [4, 4]));
+  if (!(v >= 2 && v <= 4)) return st.base || st;
+  const base = st.base || st, k = voiceKey(v);
+  if (!base[k]) base[k] = base.bars.map((b, m) => restBar(score ? timeAt(score, m) : [4, 4]));
   const view = Object.create(base);
-  Object.defineProperty(view, 'bars', { value: base.v2, enumerable: true });
-  view.voice = 2; view.base = base;
+  Object.defineProperty(view, 'bars', { value: base[k], enumerable: true });
+  view.voice = v; view.base = base;
   return view;
 }
-export function hasVoice2(st, m) { return !!(st.v2 && st.v2[m] && st.v2[m].some((e) => !e.rest)); }
+export function hasVoice(st, v, m) { const b = (st.base || st)[voiceKey(v)]; return !!(b && b[m] && b[m].some((e) => !e.rest)); }
+export function hasVoice2(st, m) { return VOICES.some((v) => hasVoice(st, v, m)); }
 // ---------- finding things ----------
 export function findEvent(score, evId) {
   for (const { st, part, inst } of staffInfo(score)) {
     for (let m = 0; m < st.bars.length; m++) {
       const i = st.bars[m].findIndex((e) => e.id === evId);
       if (i >= 0) return { st, part, inst, m, i, ev: st.bars[m][i], pos: eventStarts(st.bars[m], timeAt(score, m))[i] };
-      if (st.v2 && st.v2[m]) {
-        const j = st.v2[m].findIndex((e) => e.id === evId);
-        if (j >= 0) { const vst = voiceView(st, 2, score); return { st: vst, part, inst, m, i: j, ev: st.v2[m][j], pos: eventStarts(st.v2[m], timeAt(score, m))[j], voice: 2 }; }
+      for (const v of VOICES) {
+        const vb = st[voiceKey(v)]; if (!vb || !vb[m]) continue;
+        const j = vb[m].findIndex((e) => e.id === evId);
+        if (j >= 0) { const vst = voiceView(st, v, score); return { st: vst, part, inst, m, i: j, ev: vb[m][j], pos: eventStarts(vb[m], timeAt(score, m))[j], voice: v }; }
       }
     }
   }
@@ -447,7 +453,7 @@ export function migrateScore(score) {
   if (score._v2spans) return score;
   score.spans = score.spans || [];
   for (const st of allStaves(score)) {
-    for (const [v, bars] of [[1, st.bars], [2, st.v2 || []]]) {
+    for (const [v, bars] of voiceBarsOf(st)) {
       const flat = [];
       bars.forEach((bar, m) => { const time = timeAt(score, m); let p = 0; for (const ev of bar) { flat.push({ ev, m, pos: p }); p += ticksOf(ev, time); } });
       for (let i = 0; i < flat.length; i++) {
@@ -482,8 +488,8 @@ export function spanStartingAt(score, kind, stId, v, at) {
 // Turn spans back into marks on notes (MusicXML is written from these).
 export function spansToMarks(score) {
   const s = clone(score);
-  const find = (st, v, at) => { const bars = v === 2 ? st.v2 : st.bars; if (!bars || !bars[at.m]) return null; const time = timeAt(s, at.m); let p = 0, best = null; for (const ev of bars[at.m]) { if (p <= at.pos) best = ev; p += ticksOf(ev, time); } return best; };
-  const after = (st, v, at) => { const bars = v === 2 ? st.v2 : st.bars; if (!bars) return null; const time = timeAt(s, at.m); let p = 0; const bar = bars[at.m] || []; for (let i = 0; i < bar.length; i++) { if (p === at.pos || (p < at.pos && p + ticksOf(bar[i], time) > at.pos)) return bar[i + 1] || (bars[at.m + 1] || [])[0] || null; p += ticksOf(bar[i], time); } return null; };
+  const find = (st, v, at) => { const bars = v > 1 ? st[voiceKey(v)] : st.bars; if (!bars || !bars[at.m]) return null; const time = timeAt(s, at.m); let p = 0, best = null; for (const ev of bars[at.m]) { if (p <= at.pos) best = ev; p += ticksOf(ev, time); } return best; };
+  const after = (st, v, at) => { const bars = v > 1 ? st[voiceKey(v)] : st.bars; if (!bars) return null; const time = timeAt(s, at.m); let p = 0; const bar = bars[at.m] || []; for (let i = 0; i < bar.length; i++) { if (p === at.pos || (p < at.pos && p + ticksOf(bar[i], time) > at.pos)) return bar[i + 1] || (bars[at.m + 1] || [])[0] || null; p += ticksOf(bar[i], time); } return null; };
   for (const sp of s.spans || []) {
     if (sp.kind !== 'slur' && sp.kind !== 'hairpin') continue;
     const st = allStaves(s).find((x) => x.id === sp.st); if (!st) continue;

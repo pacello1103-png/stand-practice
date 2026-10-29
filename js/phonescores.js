@@ -139,7 +139,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     for (let i = 0; i < info.n; i++) {
       if (have[i]) { if (onPage) onPage(i + 1, info.n); continue; }
       let first = ahead && ahead.i === i ? ahead.p : ask(i); ahead = null;
-      const nx = nextTo(i); if (nx >= 0) ahead = { i: nx, p: ask(nx) };
+      // (one page at a time: the iPad draws each for the iPhone, two at once was too much for it)
       let d = null;
       for (let k = 0; k < 2 && !d; k++) { try { d = await (k ? ask(i) : first); } catch (e) { if (k || String(e.message) === 'ipad:none') throw e; } halt(); }
       if (!d || !d.img) throw new Error('no');
@@ -176,6 +176,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       try { await fetchScore(s, (k, n) => { PS.sync.page = `${s.title} · page ${k} of ${n}`; sub(); }); } catch (e) {
         if (e === CANCEL) { PS.sync.done++; continue; }
         if (/QuotaExceeded|quota/i.test(String((e && (e.name + ' ' + e.message)) || ''))) { PS.sync.full = true; break; }
+        // (the iPad is short of memory: stop here and come back in a few minutes, never insist)
+        if (String(e && e.message) === 'ipad:busy') { nlog('iPhone: the iPad is busy, later'); setTimeout(() => syncAll(), 180000); break; }
         if (!String(e && e.message).startsWith('ipad')) PS.sync.failed++;   // (one score the iPad could not send: the others still come)
         if (PS.sync.failed >= 2) break;   // (the iPad has gone)
       }

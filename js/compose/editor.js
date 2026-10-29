@@ -749,9 +749,9 @@ function selNoteEvents() {
     const out = [];
     for (const st0 of selStaves()) {
       const info = M.staffInfo(C.score).find((x) => x.st === st0 || x.st.id === (st0.id || st0)); if (!info) continue;
-      for (let m = C.selBars.from; m <= C.selBars.to; m++) for (const v of [1, 2]) {
-        if (v === 2 && !info.st.v2) continue;   // (no second voice: none is made just by looking)
-        const vst = M.voiceView(info.st, v, C.score); const bar = (v === 2 ? info.st.v2 : info.st.bars) || []; if (!bar[m]) continue;
+      for (let m = C.selBars.from; m <= C.selBars.to; m++) for (const v of [1, 2, 3, 4]) {
+        if (v > 1 && !info.st[M.voiceKey(v)]) continue;   // (no such voice: none is made just by looking)
+        const vst = M.voiceView(info.st, v, C.score); const bar = (v > 1 ? info.st[M.voiceKey(v)] : info.st.bars) || []; if (!bar[m]) continue;
         for (const ev of bar[m]) if (ev.notes && !ev.rest) out.push({ ev, st: vst, m, part: info.part, inst: info.inst });
       }
     }
@@ -872,7 +872,7 @@ function transpose(steps, semis, keyTo = null) {
     const m0 = whole ? 0 : bars.from, m1 = whole ? S.measures.length - 1 : bars.to;
     for (const st of sts) for (let m = m0; m <= m1; m++) {
       for (const ev of st.bars[m] || []) doEv(ev, m, st);
-      if (st.v2 && st.v2[m]) for (const ev of st.v2[m]) doEv(ev, m, st);
+      for (const v of M.VOICES) { const vb = st[M.voiceKey(v)]; if (vb && vb[m]) for (const ev of vb[m]) doEv(ev, m, st); }
     }
   }, { keepSel: true });
   const nm = { 1: 'a semitone', 2: 'a tone', 3: 'a minor 3rd', 4: 'a major 3rd', 5: 'a 4th', 6: 'a tritone', 7: 'a 5th', 8: 'a minor 6th', 9: 'a major 6th', 10: 'a minor 7th', 11: 'a major 7th', 12: 'an octave' }[Math.abs(semis)] || Math.abs(semis) + ' semitones';
@@ -1043,7 +1043,7 @@ function clearBars() {
       const after = b.to + 1 < S.measures.length ? M.clefAt(st, b.to + 1) : null;
       for (let m = b.from; m <= b.to; m++) {
         st.bars[m] = M.restBar(M.timeAt(S, m));
-        if (st.v2 && st.v2[m]) st.v2[m] = M.restBar(M.timeAt(S, m));
+        for (const v of M.VOICES) { const vb = st[M.voiceKey(v)]; if (vb && vb[m]) vb[m] = M.restBar(M.timeAt(S, m)); }
         if (st.clefs && m > 0 && st.clefs[m] !== undefined) { const c = { ...st.clefs }; delete c[m]; st.clefs = c; }
       }
       if (after !== null && M.clefAt(st, b.to + 1) !== after) st.clefs = { ...(st.clefs || {}), [b.to + 1]: after };
@@ -1069,9 +1069,11 @@ function copySel() {
     // that start and end inside them, kept relative to the first bar
     const extras = sts.map((st) => {
       const base = st.base || st;
-      const v2 = base.v2 && base.v2.slice(from, to + 1).some((b) => b && b.some((e) => !e.rest)) ? base.v2.slice(from, to + 1).map((b) => M.clone(b || [])) : null;
+      const vx = {};
+      for (const v of M.VOICES) { const vb = base[M.voiceKey(v)]; if (vb && vb.slice(from, to + 1).some((b) => b && b.some((e) => !e.rest))) vx[v] = vb.slice(from, to + 1).map((b) => M.clone(b || [])); }
+      const v2 = vx[2] || null;
       const spans = (C.score.spans || []).filter((q) => q.st === base.id && q.a.m >= from && q.b.m <= to).map((q) => ({ ...M.clone(q), a: { ...q.a, m: q.a.m - from }, b: { ...q.b, m: q.b.m - from } }));
-      return { v2, spans, times: Array.from({ length: to - from + 1 }, (_, k) => M.timeAt(C.score, from + k).join('/')) };
+      return { v2, vx, spans, times: Array.from({ length: to - from + 1 }, (_, k) => M.timeAt(C.score, from + k).join('/')) };
     });
     clip = { events: lanes[0], lanes: lanes.length > 1 ? lanes : undefined, extras, from: 'bars', n: to - from + 1 };
   }
@@ -1155,9 +1157,10 @@ function pasteExtras(x, st, m0) {
   if (!x) return;
   const base = st.base || st;
   const same = (k) => m0 + k < C.score.measures.length && M.timeAt(C.score, m0 + k).join('/') === x.times[k];
-  if (x.v2) {
-    if (!base.v2) base.v2 = base.bars.map((b, m) => M.restBar(M.timeAt(C.score, m)));
-    x.v2.forEach((bar, k) => { if (same(k)) base.v2[m0 + k] = bar.map((e) => ({ ...M.clone(e), id: M.newId() })); });
+  for (const [v, bars] of Object.entries(x.vx || (x.v2 ? { 2: x.v2 } : {}))) {
+    const k2 = M.voiceKey(+v);
+    if (!base[k2]) base[k2] = base.bars.map((b, m) => M.restBar(M.timeAt(C.score, m)));
+    bars.forEach((bar, k) => { if (same(k)) base[k2][m0 + k] = bar.map((e) => ({ ...M.clone(e), id: M.newId() })); });
   }
   if (x.spans && x.spans.length) {
     const spans = C.score.spans || (C.score.spans = []);
@@ -1540,7 +1543,7 @@ function applySig(kind, val, st, m, to) {
       if (hasAfter && !(st.clefs && st.clefs[after]) && old !== val) st.clefs = { ...(st.clefs || {}), [after]: old };
       if (m === 0) { st.clef = val; if (st.clefs && st.clefs[0] !== undefined) { st.clefs = { ...st.clefs }; delete st.clefs[0]; } } else { st.clefs = { ...(st.clefs || {}) }; st.clefs[m] = val; if (M.clefAt(st, m - 1) === val) delete st.clefs[m]; }
       // a clef written on the bar's first note would still win over the new one: it goes
-      for (const bars of [st.bars, st.v2]) { const f = bars && bars[m] && bars[m][0]; if (f && f.clef) delete f.clef; }
+      for (const [, bars] of M.voiceBarsOf(st)) { const f = bars && bars[m] && bars[m][0]; if (f && f.clef) delete f.clef; }
     } else if (kind === 'key') {
       const old = M.keyAt(S, hasAfter ? after : m);
       if (hasAfter && (S.measures[after].key === undefined || S.measures[after].key === null) && old !== val) S.measures[after].key = old;
@@ -1578,9 +1581,10 @@ function renderTab() {
   const hasArt = (a) => evs.length > 0 && evs.every((f) => (f.ev.art || []).includes(a));
   if (C.tab === 'notes') {
     const vs = el('div', 'seg full cp-voices');
-    for (const [v, l] of [[1, 'Voice 1 (stems up)'], [2, 'Voice 2 (stems down)']]) {
-      const b = el('button', (T.voice || 1) === v ? 'on' : '', l.split(' (')[0]); b.title = l;
-      b.addEventListener('click', () => { T.voice = v; renderTab(); hint(v === 2 ? 'Voice 2: a second line of music on the same staff, stems down.' : 'Voice 1: the main line.'); });
+    // (four voices on a staff, as engraved music has them: 1 and 3 with stems up, 2 and 4 down)
+    for (const [v, l] of [[1, 'Voice 1 (stems up)'], [2, 'Voice 2 (stems down)'], [3, 'Voice 3 (stems up)'], [4, 'Voice 4 (stems down)']]) {
+      const b = el('button', (T.voice || 1) === v ? 'on' : '', 'Voice ' + v); b.title = l; b.setAttribute('aria-label', l);
+      b.addEventListener('click', () => { T.voice = v; renderTab(); hint(v === 1 ? 'Voice 1: the main line, stems up.' : `Voice ${v}: another line of music on the same staff, stems ${v % 2 ? 'up' : 'down'}.`); });
       vs.append(b);
     }
     body.append(vs);
@@ -1850,20 +1854,25 @@ function renderTab() {
     // ---- transpose: the selected notes, the selected bars, or the whole score (with its key)
     const scope = selEvents().length ? 'the selected notes' : C.selBars ? `bars ${C.selBars.from + 1}–${C.selBars.to + 1}` : 'the whole score';
     lab('Transpose ' + scope);
-    // one clear row per interval: its name, then up and down
-    const list = el('div', 'tp-list');
-    for (const [name, sym, st2, se] of [['Semitone', '½', 1, 1], ['Tone', '1', 1, 2], ['Minor third', 'm3', 2, 3], ['Major third', 'M3', 2, 4], ['Perfect fourth', '4', 3, 5], ['Tritone', 'TT', 3, 6], ['Perfect fifth', '5', 4, 7], ['Minor sixth', 'm6', 5, 8], ['Major sixth', 'M6', 5, 9], ['Minor seventh', 'm7', 6, 10], ['Major seventh', 'M7', 6, 11], ['Octave', '8', 7, 12]]) {
-      const row = el('div', 'tp-row');
-      row.append(el('span', 'tp-sym', sym), el('span', 'tp-name', name));
-      for (const [d, arrow] of [[1, '▲'], [-1, '▼']]) {
-        const b = el('button', 'tp-go', arrow); b.title = `Transpose ${d > 0 ? 'up' : 'down'} ${name === 'Octave' ? 'an' : 'a'} ${name.toLowerCase()}`; b.setAttribute('aria-label', b.title);
-        b.addEventListener('click', () => transpose(st2 * d, se * d));
-        row.append(b);
-      }
-      list.append(row);
+    // up or down once, then one tap on the interval: a clean grid, its short name big and its full name under it
+    const dirRow = el('div', 'tp-dir');
+    const dir = C.tpDir || 1;
+    for (const [d, label] of [[1, '▲  Up'], [-1, '▼  Down']]) {
+      const b = el('button', 'tp-dirb' + (d === dir ? ' on' : ''), label); b.setAttribute('aria-pressed', String(d === dir));
+      b.addEventListener('click', () => { C.tpDir = d; for (const x of dirRow.children) { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); } });
+      dirRow.append(b);
+    }
+    body.append(dirRow);
+    const list = el('div', 'tp-grid');
+    for (const [name, sym, st2, se] of [['Semitone', '½', 1, 1], ['Tone', '1', 1, 2], ['Minor 3rd', 'm3', 2, 3], ['Major 3rd', 'M3', 2, 4], ['Perfect 4th', 'P4', 3, 5], ['Tritone', 'TT', 3, 6], ['Perfect 5th', 'P5', 4, 7], ['Minor 6th', 'm6', 5, 8], ['Major 6th', 'M6', 5, 9], ['Minor 7th', 'm7', 6, 10], ['Major 7th', 'M7', 6, 11], ['Octave', '8ve', 7, 12]]) {
+      const b = el('button', 'tp-int');
+      b.append(el('b', '', sym), el('small', '', name));
+      b.setAttribute('aria-label', `Transpose by a ${name.toLowerCase()}`);
+      b.addEventListener('click', () => { const d = C.tpDir || 1; transpose(st2 * d, se * d); });
+      list.append(b);
     }
     body.append(list);
-    const kr = el('div', 'cp-row');
+    const kr = el('div', 'cp-row tp-key');
     const ksel = el('select', 'cp-select');
     const KEYN = ['C♭', 'G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
     const kNow = M.keyAt(C.score, C.selBars ? C.selBars.from : (selEvents()[0] || { m: 0 }).m);
@@ -1871,7 +1880,7 @@ function renderTab() {
     for (let f = -7; f <= 7; f++) { const o = el('option', '', `${KEYN[f + 7]} major / ${MINOR[f + 7]} minor`); o.value = f; if (f === kNow) o.textContent += ' (now)'; ksel.append(o); }
     ksel.addEventListener('change', () => { if (ksel.value === '' || isNaN(+ksel.value)) return; transposeToKey(kNow, +ksel.value); });
     kr.append(ksel); body.append(kr);
-    body.append(el('p', 'hint', 'Notes keep their spelling in the new key. The whole score, or bars of every instrument, take the new key signature too, and the music after them goes back to its own key. Transposing instruments (clarinet, horn…) stay correct.'));
+    body.append(el('p', 'hint', 'The key signature moves with the music; transposing instruments stay correct.'));
   } else if (C.tab === 'bars') {
     const m = targetBar();
     const g = grid('three');

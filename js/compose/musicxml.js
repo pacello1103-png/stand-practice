@@ -1,7 +1,7 @@
 // MusicXML 4.0 export (.musicxml and compressed .mxl) and import, so scores move to and from
 // Sibelius, Dorico, MuseScore and Finale.
 import { INST, INSTRUMENTS } from './instruments.js';
-import { hasVoice2, voiceView,
+import { hasVoice2, hasVoice, voiceView,
   WHOLE, STEP_NAMES, barTicks, timeAt, keyAt, ticksOf, toWritten, writtenKey, clefAt, clefEnd, newId, newScore, restBar, tidyBar, restsFor, valueOf, midiOf, newPart, spansToMarks, migrateScore, fifthsOfInterval,
 } from './model.js';
 import * as M0 from './model.js';
@@ -71,8 +71,8 @@ export function toMusicXML(score0) {
         if (si > 0) w(`<backup><duration>${barTicks(time)}</duration></backup>`);
         const staffTag = p.staves.length > 1 ? `<staff>${si + 1}</staff>` : '';
         const lyrState = { hyph: false };
-        for (const [voice, bar] of [[si * 4 + 1, st.bars[m] || restBar(time)], ...(hasVoice2(st, m) ? [[si * 4 + 2, st.v2[m]]] : [])]) {
-        if (voice % 4 === 2) w(`<backup><duration>${barTicks(time)}</duration></backup>`);
+        for (const [voice, bar] of [[si * 4 + 1, st.bars[m] || restBar(time)], ...[2, 3, 4].filter((v) => hasVoice(st, v, m)).map((v) => [si * 4 + v, st['v' + v][m]])]) {
+        if (voice % 4 !== 1) w(`<backup><duration>${barTicks(time)}</duration></backup>`);
         // where each tuplet group starts and stops (for the bracket and number)
         TUPM = new Map();
         for (let i = 0; i < bar.length;) {
@@ -125,7 +125,7 @@ export function toMusicXML(score0) {
             const n = inst.unpitched ? n0 : toWritten(n0, inst);
             const sc = ((n.s % 7) + 7) % 7, oct = Math.floor(n.s / 7);
             const pitch = inst.unpitched ? `<unpitched><display-step>${STEP_NAMES[sc]}</display-step><display-octave>${oct}</display-octave></unpitched>` : `<pitch><step>${STEP_NAMES[sc]}</step>${n.a ? `<alter>${n.a}</alter>` : ''}<octave>${oct}</octave></pitch>`;
-            const tieIn = isTiedFrom(voice % 4 === 2 ? voiceView(st, 2, score) : st, m, ev, n0);
+            const tieIn = isTiedFrom(voice % 4 !== 1 ? voiceView(st, ((voice - 1) % 4) + 1, score) : st, m, ev, n0);
             const ties = (tieIn ? '<tie type="stop"/>' : '') + (n0.tie ? '<tie type="start"/>' : '');
             w(`<note>${k ? '<chord/>' : ''}${pitch}${common(!k)}${ties}<voice>${voice}</voice><type>${TYPE[ev.t]}</type>${'<dot/>'.repeat(ev.dots || 0)}${n0.cau ? `<accidental parentheses="yes" cautionary="yes">${{ '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[n.a || 0]}</accidental>` : ''}${tupXml(ev)}${headXml(n0.head || ev.head)}${staffTag}${notations(ev, n0, k === 0, tieIn, k === 0 ? lineMarks(score, st.id, m, pos0, dur) : '')}${k === 0 && ev.lyric ? lyricXml(ev.lyric, lyrState) : ''}</note>`);
           });
@@ -366,9 +366,10 @@ export function fromMusicXML(xmlText) {
     for (let m = 0; m < nMeasures; m++) {
       const mel = measureEls[m];
       const perStaff = part.staves.map(() => []);   // {pos, ev}
-      const perStaff2 = part.staves.map(() => []);
+      // (up to four voices on each staff: the first one met is voice 1, the others 2, 3 and 4 in turn)
+      const perStaffV = part.staves.map(() => ({ 2: [], 3: [], 4: [] }));
       const voiceOf = part.staves.map(() => null);
-      const voice2Of = part.staves.map(() => null);
+      const vMap = part.staves.map(() => new Map());
       let pos = 0, lastStart = 0;
       const ms = score.measures[m];
       if (mel) for (const el of mel.children) {
@@ -454,13 +455,14 @@ export function fromMusicXML(xmlText) {
           if (!part.staves[k]) continue;
           const voice = txt(el, 'voice') || '1';
           if (voiceOf[k] === null) voiceOf[k] = voice;
-          if (voice !== voiceOf[k] && voice2Of[k] === null) voice2Of[k] = voice;
+          if (voice !== voiceOf[k] && !vMap[k].has(voice) && vMap[k].size < 3) vMap[k].set(voice, vMap[k].size + 2);
           const dur = Math.round(((+txt(el, 'duration') || 0) * 480) / divisions);
           const isChord = !!q(el, 'chord');
           const start = isChord ? lastStart : pos;
           if (!isChord) { lastStart = pos; pos += dur; }
-          if (voice !== voiceOf[k] && voice !== voice2Of[k]) continue;
-          const inV2 = voice !== voiceOf[k];
+          if (voice !== voiceOf[k] && !vMap[k].has(voice)) continue;
+          const inV2 = voice !== voiceOf[k], vNo = inV2 ? vMap[k].get(voice) : 1;
+          const list = inV2 ? perStaffV[k][vNo] : perStaff[k];
           const type = TYPE_BACK[txt(el, 'type')];
           const dots = el.querySelectorAll('dot').length;
           const tm = q(el, 'time-modification');
@@ -504,7 +506,7 @@ export function fromMusicXML(xmlText) {
             if (slT.includes('start')) { ev.slur = 'start'; if (slT.includes('stop')) ev.slurEnd2 = true; } else if (slT.includes('stop')) ev.slur = 'end';
           } else delete ev.notes;
           if (isChord && !ev.rest) {
-            const host = perStaff[k].find((x) => x.pos === start && x.ev.notes);
+            const host = list.find((x) => x.pos === start && x.ev.notes);
             if (host) { host.ev.notes.push(ev.notes[0]); continue; }
           }
           // marks that were waiting for this note
@@ -516,7 +518,7 @@ export function fromMusicXML(xmlText) {
             for (const sp of openSpans) if (sp.k === k && !sp.a) sp.a = { m, pos: start };
             lastAt[k] = { m, pos: start };
           }
-          (inV2 ? perStaff2 : perStaff)[k].push({ pos: start, ev, dur });
+          list.push({ pos: start, ev, dur });
         }
       }
       // a first bar marked as incomplete, and shorter than the time: a pickup bar
@@ -537,17 +539,18 @@ export function fromMusicXML(xmlText) {
         }
         if (p < bt) evs.push(...restsFor(p, bt - p, timeB));
         st.bars[m] = evs.length ? tidyBar(evs, timeB) : restBar(timeB);
-        if (perStaff2[k].length) {
-          const l2 = perStaff2[k].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
+        for (const vn of [2, 3, 4]) {
+          if (!perStaffV[k][vn].length) continue;
+          const l2 = perStaffV[k][vn].filter((x) => x.pos >= 0 && x.pos < bt).sort((a, b) => a.pos - b.pos);
           const e2 = []; let p2 = 0;
           for (const x of l2) { if (x.pos < p2) continue; if (x.pos > p2) e2.push(...restsFor(p2, x.pos - p2, timeB)); e2.push(x.ev); p2 = x.pos + (x.ev.full ? bt : x.dur); }
           if (p2 < bt) e2.push(...restsFor(p2, bt - p2, timeB));
-          st.v2 = st.v2 || []; st.v2[m] = tidyBar(e2, timeB);
+          const key = 'v' + vn; st[key] = st[key] || []; st[key][m] = tidyBar(e2, timeB);
         }
       });
     }
   });
-  for (const p of score.parts) for (const st of p.staves) if (st.v2) for (let m = 0; m < score.measures.length; m++) if (!st.v2[m]) st.v2[m] = restBar(timeAt(score, m));
+  for (const p of score.parts) for (const st of p.staves) for (const key of ['v2', 'v3', 'v4']) if (st[key]) for (let m = 0; m < score.measures.length; m++) if (!st[key][m]) st[key][m] = restBar(timeAt(score, m));
   score.spans = (score.spans || []).filter((sp) => sp.a && sp.b);
   if (!score.measures[0].time) score.measures[0].time = [4, 4];
   if (score.measures[0].key === undefined) score.measures[0].key = 0;

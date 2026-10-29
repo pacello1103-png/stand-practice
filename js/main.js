@@ -1098,6 +1098,8 @@ async function reopenPlace() {
 // iOS short of memory: what can be drawn again later goes now (pages away from the one on screen,
 // the score kept for the iPhone when it is not being sent)
 window.standMemoryLow = () => {
+  // (the iPhone's questions wait a while: drawing pages for it is what fills the memory)
+  window.__phoneHoldUntil = Date.now() + 30000;
   try { nlog('memory low: pages let go' + (PH.doc ? ', the score for the iPhone ' + (Date.now() - PH.t > 5000 ? 'closed' : 'kept') : '')); } catch {}
   try {
     const keep = new Set(V.pages.map((p) => p.art));
@@ -1435,7 +1437,7 @@ async function layout(fade) {
   stage.textContent = '';
   stage.append(spread);
   Z.el = spread; Z.s = 1; Z.x = 0; Z.y = 0; Z.sharp = 1; applyZoom();
-  if (fade && !matchMedia('(prefers-reduced-motion: reduce)').matches) { spread.classList.add('fade'); requestAnimationFrame(() => requestAnimationFrame(() => spread.classList.remove('fade'))); }
+  if (fade && !V.instant && !matchMedia('(prefers-reduced-motion: reduce)').matches) { spread.classList.add('fade'); requestAnimationFrame(() => requestAnimationFrame(() => spread.classList.remove('fade'))); }
   $('#pageLabel').textContent = label + ' / ' + V.doc.pages;
   syncPaperPlus();
   $('#pageRange').value = V.page + 1;
@@ -1444,7 +1446,7 @@ async function layout(fade) {
 // The next pages (and the ones before) are drawn ahead, after the pages on screen.
 function prefetch(token) {
   if (token !== layoutToken || !V.doc) return;
-  for (const start of [V.page + V.spread, V.page - V.spread]) {
+  for (const start of [V.page + V.spread, V.page - V.spread, ...(V.spread === 1 ? [V.page + 2] : [])]) {
     if (start < 0 || start >= V.doc.pages) continue;
     const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
     pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, 1));
@@ -5276,6 +5278,10 @@ function infoForPhone(id) {
 function pageForPhone(id, i) {
   // one page at a time, in turn (two questions at once never draw two pages together)
   return phoneJob(async () => {
+    // (iOS said memory is short, or the iPad is busy reading or playing: the iPhone asks again later)
+    if (Date.now() < (window.__phoneHoldUntil || 0)) throw new Error('busy');
+    // (a breath between pages, so the memory of the last one is let go before the next is drawn)
+    await new Promise((r) => setTimeout(r, 250));
     const P = await phoneDoc(id), doc = P.doc;
     if (!(i >= 0 && i < doc.pages)) throw new Error('none');
     const [pw, ph] = doc.sizes[i], W = 1170, H = Math.round((W * ph) / pw);
@@ -7941,7 +7947,8 @@ function winkFound(rawEye, src = 'ipad') {
   let eye = rawEye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
   if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
   if (!$('#score').hidden && S.wink) {
-    turn(eye === 'right' ? 1 : -1);
+    // (a wink's turn: the new page at once, without the fade; the eyes are already on it)
+    V.instant = true; turn(eye === 'right' ? 1 : -1); setTimeout(() => { V.instant = false; }, 50);
     const f = $('#winkFlash'); f.className = 'wink-flash ' + eye; void f.offsetWidth; f.classList.add('on');
   }
 }

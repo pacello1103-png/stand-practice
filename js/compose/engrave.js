@@ -4,7 +4,7 @@
 // clefs, keys and time signatures, instrument names, bar numbers and multi-bar rests (parts).
 // All lengths are in staff spaces (sp); a page is drawn at any scale.
 import { INST, PAGE_SIZES } from './instruments.js';
-import { voiceView, hasVoice2,
+import { voiceView, hasVoice2, hasVoice, VOICES, voiceKey,
   WHOLE, barTicks, barNumber, timeAt, keyAt, tempoAt, clefAt, clefEnd, ticksOf, CLEFS, keyAlter, keySteps, midiOf, toWritten, writtenKey, staffInfo, isEmptyStaff,
 } from './model.js';
 
@@ -116,7 +116,7 @@ export function layoutScore(score, opts = {}) {
     const total = barTicks(time);
     const onsets = new Map();
     let hasAcc = false;
-    for (const s of info) for (const bar of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) {
+    for (const s of info) for (const bar of [s.st.bars[m] || [], ...VOICES.filter((v) => hasVoice(s.st, v, m)).map((v) => s.st[voiceKey(v)][m])]) {
       let p = 0;
       for (const ev of bar) {
         const len = ticksOf(ev, time);
@@ -274,26 +274,30 @@ export function layoutScore(score, opts = {}) {
     const below = Math.max(2, ext[ext.length - 1].below);
     const firstOnPage = !page.systems.length;
     const topHere = firstOnPage ? y + above : y + sysGap;
-    if (!firstOnPage && (topHere + height + below > H - margin.b || pageNext)) newPage();
+    // (one more system fits when the gaps of this page close up a little, never below the least an
+    // engraver allows: the page is then spread to its foot below)
+    const sysMin = Math.max(6, sysGap * 0.72);
+    const squeezed = topHere - page.systems.length * (sysGap - sysMin);
+    const fits = topHere + height + below <= H - margin.b || ((L.justify ?? true) && squeezed + height + below <= H - margin.b);
+    if (!firstOnPage && (!fits || pageNext)) newPage();
     pageNext = sy.brk === 'page';
     const top = page.systems.length ? topHere : y + above;
     page.systems.push({ ...sy, top, staves: shown.map((s, i) => ({ ...s, y: top + tops[i] })), height, above, below, concert });
     y = top + height;
   }
-  // spread the systems down the page when the page is mostly full
-  // (only when asked for: the distances stay the same on every page otherwise)
-  for (const pg of L.justify ? pages : []) {
+  // every full page reaches from the top margin to the bottom margin, as engraved scores do: the room
+  // left is shared out evenly between the systems (or taken from them, when one more was fitted);
+  // a page with much room left (the end of the piece, or ended on purpose) keeps the standard distances
+  for (const pg of (L.justify ?? true) ? pages : []) {
     if (pg.systems.length < 2) continue;
     const last = pg.systems[pg.systems.length - 1];
     const bottom = last.top + last.height + last.below;
     const free = H - margin.b - bottom;
     const full = bottom / (H - margin.b);
-    // (a page ended on purpose, with room left, keeps its systems together)
-    if (full < 0.68 && pg !== pages[pages.length - 1]) continue;
-    if (last.brk === 'page' && full < 0.85) continue;
-    if (pg === pages[pages.length - 1] && full < 0.8) continue;
-    // (a little more room between the systems, never so much that they float apart)
-    const add = Math.min(free / (pg.systems.length - 1), pg.systems[0].staves.length > 1 ? 3 : 2);
+    const isLast = pg === pages[pages.length - 1];
+    if (free >= 0 && (full < (isLast ? 0.8 : 0.6) || (last.brk === 'page' && full < 0.85))) continue;
+    // (never so far apart that the systems float: at most twice the standard distance)
+    const add = Math.min(free / (pg.systems.length - 1), sysGap);
     pg.systems.forEach((s, i) => { const d = add * i; s.top += d; s.staves.forEach((st) => { st.y += d; }); });
   }
   return { pages, W, H, spMm, margin, score, opts: L, concert, partIndex: opts.partIndex };
@@ -313,7 +317,7 @@ function staffExtent(score, s, sy, concert) {
   for (const mm of sy.measures) for (let m = mm.m; m <= mm.end; m++) {
     const clef0 = clefAt(s.st, m);
     const time = timeAt(score, m), all = [];
-    for (const bar of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let pos = 0, c = clef0; for (const ev of bar) { if (ev.clef) c = ev.clef; all.push([ev, pos, c]); pos += ticksOf(ev, time); } }
+    for (const bar of [s.st.bars[m] || [], ...VOICES.filter((v) => hasVoice(s.st, v, m)).map((v) => s.st[voiceKey(v)][m])]) { let pos = 0, c = clef0; for (const ev of bar) { if (ev.clef) c = ev.clef; all.push([ev, pos, c]); pos += ticksOf(ev, time); } }
     for (const [ev, pos, clef] of all) {
       const ott = ottavaAt(score, s.st.id, m, pos);
       if (ev.dyn || ev.hp || (ev.txt && ev.txtBelow)) { below = Math.max(below, 3.2); hasDyn = true; }
@@ -650,8 +654,8 @@ function drawSlurOrHairpin(ctx, lay, sys, hs, sp, startsHere, endsHere, contentX
   if (startsHere && !(a && a.notes.length)) a = withNotes[0];
   if (endsHere && !(b && b.notes.length)) b = withNotes[withNotes.length - 1];
   if (startsHere && endsHere && a === b && withNotes.length < 2 && sp.a.m === sp.b.m && sp.a.pos !== sp.b.pos) return;
-  const twoVoices = hs.measures.some((q) => (q.events || []).some((e) => e.voice === 2));
-  const above = v === 2 ? false : twoVoices ? true : !withNotes.every((q) => q.up);
+  const twoVoices = hs.measures.some((q) => (q.events || []).some((e) => e.voice >= 2));
+  const above = v >= 2 ? v % 2 === 1 : twoVoices ? true : !withNotes.every((q) => q.up);
   const dir = above ? -1 : 1;
   const topY = (q) => q.notes.reduce((m2, n) => Math.min(m2, n.y), 1e9);
   const botY = (q) => q.notes.reduce((m2, n) => Math.max(m2, n.y), -1e9);
@@ -855,9 +859,10 @@ function drawMeasure(ctx, lay, sys, mm, mi, hitStaves, hit, opts) {
     const hm = { m, x0: mm.x0, x1: mm.x1, cx0: contentX0, onsets, total: barTicks(time), events: [] };
     hs.measures.push(hm);
     // two voices: the first with stems up, the second with stems down
+    // (more voices: 1 and 3 with stems up, 2 and 4 down; 3 and 4 a little further out than 1 and 2)
     if (hasVoice2(s.st, m)) {
       drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, { ...opts, voiceDir: 'up' });
-      drawStaffBar(ctx, lay, sys, { ...s, st: voiceView(s.st, 2, lay.score) }, m, time, xs, mm, hm, hit, { ...opts, voiceDir: 'down', voice2: true });
+      for (const v of VOICES) if (hasVoice(s.st, v, m)) drawStaffBar(ctx, lay, sys, { ...s, st: voiceView(s.st, v, lay.score) }, m, time, xs, mm, hm, hit, { ...opts, voiceDir: v % 2 ? 'up' : 'down', voice2: true, voiceNo: v });
     } else drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts);
   }
 }
@@ -869,7 +874,7 @@ function layColumns(lay, m) {
     const onsets = new Map();
     let info = staffInfo(score);
     if (lay.partIndex !== undefined) info = info.filter((x) => x.pi === lay.partIndex);
-    for (const s of info) for (const bb of [s.st.bars[m] || [], hasVoice2(s.st, m) ? s.st.v2[m] : []]) { let p = 0; for (const ev of bb) { const o = onsets.get(p) || { acc: 0, dots: 0 }; if (ev.dots) o.dots = Math.max(o.dots, ev.dots); if (ev.notes && ev.notes.some((n) => n.a || n.cau)) o.acc = Math.max(o.acc, n0acc(ev)); onsets.set(p, o); p += ticksOf(ev, time); } }
+    for (const s of info) for (const bb of [s.st.bars[m] || [], ...VOICES.filter((v) => hasVoice(s.st, v, m)).map((v) => s.st[voiceKey(v)][m])]) { let p = 0; for (const ev of bb) { const o = onsets.get(p) || { acc: 0, dots: 0 }; if (ev.dots) o.dots = Math.max(o.dots, ev.dots); if (ev.notes && ev.notes.some((n) => n.a || n.cau)) o.acc = Math.max(o.acc, n0acc(ev)); onsets.set(p, o); p += ticksOf(ev, time); } }
     if (!onsets.size) onsets.set(0, { acc: 0, dots: 0 });
     const times = [...onsets.keys()].sort((a, b) => a - b);
     lay._cols.set(m, { segs: times.map((t, i) => ({ t, w: space((i + 1 < times.length ? times[i + 1] : total) - t) + (onsets.get(t).dots ? 0.45 * onsets.get(t).dots : 0), pre: onsets.get(t).acc ? 1.1 * onsets.get(t).acc : 0 })) });
@@ -982,11 +987,13 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     const avg = (e.notes[0].p + e.notes[e.notes.length - 1].p) / 2;
     e.up = e.ev.stem ? e.ev.stem === 'up' : avg < 4;
   }
-  if (opts.voiceDir) for (const e of evs) { e.up = opts.voiceDir === 'up'; e.restDy = opts.voiceDir === 'up' ? -2 : 2; }
+  if (opts.voiceDir) for (const e of evs) { e.up = opts.voiceDir === 'up'; e.restDy = (opts.voiceDir === 'up' ? -2 : 2) * ((opts.voiceNo || 1) > 2 ? 2 : 1); }
   if (opts.voice2) {
     // a second-voice note a step from (or on) a first-voice note at the same moment moves aside
-    const base = s.st.base; const b1 = base.bars[m] || []; let q = 0; const at = new Map();
-    for (const ev of b1) { if (ev.notes && !ev.rest) at.set(q, ev.notes.map((n) => n.s)); q += ticksOf(ev, time); }
+    // (voice 3 and 4: against voices 1 and 2 as well; each further voice a little further aside)
+    const base = s.st.base; const at = new Map();
+    const others = [base.bars[m] || [], ...VOICES.filter((v) => v < (opts.voiceNo || 2) && hasVoice(base, v, m)).map((v) => base[voiceKey(v)][m])];
+    for (const b1 of others) { let q = 0; for (const ev of b1) { if (ev.notes && !ev.rest) at.set(q, [...(at.get(q) || []), ...ev.notes.map((n) => n.s)]); q += ticksOf(ev, time); } }
     for (const e of evs) { const ss = at.get(e.pos); if (ss && e.notes.some((n) => ss.some((x) => Math.abs(x - n.src.s) <= 1))) e.x += HEAD_W * 1.05; }
   }
   for (const g of groups) {
@@ -1012,7 +1019,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     }
     if (c) ctx.restore();
     const hx = e.ev.rest ? e.x : e.x;
-    const ev = { id: e.ev.id, m, pos: e.pos, len: e.len, x: hx, staff: s.k, y: s.y + (e.ev.rest ? (e.restDy || 0) / 2 : 0), up: e.up, voice: opts.voice2 ? 2 : 1, notes: e.notes.map((n) => ({ p: n.p, y: yOf(s.y, n.p), s: n.src.s })), rest: !!e.ev.rest, tup: !!e.ev.tup };
+    const ev = { id: e.ev.id, m, pos: e.pos, len: e.len, x: hx, staff: s.k, y: s.y + (e.ev.rest ? (e.restDy || 0) / 2 : 0), up: e.up, voice: opts.voice2 ? (opts.voiceNo || 2) : 1, notes: e.notes.map((n) => ({ p: n.p, y: yOf(s.y, n.p), s: n.src.s })), rest: !!e.ev.rest, tup: !!e.ev.tup };
     e.hitRef = ev;
     hm.events.push(ev); hit.events.push(ev);
   }
@@ -1045,7 +1052,7 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
   }
   // articulations, dynamics, hairpins, text, slurs (dynamics and hairpins share one line per bar)
   let dynLine = 3.0;
-  const hpSpans = (score.spans || []).filter((q) => q.kind === 'hairpin' && q.st === (s.st.base || s.st).id && (q.v || 1) === (opts.voice2 ? 2 : 1) && q.a.m <= m && q.b.m >= m);
+  const hpSpans = (score.spans || []).filter((q) => q.kind === 'hairpin' && q.st === (s.st.base || s.st).id && (q.v || 1) === (opts.voice2 ? (opts.voiceNo || 2) : 1) && q.a.m <= m && q.b.m >= m);
   const underHp = (e) => hpSpans.some((q) => (q.a.m < m || q.a.pos <= e.pos) && (q.b.m > m || q.b.pos >= e.pos));
   for (const e of evs) if (e.ev.dyn || e.ev.hp || underHp(e) || (e.ev.txt && e.ev.txtBelow)) dynLine = Math.max(dynLine, lowestBelow(e, s.y) + 2.9);
   for (const e of evs) if (e.ev.dyn || underHp(e)) hm.dynLow = Math.max(hm.dynLow || 0, lowestBelow(e, s.y));
