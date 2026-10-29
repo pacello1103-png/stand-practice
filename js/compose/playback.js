@@ -477,6 +477,8 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
 function keyAlterAt(score, m, s) { return keyAlter(keyAt(score, m), s); }
 
 // ---------- live playback ----------
+// (the range of strength a note passes through: its own, and where its swell or fade takes it)
+const envSpan = (n) => (n.env && n.env.length ? [n.vel, ...n.env.map(([, ev]) => n.vel * ev)] : null);
 export class ScorePlayer {
   constructor() { this.playing = false; this.onTick = null; this.onEnd = null; }
   async play(score, { from = 0, pos = 0 } = {}) {
@@ -492,10 +494,10 @@ export class ScorePlayer {
     sampler.live();
     applyScoreSound(sampler, score);
     this.loading = true;
-    await sampler.prepare(tl.notes.slice(first, first + 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
+    await sampler.prepare(tl.notes.slice(first, first + 400).flatMap((n) => [n.vel, ...(envSpan(n) || []).slice(1)].map((vel) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel }))));
     // (Stop pressed while the sounds were loading: it does not start after all)
     if (tok !== this._tok) return;
-    sampler.prepare(tl.notes.slice(first + 400).map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
+    sampler.prepare(tl.notes.slice(first + 400).flatMap((n) => [n.vel, ...(envSpan(n) || []).slice(1)].map((vel) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel }))));
     this.loading = false;
     const ctx = getCtx();
     this.t0 = ctx.currentTime + 0.12 - skip;
@@ -508,7 +510,7 @@ export class ScorePlayer {
       while (this.next < tl.notes.length && tl.notes[this.next].t < now + 0.6) {
         const n = tl.notes[this.next++];
         const ch = sampler.channels.get(n.part) || sampler.channel(n.part, n.sid, DEFAULT_MIX());
-        const smp = await sampler.sampleFor(n.sid, n.midi, n.kind, n.vel).catch(() => null);
+        const smp = await sampler.sampleFor(n.sid, n.midi, n.kind, n.vel, envSpan(n)).catch(() => null);
         if (!this.playing) return;
         sampler.noteOn(ch, smp, n.midi, this.t0 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [this.t0 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm, glissTo: n.glissTo });
       }
@@ -550,7 +552,7 @@ export async function renderAudio(score, onProgress) {
   const tl = buildTimeline(score, { from: 0 });
   sampler.live();
   sampler.plain = (score.sound || {}).plainStrings === true;
-  await sampler.prepare(tl.notes.map((n) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel: n.vel })));
+  await sampler.prepare(tl.notes.flatMap((n) => [n.vel, ...(envSpan(n) || []).slice(1)].map((vel) => ({ sid: n.sid, midi: n.midi, kind: n.kind, vel }))));
   // studio quality: 48 kHz, 24-bit, with the room's whole tail (a very long piece: CD quality,
   // so the iPad's memory is never at risk)
   const long = tl.total > 420, sr = long ? 44100 : 48000;
@@ -562,13 +564,26 @@ export async function renderAudio(score, onProgress) {
   s2.attach(off, off.destination);
   applyScoreSound(s2, score);
   let i = 0;
-  for (const n of tl.notes) {
-    const smp = await s2.sampleFor(n.sid, n.midi, n.kind, n.vel).catch(() => null);
+  const one = async (n) => {
+    const smp = await s2.sampleFor(n.sid, n.midi, n.kind, n.vel, envSpan(n)).catch(() => null);
     s2.noteOn(s2.channels.get(n.part), smp, n.midi, 0.2 + n.t, n.dur, n.vel, { art: n.art, env: n.env ? n.env.map(([et, ev]) => [0.2 + et, ev]) : null, vib: n.vib, legato: n.legato, connect: n.connect, from: n.from, harm: n.harm, glissTo: n.glissTo });
-    if (++i % 200 === 0 && onProgress) onProgress(0.3 * (i / tl.notes.length));
+  };
+  // A long or full score: its notes are added a few seconds ahead of the rendering (a graph of every
+  // note at once renders very slowly: an orchestral movement took many minutes)
+  const chunked = typeof off.suspend === 'function' && tl.notes.length > 400 && (globalThis.__chunkRender ?? 1);
+  let buf;
+  if (chunked) {
+    const notes = tl.notes.slice().sort((a, b) => a.t - b.t), BLOCK = 4;
+    const addUntil = async (tEnd) => { while (i < notes.length && 0.2 + notes[i].t < tEnd) await one(notes[i++]); };
+    await addUntil(BLOCK);
+    const T = len / sr;
+    for (let b = 1; b * BLOCK < T; b++) off.suspend(b * BLOCK - 0.5).then(async () => { await addUntil((b + 1) * BLOCK); if (onProgress) onProgress(0.05 + 0.9 * Math.min(1, (b * BLOCK) / T)); off.resume(); });
+    buf = await off.startRendering();
+  } else {
+    for (const n of tl.notes) { await one(n); if (++i % 200 === 0 && onProgress) onProgress(0.3 * (i / tl.notes.length)); }
+    if (onProgress) onProgress(0.35);
+    buf = await off.startRendering();
   }
-  if (onProgress) onProgress(0.35);
-  const buf = await off.startRendering();
   if (onProgress) onProgress(1);
   const L = buf.getChannelData(0), R = buf.getChannelData(1);
   // the silence after the last sound goes (the tail of the room stays), then a short fade

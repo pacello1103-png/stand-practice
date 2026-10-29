@@ -31,7 +31,7 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
-import { CameraHost, CameraPhone, directWatch } from './link.js';
+import { CameraHost, CameraPhone, directWatch, nlog } from './link.js';
 import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
@@ -1098,6 +1098,7 @@ async function reopenPlace() {
 // iOS short of memory: what can be drawn again later goes now (pages away from the one on screen,
 // the score kept for the iPhone when it is not being sent)
 window.standMemoryLow = () => {
+  try { nlog('memory low: pages let go' + (PH.doc ? ', the score for the iPhone ' + (Date.now() - PH.t > 5000 ? 'closed' : 'kept') : '')); } catch {}
   try {
     const keep = new Set(V.pages.map((p) => p.art));
     for (const [k, pr] of [...V.cache.entries()]) pr.then((c) => { if (!keep.has(c)) { V.cache.delete(k); INCACHE.delete(c); freeCanvas(c); } }, () => {});
@@ -5278,6 +5279,7 @@ function pageForPhone(id, i) {
     const P = await phoneDoc(id), doc = P.doc;
     if (!(i >= 0 && i < doc.pages)) throw new Error('none');
     const [pw, ph] = doc.sizes[i], W = 1170, H = Math.round((W * ph) / pw);
+    if (i === 0) nlog('iPad: sending a score to the iPhone (' + doc.pages + ' pages)');
     const c = document.createElement('canvas');
     // (a page that could not be drawn is an error, never a white page kept on the iPhone)
     try { await doc.render(i, c, W, H); } catch (e) { c.width = c.height = 0; throw new Error('draw'); }
@@ -5521,7 +5523,8 @@ $('#bpmRange').addEventListener('input', (e) => setBpm(+e.target.value));
 $('#tapBtn').addEventListener('pointerdown', makeTapper((v) => setBpm(v)));
 $('#meterSel').addEventListener('change', (e) => { const m = meterInfo(e.target.value); metro.beats = m.beats; metro.accents = m.accents.slice(); renderBeatDots(); drawRamp(); persistMetro(); });
 $('#subSel').addEventListener('change', (e) => { metro.subdiv = +e.target.value; persistMetro(); });
-$('#soundSel').addEventListener('change', (e) => { metro.sound = e.target.value; persistMetro(); if (!metro.running) { metro._ensureBuffers(); metro._play(getCtx().currentTime + 0.01, 0); } });
+// (a new sound while the click plays: the next click already has it, the beat goes on undisturbed)
+$('#soundSel').addEventListener('change', (e) => { metro.sound = e.target.value; persistMetro(); metro._ensureBuffers(); if (!metro.running) metro._play(getCtx().currentTime + 0.01, 0); });
 $('#metroVol').addEventListener('input', (e) => { metro.setVolume(+e.target.value); persistMetro(); });
 $('#flashOn').addEventListener('change', (e) => { S.flash = e.target.checked; saveSettings(); });
 function readRamp() {
@@ -6218,7 +6221,8 @@ function syncDrone() {
 }
 function persistDrone() { S.drone = { pc: drone.pc, octave: drone.octave, sound: drone.sound, chord: drone.chord, lowOct: drone.lowOct, volume: drone.volume, speed: drone.speed }; saveSettings(); }
 $('#droneOct').addEventListener('change', (e) => { drone.octave = +e.target.value; drone.refresh(); syncDrone(); persistDrone(); });
-$('#droneSound').addEventListener('change', (e) => { const was = drone.running; if (was) drone.stop(); drone.sound = e.target.value; if (was) drone.start(); syncDrone(); persistDrone(); });
+// (a new sound while the drone sounds: the new one fades in as the old one goes, without stopping)
+$('#droneSound').addEventListener('change', (e) => { drone.sound = e.target.value; if (drone.running) drone.start(); syncDrone(); persistDrone(); });
 $('#droneChord').addEventListener('change', (e) => { drone.chord = e.target.value; drone.refresh(); syncDrone(); persistDrone(); });
 $('#droneOctave').addEventListener('change', (e) => { drone.lowOct = e.target.checked; drone.refresh(); syncDrone(); persistDrone(); });
 $('#droneVol').addEventListener('input', (e) => { drone.setVolume(+e.target.value); persistDrone(); });
@@ -6315,6 +6319,8 @@ $$('.ml-on').forEach((x) => x.addEventListener('change', (e) => {
 // Scales
 // =====================================================================
 const scale = new ScalePlayer();
+// (for the tests: the practice tools as they are)
+globalThis.__tools = { metro, drone, scale };
 const DEFAULT_OCT = { cello: 2, violin: 3, viola: 3, bass: 1, guitar: 2, flute: 4, clarinet: 3, oboe: 4, piano: 4, voice: 3, other: 3 };
 (function buildScaleUI() {
   const keys = $('#scaleKeys');
@@ -6366,12 +6372,13 @@ $('#scaleOcts').addEventListener('change', (e) => { scale.octaves = +e.target.va
 $('#scaleDir').addEventListener('change', (e) => { scale.direction = e.target.value; scaleChanged(); });
 $('#scaleSys').addEventListener('change', (e) => { scale.system = e.target.value; scaleChanged(); });
 $('#scalePer').addEventListener('change', (e) => { scale.perBeat = +e.target.value; persistScale(); if (scale.playing) restartScale(); });
-$('#scaleSound').addEventListener('change', (e) => { scale.sound = e.target.value; scaleChanged(); });
+// (the sound, the click and the drone change while the scale plays: from the next note, in time)
+$('#scaleSound').addEventListener('change', (e) => { scale.sound = e.target.value; scaleChanged(false); });
 // count-in: the big note shows 4 3 2 1 before the first note
 $('#scaleCount').addEventListener('change', (e) => { scale.countIn = e.target.checked; persistScale(); });
 scale.onCount = (n) => { $('#scaleNote').textContent = n; $('#scaleCents').textContent = 'count-in'; };
 $('#scaleVol').addEventListener('input', (e) => { scale.setVolume(+e.target.value); persistScale(); });
-$('#scaleDrone').addEventListener('change', (e) => { scale.drone = e.target.checked; scaleChanged(); });
+$('#scaleDrone').addEventListener('change', (e) => { scale.drone = e.target.checked; scaleChanged(false); if (scale.playing) { if (scale.drone && !scale._drone) scale._startDrone(); else if (!scale.drone && scale._drone) { scale._drone.stop(getCtx().currentTime); scale._drone = null; } } });
 $('#scaleRepeat').addEventListener('change', (e) => { scale.repeat = e.target.checked; persistScale(); });
 scale.onNote = (ev) => {
   $('#scaleCents').textContent = '';
@@ -6415,7 +6422,7 @@ $('#scaleBpm').addEventListener('input', (e) => setScaleBpm(+e.target.value));
 holdRepeat($('#scaleSlower'), () => setScaleBpm(scale.bpm - 1));
 holdRepeat($('#scaleFaster'), () => setScaleBpm(scale.bpm + 1));
 { const tap = makeTapper((b) => setScaleBpm(b)); $('#scaleTap').addEventListener('click', tap); }
-$('#scaleClick').addEventListener('change', (e) => { scale.click = e.target.checked; persistScale(); if (scale.playing) restartScale(); });
+$('#scaleClick').addEventListener('change', (e) => { scale.click = e.target.checked; persistScale(); });
 // the beats of each note, as dots: C ● ○ ○ ○
 scale.onBeat = (ev) => {
   const box = $('#scaleBeats'); if (!box) return;

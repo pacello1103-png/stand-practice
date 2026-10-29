@@ -956,6 +956,20 @@ export function readMarks(read, ctx) {
 const DYN_WORDS = new Set(['p', 'pp', 'ppp', 'mp', 'mf', 'f', 'ff', 'fff', 'sf', 'sfz', 'sffz', 'fz', 'fp', 'rf', 'rfz', 'sfp', 'pf']);
 function readWords(read, ctx, comps, taken, hairpins) {
   const { w } = ctx;
+  // which staff a shape belongs to. In the gap between two staves a dynamic or a hairpin is below
+  // the staff above it (that is where they are written), unless it sits close over the staff below
+  // or over one of its high notes (a fingering, a word for that staff)
+  const ownerOf = (g) => {
+    const gx = (g.x0 + g.x1) / 2, gy = (g.y0 + g.y1) / 2, n = ctx.staffOf(gy, gx);
+    if (!(globalThis.__gapAbove ?? 1) || !ctx.staves) return n;
+    const ni = ctx.staves.indexOf(n), rn = read[ni], ra = read[ni - 1];
+    if (!rn || !ra) return n;
+    const spn = rn.sp;
+    if (g.y1 >= rn.top - spn * 0.2 || g.y0 <= ra.bottom) return n;
+    if (rn.top - g.y1 < spn * 2.6 || gy - ra.bottom > spn * 9) return n;
+    if (rn.heads.some((hd) => hd.cy < rn.top && Math.abs(hd.cx - gx) < spn * 1.5 && hd.cy - g.y1 < spn * 3)) return n;
+    return ctx.staves[ni - 1];
+  };
   for (const s of read) {
     const sp = s.sp, si = read.indexOf(s);
     const heads = s.heads.slice().sort((a, b) => a.cx - b.cx);
@@ -1022,7 +1036,7 @@ function readWords(read, ctx, comps, taken, hairpins) {
       if (taken.has(g)) return false;
       const gx = (g.x0 + g.x1) / 2, gy = (g.y0 + g.y1) / 2;
       if (g.x0 < startX - sp * 0.2 || g.x1 > s.x1 + sp) return false;
-      if (ctx.staves && ctx.staffOf(gy, gx) !== ctx.staves[si]) return false;
+      if (ctx.staves && ownerOf(g) !== ctx.staves[si]) return false;
       if (gy > s.top + sp * 0.6 && gy < s.bottom - sp * 0.6) return false;
       if (gy < s.top - sp * 7 || gy > s.bottom + sp * 7) return false;
       // not part of a note (head, stem, flag, beam)
@@ -1030,6 +1044,7 @@ function readWords(read, ctx, comps, taken, hairpins) {
       if (heads.some((hd) => hd.stem && Math.abs(hd.stem.x - gx) < g.w / 2 + 1 && gy >= hd.stem.top - 2 && gy <= hd.stem.bot + 2)) return false;
       return true;
     });
+    if (globalThis.__wordDbg && globalThis.__dbgRect) { const [rx0, rx1, ry0, ry1] = globalThis.__dbgRect; for (const g of ctx.compsC) if (g.x1 > rx0 && g.x0 < rx1 && g.y1 > ry0 && g.y0 < ry1) globalThis.__wordDbg.push({ L: 'rect', si, g: [g.x0, g.x1, g.y0, g.y1], mine: mine.includes(g), taken: taken.has(g), part: partSet.has(g), owner: ctx.staves ? ctx.staves.indexOf(ownerOf(g)) : null, near: ctx.staves ? ctx.staves.indexOf(ctx.staffOf((g.y0 + g.y1) / 2, (g.x0 + g.x1) / 2)) : null, top: s.top, bottom: s.bottom, sp }); }
     if (globalThis.__wordDbg) for (const g of [...ctx.compsC]) if (g.w > sp * 1.2 && g.w < sp * 4 && g.y0 > s.bottom) globalThis.__wordDbg.push({ L: 'cand', cand: [g.x0, g.y0, g.w, g.h], mine: mine.includes(g), taken: taken.has(g), staff: si });
     // (one hairpin found twice, in two pieces that overlap: one, over both)
     const rawById = new Map(ctx.rawC.map((r) => [r.id, r]));
@@ -1109,7 +1124,7 @@ function readWords(read, ctx, comps, taken, hairpins) {
     {
       const lines = [];
       for (const g of mine) {
-        if (partSet.has(g) || taken.has(g) || g.w < sp * 3 || g.h > sp * 2.2) continue;
+        if (partSet.has(g) || taken.has(g) || g.w < sp * ((globalThis.__hpPieces ?? 1) ? 1.2 : 3) || g.h > sp * 2.2) continue;
         const ids = Array.isArray(g.id) ? g.id : [g.id];
         const pts = []; let thick = 0, nc = 0;
         for (let x = g.x0; x <= g.x1; x += 2) {
@@ -1128,12 +1143,29 @@ function readWords(read, ctx, comps, taken, hairpins) {
         let res = 0; for (const [x, y] of pts) res = Math.max(res, Math.abs(y - (my + k * (x - mx))));
         if (globalThis.__wordDbg) globalThis.__wordDbg.push({ lineFit: g.x0, res: +(res / sp).toFixed(2), k: +k.toFixed(3) });
         if (res > sp * 0.25 || Math.abs(k) > 0.25) continue;
-        lines.push({ g, x0: g.x0, x1: g.x1, at: (x) => my + k * (x - mx) });
+        lines.push({ g, gs: [g], x0: g.x0, x1: g.x1, k, at: (x) => my + k * (x - mx) });
+      }
+      // (a line cut by a stem crossing it: its pieces, one after the other on the same line, joined)
+      if (globalThis.__hpPieces ?? 1) {
+        lines.sort((a, b) => a.x0 - b.x0);
+        for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+          const A = lines[i], Bq = lines[j]; if (!A || !Bq) continue;
+          const gapX = Bq.x0 - A.x1;
+          if (gapX < -2 || gapX > sp * 0.7) continue;
+          const xm = (A.x1 + Bq.x0) / 2;
+          if (Math.abs(A.at(xm) - Bq.at(xm)) > sp * 0.22 || Math.abs(A.k - Bq.k) > 0.08) continue;
+          const kk = (A.at(Bq.x1) - A.at(A.x0)) / Math.max(1, Bq.x1 - A.x0), x0 = A.x0, y0 = A.at(A.x0), wA = A.x1 - A.x0, wB = Bq.x1 - Bq.x0;
+          const k2 = (wA * A.k + wB * Bq.k) / Math.max(1, wA + wB); void kk;
+          const y0b = (A.at(A.x0) + (Bq.at(Bq.x0) - k2 * (Bq.x0 - A.x0))) / 2;
+          lines[i] = { g: A.g, gs: [...A.gs, ...Bq.gs], x0, x1: Bq.x1, k: k2, at: (x) => y0b + k2 * (x - x0) }; void y0;
+          lines.splice(j, 1); j = i;
+        }
+        for (let i = lines.length - 1; i >= 0; i--) if (lines[i].x1 - lines[i].x0 < sp * 3) lines.splice(i, 1);
       }
       for (let i = 0; i < lines.length; i++) for (let j = 0; j < lines.length; j++) {
         if (i === j) continue;
         const A = lines[i], Bl = lines[j];
-        if (taken.has(A.g) || taken.has(Bl.g)) continue;
+        if (A.gs.some((q) => taken.has(q)) || Bl.gs.some((q) => taken.has(q))) continue;
         const xs = Math.max(A.x0, Bl.x0), xe = Math.min(A.x1, Bl.x1);
         if (xe - xs < Math.min(A.x1 - A.x0, Bl.x1 - Bl.x0) * 0.7) continue;
         const dL = Bl.at(xs) - A.at(xs), dR = Bl.at(xe) - A.at(xe);
@@ -1148,7 +1180,7 @@ function readWords(read, ctx, comps, taken, hairpins) {
         const b = heads.slice().reverse().find((hd) => hd.cx <= hx1 + sp * 0.3) || a;
         if (!a || !b) continue;
         addHp(si, a, b, dir, hx0, hx1, sp);
-        taken.add(A.g); taken.add(Bl.g);
+        for (const q of [...A.gs, ...Bl.gs]) taken.add(q);
         if (globalThis.__wordDbg) globalThis.__wordDbg.push({ L: 'hp', hpPair: dir, hx0, hx1, dL: +(dL / sp).toFixed(2), dR: +(dR / sp).toFixed(2) });
       }
     }

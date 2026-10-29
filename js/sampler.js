@@ -16,12 +16,13 @@ export const SOUND_LABELS = {
   clarinet: 'Clarinet', bassoon: 'Bassoon', sopsax: 'Soprano sax', altosax: 'Alto sax', tenorsax: 'Tenor sax', barisax: 'Baritone sax',
   horn: 'Horn', trumpet: 'Trumpet', trombone: 'Trombone', tuba: 'Tuba', brass: 'Brass section', choir: 'Choir (aah)', oohs: 'Voices (ooh)',
   timpani: 'Timpani', marimba: 'Marimba', vibraphone: 'Vibraphone', xylophone: 'Xylophone', glockenspiel: 'Glockenspiel', bells: 'Tubular bells',
-  woodblock: 'Woodblock', drum: 'Drum',
+  woodblock: 'Woodblock', drum: 'Drum', snare: 'Snare drum', bassdrum: 'Bass drum', toms: 'Tom-toms', cymbals: 'Crash cymbals', suspcymbal: 'Suspended cymbal', triangle: 'Triangle', tambourine: 'Tambourine', bongos: 'Bongos',
 };
 // Sounds that ring and fade by themselves (no loop): they keep ringing after a short note
 // only as long as a real player would let them.
 const DECAYING = new Set(['piano', 'grand', 'grand2', 'epiano', 'harpsichord', 'celesta', 'pizz', 'harp', 'guitar', 'steelguitar', 'eguitar', 'ebass', 'jazzbass',
-  'banjo', 'timpani', 'marimba', 'vibraphone', 'xylophone', 'glockenspiel', 'bells', 'woodblock', 'drum']);
+  'banjo', 'timpani', 'marimba', 'vibraphone', 'xylophone', 'glockenspiel', 'bells', 'woodblock', 'drum',
+  'snare', 'bassdrum', 'toms', 'cymbals', 'suspcymbal', 'triangle', 'tambourine', 'bongos']);
 // natural release after the note ends (seconds)
 // instruments that can slide between slurred notes (strings, voices, trombone, winds a little)
 const SLIDES = new Set(["violin", "viola", "cello", "bass", "violins", "violas", "cellos", "basses", "strings", "choir", "voice", "trombone", "flute", "oboe", "clarinet", "altosax", "tenorsax", "horn"]);
@@ -34,24 +35,30 @@ const RELEASE = { piano: 0.35, epiano: 0.4, harpsichord: 0.25, organ: 0.18, acco
   strings: 0.45, tremolo: 0.35, pizz: 0.4, harp: 1.4, guitar: 0.8, steelguitar: 0.8, eguitar: 0.5, ebass: 0.25, jazzbass: 0.3, banjo: 0.4, mandolin: 0.4,
   flute: 0.14, piccolo: 0.12, recorder: 0.1, oboe: 0.12, englishhorn: 0.14, clarinet: 0.13, bassoon: 0.15, sopsax: 0.12, altosax: 0.12, tenorsax: 0.14, barisax: 0.16,
   horn: 0.25, trumpet: 0.16, trombone: 0.2, tuba: 0.25, brass: 0.25, choir: 0.4, oohs: 0.4, timpani: 1.2, marimba: 0.6, vibraphone: 1.6, xylophone: 0.4,
-  glockenspiel: 1.2, bells: 2.5, woodblock: 0.1, drum: 0.2 };
+  glockenspiel: 1.2, bells: 2.5, woodblock: 0.1, drum: 0.2, snare: 0.3, bassdrum: 1.2, toms: 0.5, cymbals: 2.5, suspcymbal: 2.5, triangle: 2, tambourine: 0.4, bongos: 0.3 };
 // Where each family sits on a concert stage (pan -1 left .. 1 right) when nothing is set.
 export const DEFAULT_PAN = { violin: -0.45, viola: 0.15, cello: 0.35, bass: 0.55, violins: -0.45, violas: 0.15, cellos: 0.35, basses: 0.55, strings: -0.2, tremolo: -0.2, pizz: -0.2, flute: -0.15, piccolo: -0.2,
-  oboe: 0.1, englishhorn: 0.12, clarinet: -0.1, bassoon: 0.15, horn: -0.4, trumpet: 0.25, trombone: 0.4, tuba: 0.5, harp: -0.6, timpani: 0.3, piano: 0, choir: 0 };
+  oboe: 0.1, englishhorn: 0.12, clarinet: -0.1, bassoon: 0.15, horn: -0.4, trumpet: 0.25, trombone: 0.4, tuba: 0.5, harp: -0.6, timpani: 0.3, piano: 0, choir: 0,
+  snare: 0.15, bassdrum: 0.2, toms: 0.2, cymbals: 0.1, suspcymbal: 0.15, triangle: 0.05, tambourine: 0.1, bongos: 0.1 };
 
 // Body EQ for the sampled instruments: [type, Hz, dB, Q]
 // (cello: Starker, Cassadó and a 1995 recording of the 3rd Suite's Sarabande; violin: Shaham's
 // Siciliana and Ricci's Sarabande; viola: between the two)
 const BODY = {
   cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1], ['peaking', 3000, -4, 0.8]],
-  violin: [['peaking', 3500, -9, 0.6], ['highshelf', 7000, -5], ['peaking', 1800, -2, 1]],
+  violin: [['peaking', 3500, -7, 0.6], ['highshelf', 7000, -3.5], ['peaking', 1800, -2, 1]],
   viola: [['lowshelf', 350, 2], ['peaking', 3200, -6, 0.6], ['highshelf', 7000, -3]],
-  cello_solo: [['peaking', 400, 4.5, 0.7], ['peaking', 3500, -5, 0.8], ['highshelf', 7000, -2]],
+  // (a little less of the cello's low body and of the violin's top cut, and the top kept open: next to
+  // real string quartet recordings, the four sounded thick and veiled)
+  cello_solo: [['peaking', 400, 3, 0.7], ['peaking', 3500, -5, 0.8], ['highshelf', 7000, -2]],
   viola_solo: [['peaking', 3200, -4, 0.7], ['highshelf', 7000, -2]],
   // (the solo cello at three strengths: thinner recordings, given the body of the other's)
   cello_solo3: [['peaking', 400, 4.5, 0.7], ['lowshelf', 600, 7.5], ['peaking', 520, 4, 1.2], ['peaking', 2000, -3, 0.9], ['highshelf', 7000, 3]],
   // (the grand was recorded close to its strings: heard from the hall, its top is softer)
   piano: [['highshelf', 2500, -4], ['highshelf', 7000, -4]],
+  // (the sections: their recordings are already heard from a distance, only the warmth is added;
+  // the solo instruments' top cut made a whole orchestra sound muffled next to real recordings)
+  sec_violin: [], sec_viola: [['lowshelf', 350, 2]], sec_cello: [['lowshelf', 400, 4], ['peaking', 120, 3, 1]],
 };
 export const DEFAULT_MIX = () => ({ vol: 0.8, pan: null, low: 0, high: 0, bright: 0.5, attack: 0, release: 1, reverb: 0.35, mute: false, solo: false });
 
@@ -67,9 +74,14 @@ export const ROOM_LABELS = Object.fromEntries(Object.entries(ROOMS).map(([k, v])
 // at two strengths: the right recording is chosen for each note instead of shaping one sound.
 // (the sections: the recorded string sections; the solo instruments their own, where there is one)
 const REAL = { violin: 'vl', viola: 'va', cello: 'vc', bass: 'cb', violins: 'vl', violas: 'va', cellos: 'vc', basses: 'cb' };
-export const realSet = (sid, kind = 'sus') => (REAL[sid] ? REAL[sid] + '_' + kind : null);
+// (the winds and brass recorded the same way, held and short, soft and loud: VSCO 2 CE)
+const REAL_W = { englishhorn: 'ob', horn: 'hn', trumpet: 'tr', trombone: 'tb', tuba: 'tu', flute: 'fl', oboe: 'ob', clarinet: 'cl', bassoon: 'bn', piccolo: 'pc', timpani: 'tp', harp: 'hp',
+  snare: 'ksn', bassdrum: 'kbd', toms: 'kto', cymbals: 'kcr', suspcymbal: 'ksu', triangle: 'ktr', tambourine: 'ktm', bongos: 'kbo' };
+// (the violins as a section: the recorded violin section, where it plays; the solo violin above it)
+const ENS = { violins: 've' };
+export const realSet = (sid, kind = 'sus') => (ENS[sid] && (globalThis.__ens ?? 1) ? ENS[sid] + '_' + kind : REAL[sid] ? REAL[sid] + '_' + kind : REAL_W[sid] && (globalThis.__vscoW ?? 1) ? REAL_W[sid] + '_' + kind : null);
 let INDEX = null;
-const FALLBACK = { mandolin: 'steelguitar', ukulele: 'guitar', violins: 'violin', violas: 'viola', cellos: 'cello', basses: 'bass' };
+const FALLBACK = { snare: 'drum', bassdrum: 'drum', toms: 'drum', cymbals: 'drum', suspcymbal: 'drum', triangle: 'woodblock', tambourine: 'drum', bongos: 'drum', mandolin: 'steelguitar', ukulele: 'guitar', violins: 'violin', violas: 'viola', cellos: 'cello', basses: 'bass' };
 async function loadIndex() {
   if (!INDEX) INDEX = fetch(new URL('../vendor/sounds/index.json', import.meta.url)).then((r) => r.json()).then((j) => (j.n ? j : { n: j, g: {} }));
   return INDEX;
@@ -139,7 +151,7 @@ function evenGain(I, sid, m, layer, rings) {
   const ringing = DECAYING.has(sid) || rings;
   const k = Math.pow(ref / r, ringing ? 0.5 : 0.9);
   // (a soft recording speaks more slowly: a little more of it, so it is even as the note begins)
-  return Math.max(0.4, Math.min(layer === 'p' ? 9 : 3, k * (layer === 'p' ? (globalThis.__pBoost ?? 1.25) : 1)));
+  return Math.max(0.4, Math.min(layer === 'p' || /^(hn|tr|tb|tu|fl|ob|cl|bn|pc|tp|hp|k[a-z]{2})_/.test(sid) ? 9 : 3, k * (layer === 'p' ? (globalThis.__pBoost ?? 1.25) : 1)));
 }
 export class Sampler {
   constructor() {
@@ -174,7 +186,7 @@ export class Sampler {
   }
   setRoomMix(v) { this.roomMix = v; if (this.verbIn) this.verbIn.gain.value = v; }
 
-  async sampleFor(sid, midi, kind = 'sus', vel = 0.7) {
+  async sampleFor(sid, midi, kind = 'sus', vel = 0.7, span = null) {
     const I = await loadIndex();
     // a real recording of this way of playing, at the nearest strength
     // a real solo cello or viola, every note recorded (in place of the section recordings)
@@ -208,20 +220,46 @@ export class Sampler {
       const Ls = I.L[SOLO[sid]] || ['f'];
       return this.load(SOLO[sid], best, Ls.includes('p') && vel < 0.5 ? 'p' : 'f', kind);
     }
-    const set = realSet(sid, kind);
+    let set = realSet(sid, kind);
+    // (a way of playing not recorded for a wind or the timpani, a short stroke say: its ordinary recording)
+    if (set && REAL_W[sid] && !I.n[set] && kind !== 'gen' && I.n[realSet(sid, 'sus')]) { set = realSet(sid, 'sus'); kind = 'sus'; }
     if (set && I.n[set] && I.n[set].length && !this.plain) {
+      // (the English horn: the oboe's recordings a fourth higher, played down: the same reed, its
+      // darker, lower voice)
+      const SHIFT = { englishhorn: 5 }, want = midi + (SHIFT[sid] || 0);
       const list = I.n[set]; let best = list[0];
-      for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      for (const m of list) if (Math.abs(m - want) < Math.abs(best - want) || (Math.abs(m - want) === Math.abs(best - want) && m > best)) best = m;
+      if (SHIFT[sid] && Math.abs(best - want) > 4) return this.sampleFor(sid, midi, 'gen', vel);
+      // (beyond the section's recordings: the solo instrument's, of the same way of playing)
+      if (ENS[sid] && set.startsWith(ENS[sid] + '_') && Math.abs(best - midi) > 2 && I.n[REAL[sid] + '_' + kind]) {
+        set = REAL[sid] + '_' + kind; const l2 = I.n[set]; best = l2[0];
+        for (const m of l2) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
+      }
+      // (a wind recorded only every few notes: far from one, the general recording of that note instead)
+      if (REAL_W[sid] && !SHIFT[sid] && !/^k/.test(REAL_W[sid]) && Math.abs(best - midi) > (sid === 'timpani' ? 7 : 4)) return this.sampleFor(sid, midi, 'gen', vel);   // (a timpani is tuned: any of its drums can be set a few notes away)
       const L = (I.L && I.L[set]) || ['f'];
+      // (a short note repeated: the two recorded takes in turn, as a player's two strokes are never alike)
+      let take = 1;
+      if (I.RR && (I.RR[set] || []).includes(best) && (globalThis.__rr ?? 1)) {
+        const rk = set + ':' + best; this.rrc = this.rrc || new Map();
+        take = (this.rrc.get(rk) || 0) % 2 + 1; this.rrc.set(rk, take);
+        for (const L2 of L) this.load(set, best, L2, kind, 3 - take).catch(() => null);
+      }
       // between mp and mf both recordings sound together, the soft one giving way to the loud one
       // little by little (no sudden change of colour)
+      // (a note that grows or fades across the two: both recordings, the soft giving way to the loud
+      // as it grows, the colour changing within the note as a player's does)
+      if (L.includes('p') && L.includes('f') && span && (globalThis.__xfEnv ?? 1) && Math.min(...span) < XF[1] && Math.max(...span) > XF[0] && Math.max(...span) - Math.min(...span) > 0.08) {
+        const [a, b] = await Promise.all([this.load(set, best, 'p', kind, take), this.load(set, best, 'f', kind, take)]);
+        return Object.assign(Object.create(b), { pair: a, w: Math.max(0, Math.min(1, (vel - XF[0]) / (XF[1] - XF[0]))), xf: true });
+      }
       if (L.includes('p') && L.includes('f') && vel > XF[0] && vel < XF[1]) {
-        const [a, b] = await Promise.all([this.load(set, best, 'p', kind), this.load(set, best, 'f', kind)]);
+        const [a, b] = await Promise.all([this.load(set, best, 'p', kind, take), this.load(set, best, 'f', kind, take)]);
         const w = (vel - XF[0]) / (XF[1] - XF[0]);
         return Object.assign(Object.create(b), { pair: a, w });
       }
       const layer = L.includes('p') && vel < 0.52 ? 'p' : L.includes('f') ? 'f' : L[0];
-      return this.load(set, best, layer, kind);
+      return this.load(set, best, layer, kind, take);
     }
     // the grand piano: a real concert grand recorded at three strengths, blended by the dynamic
     // (the concert grand: six strengths, each blended into the next as the dynamic grows)
@@ -268,8 +306,8 @@ export class Sampler {
     for (const m of list) if (Math.abs(m - midi) < Math.abs(best - midi) || (Math.abs(m - midi) === Math.abs(best - midi) && m > best)) best = m;
     return this.load(sid, best);
   }
-  load(sid, m, layer = null, kind = null) {
-    const key = sid + ':' + m + (layer ? ':' + layer : '');
+  load(sid, m, layer = null, kind = null, take = 1) {
+    const key = sid + ':' + m + (layer ? ':' + layer : '') + (take > 1 ? ':r' + take : '');
     // (the concert grand's recordings are long and in stereo: kept within a limit, the ones not used
     // for longest let go first, never one used in the last half minute)
     if (sid === 'grand2') {
@@ -285,10 +323,10 @@ export class Sampler {
     if (!this.buffers.has(key)) {
       const ctx = getCtx();
       const rings = kind === 'pizz' || kind === 'spic';
-      const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}.mp3`, import.meta.url))
+      const p = fetch(new URL(`../vendor/sounds/${sid}/${m}${layer ? '_' + layer : ''}${take > 1 ? '_r' + take : ''}.mp3`, import.meta.url))
         .then((r) => { if (!r.ok) throw new Error('missing sample'); return r.arrayBuffer(); })
         .then((ab) => new Promise((res, rej) => { const q = ctx.decodeAudioData(ab, res, rej); if (q && q.then) q.then(res, rej); }))
-        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings || /^p_/.test(sid) ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, oneLayer: /_solo$/.test(sid) && sid !== 'vl_solo' && sid !== 'vc_solo3', tc: ((((await loadIndex()).T || {})[sid] || {})[m + (layer ? '_' + layer : '')] ?? (((await loadIndex()).T || {})[sid] || {})[m]) || 0, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, atkT: (await loadIndex()).AT || null }));
+        .then(async (buf) => ({ buf, midi: m, gain: (((await loadIndex()).g || {})[sid] || 4) * evenGain(await loadIndex(), sid, m, layer, rings), loop: DECAYING.has(sid) || rings || /^p_/.test(sid) ? null : makeLoop(buf, m), kind, real: !!kind && !!layer, layer, set: sid, oneLayer: /_solo$/.test(sid) && sid !== 'vl_solo' && sid !== 'vc_solo3', tc: ((((await loadIndex()).T || {})[sid] || {})[m + (layer ? '_' + layer : '')] ?? (((await loadIndex()).T || {})[sid] || {})[m]) || 0, ownVib: /^w_(flute|oboe|trumpet|bassoon)$/.test(sid), atk: (((await loadIndex()).A || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, pc: (((await loadIndex()).PC || {})[sid] || {})[m + (layer ? '_' + layer : '')] || null, pcT: (await loadIndex()).PCT || null, atkT: (await loadIndex()).AT || null }));
       p.catch(() => this.buffers.delete(key));
       if (sid === 'grand2') p.then((x) => { const e = this.lru && this.lru.get(key); if (e && x && x.buf) e.bytes = x.buf.length * x.buf.numberOfChannels * 4; }, () => {});
       this.buffers.set(key, p);
@@ -326,13 +364,27 @@ export class Sampler {
       let node = ch.input;
       ch.body = [];
       const SEC = { violins: 'violin', violas: 'viola', cellos: 'cello', basses: 'bass' };
-      const bk = SEC[sid] ? SEC[sid] : sid === 'cello' && !this.plain && (globalThis.__solo ?? 1) && (globalThis.__vc3 ?? 0) ? 'cello_solo3' : (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
+      const bk = SEC[sid] ? ((globalThis.__hiFix ?? 1) ? 'sec_' : '') + SEC[sid] : sid === 'cello' && !this.plain && (globalThis.__solo ?? 1) && (globalThis.__vc3 ?? 0) ? 'cello_solo3' : (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
       const pureBody = sid === 'piano' && (globalThis.__pianoPure ?? 1) && !this.plain;
       for (const [type, f, gdb, q] of (pureBody && !globalThis.__bodyEq ? [] : ((globalThis.__bodyEq || BODY)[bk] || []))) {
         const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gdb; if (q) b.Q.value = q;
         node.connect(b); node = b; ch.body.push(b);
       }
+      // (the orchestra's recordings, made close and soft at the top: the air a hall recording keeps)
+      const air = (globalThis.__hiFix ?? 1) && !this.plain && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__air ?? 3) : 0;
+      if (air) { const b = ctx.createBiquadFilter(); b.type = 'highshelf'; b.frequency.value = 6000; b.gain.value = air; node.connect(b); node = b; ch.body.push(b); }
       node.connect(ch.low).connect(ch.high).connect(ch.bright).connect(ch.gain).connect(ch.pan).connect(this.out);
+      // the orchestra as a pair of microphones above the stage hears it: a player to the right reaches
+      // the right microphone a moment sooner and a little louder (not only louder, as a pan control
+      // makes it), which is what gives a real orchestra recording its open, wide sound
+      if ((globalThis.__stage ?? 1) && !this.plain && ctx.createChannelMerger && (/^(violins|violas|cellos|basses|strings|choir|oohs|brass|timpani|harp|englishhorn|organ)$/.test(sid) || REAL_W[sid])) {
+        ch.stage = true;
+        ch.gL = ctx.createGain(); ch.gR = ctx.createGain(); ch.dL = ctx.createDelay(0.01); ch.dR = ctx.createDelay(0.01);
+        ch.merge = ctx.createChannelMerger(2);
+        ch.gain.connect(ch.dL).connect(ch.gL).connect(ch.merge, 0, 0);
+        ch.gain.connect(ch.dR).connect(ch.gR).connect(ch.merge, 0, 1);
+        ch.gain.disconnect(ch.pan); ch.merge.connect(this.out);
+      }
       ch.gain.connect(ch.send).connect(this.verbIn);
       this.channels.set(id, ch);
     }
@@ -348,9 +400,17 @@ export class Sampler {
     ch.low.gain.setTargetAtTime(mix.low * 12, t, 0.02);
     ch.high.gain.setTargetAtTime(mix.high * 12, t, 0.02);
     // (the concert grand: its recordings are heard as they are, the brightness control only takes away)
-    const pureCh = ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
+    // (the instruments recorded for real: heard as recorded, the brightness control only takes away)
+    const pureCh = ((globalThis.__openAll ?? 0) || ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) || ((globalThis.__soloOpen ?? 1) && /^(violin|viola|cello|bass)$/.test(ch.sid))) && !this.plain || ((ch.sid === 'piano' && (globalThis.__pianoPure ?? 1)) || (['marimba', 'xylophone', 'glockenspiel', 'vibraphone', 'bells', 'timpani'].includes(ch.sid) && (globalThis.__percReal ?? 0))) && !this.plain;
     ch.bright.frequency.setTargetAtTime(pureCh ? Math.min(22000, 1500 * Math.pow(14, Math.min(1, mix.bright + 0.5))) : 1500 * Math.pow(14, mix.bright), t, 0.02);
-    if (ch.pan.pan) ch.pan.pan.setTargetAtTime(mix.pan ?? DEFAULT_PAN[ch.sid] ?? 0, t, 0.02);
+    const pn = mix.pan ?? DEFAULT_PAN[ch.sid] ?? 0;
+    if (ch.stage) {
+      // (time: up to about a millisecond and a half between the two; level: a gentler law than a pan's)
+      const T = (globalThis.__stageMs ?? 1.2) / 1000, k = globalThis.__stageLvl ?? 0.6;
+      ch.dL.delayTime.setTargetAtTime(Math.max(0, pn) * T, t, 0.02); ch.dR.delayTime.setTargetAtTime(Math.max(0, -pn) * T, t, 0.02);
+      const q = (Math.max(-1, Math.min(1, pn * k)) + 1) * Math.PI / 4;
+      ch.gL.gain.setTargetAtTime(Math.cos(q), t, 0.02); ch.gR.gain.setTargetAtTime(Math.sin(q), t, 0.02);
+    } else if (ch.pan.pan) ch.pan.pan.setTargetAtTime(pn, t, 0.02);
     ch.send.gain.setTargetAtTime(this.room === 'hall' && (globalThis.__irRef ?? 1) ? mix.reverb * (0.55 / 0.35) * (globalThis.__refWet ?? 1) : mix.reverb * 0.9, t, 0.02);
   }
 
@@ -364,11 +424,19 @@ export class Sampler {
     const pure = sample.set === 'grand2' && (globalThis.__pianoPure ?? 1);
     if (pure && sample.pair) sample = sample.w < 0.5 ? sample.pair : Object.assign(Object.create(sample), { pair: null });
     // two recordings blended (soft and loud): each played, their levels sharing the note (equal power)
-    if (sample.pair && !opts.blend) {
+    if (sample.pair && sample.xf && opts.env && opts.env.length && !opts.blend) {
+      // (each recording's share follows the dynamic through the note)
+      const hu = (Math.random() - 0.5) * 4, W = (v) => Math.max(0, Math.min(1, (v - XF[0]) / (XF[1] - XF[0]))) * Math.PI / 2;
+      const ca = Math.max(0.03, Math.cos(W(vel))), cb = Math.max(0.03, Math.sin(W(vel)));
+      this.noteOn(ch, sample.pair, midi, t, dur, vel, { ...opts, blend: ca, human: hu, env: opts.env.map(([et, ev]) => [et, ev * Math.max(0.03, Math.cos(W(vel * ev))) / ca]) });
+      opts = { ...opts, blend: cb, human: hu, env: opts.env.map(([et, ev]) => [et, ev * Math.max(0.03, Math.sin(W(vel * ev))) / cb]) };
+    } else if (sample.pair && !opts.blend) {
       const hu = (Math.random() - 0.5) * 4;   // (the two in tune with each other)
       this.noteOn(ch, sample.pair, midi, t, dur, vel, { ...opts, blend: Math.cos(sample.w * Math.PI / 2), human: hu });
       opts = { ...opts, blend: Math.sin(sample.w * Math.PI / 2), human: hu };
     }
+    // (a drum or cymbal without a pitch sounds as recorded, whatever note it is written on; toms are tuned)
+    if (/^k(sn|bd|cr|su|tr|tm|bo)_/.test(sample.set || '')) midi = sample.midi;
     const ctx = this.ctx, sid = ch.sid, mix = ch.mix || DEFAULT_MIX();
     const src = ctx.createBufferSource(); src.buffer = sample.buf;
     // no two notes quite the same: a touch of pitch and level variation, as with a real player
@@ -380,12 +448,13 @@ export class Sampler {
     const real = !!sample.real;
     if (!decaying && sample.loop) { src.loop = true; src.loopStart = sample.loop.start; src.loopEnd = sample.loop.end; }
     // softer notes are darker as well as quieter, like a real instrument
-    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.3;
+    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = globalThis.__toneQ ?? 0.3;
+    if (sample.real && (globalThis.__hiFix ?? 1) && globalThis.__toneQ === undefined && (/^(violins|violas|cellos|basses)$/.test(ch.sid) || REAL_W[ch.sid])) tone.Q.value = 0.5;
     // (a real soft or loud recording already has its own colour: only a little more shaping)
     // (the grand piano's three recordings already have the colour of each strength)
     const ownColour = sample.set === 'grand' || sample.set === 'grand2';
     // (one loud recording only: softer is also darker, as with the general sounds, a little less so)
-    tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? 3000 + Math.pow(vel, 1.4) * 17000 : 900 + Math.pow(vel, 1.7) * 17000;
+    tone.frequency.value = ownColour ? 20000 : sample.oneLayer ? 1400 + Math.pow(vel, 1.6) * 16000 : real ? (globalThis.__toneLo ?? ((globalThis.__hiFix ?? 1) && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? 6000 : 3000)) + Math.pow(vel, 1.4) * 17000 : (globalThis.__toneSyn ? globalThis.__toneSyn[0] + Math.pow(vel, globalThis.__toneSyn[2]) * globalThis.__toneSyn[1] : 900 + Math.pow(vel, 1.7) * 17000);
     // bowed strings: no hard, bright edge at the start. The tone opens as the bow settles (a
     // quick sweep up from a warm sound), and the top is kept smooth.
     const bowed = BOWED.has(sid) && !real;
@@ -431,7 +500,10 @@ export class Sampler {
     const natural = sample.set === 'grand2';
     // (recordings at several strengths keep their own loudness: the dynamic adds less on top)
     const layered3 = sample.set === 'vc_solo3' || /^p_/.test(sample.set || '');
-    let level = layered3 ? Math.pow(10, (-(globalThis.__l3Range ?? 8) + (globalThis.__l3Range ?? 8) * Math.max(0, Math.min(1.1, vel))) / 20) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) : pure ? Math.pow(Math.max(0.02, Math.min(1, vel)), globalThis.__g2vt ?? 1.46) * (sample.gain || 4) * 0.9 : (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) * Math.pow(Math.max(0.05, Math.min(1, vel)), globalThis.__g2vt ?? 0) : sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
+    // (the orchestra's range from pp to ff, as wide as a real one's; the solo instruments keep theirs,
+    // set against the piano)
+    const dynR = (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) && (globalThis.__hiFix ?? 1) ? (globalThis.__dynR ?? 34) : 26;
+    let level = layered3 ? Math.pow(10, (-(globalThis.__l3Range ?? 8) + (globalThis.__l3Range ?? 8) * Math.max(0, Math.min(1.1, vel))) / 20) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) : pure ? Math.pow(Math.max(0.02, Math.min(1, vel)), globalThis.__g2vt ?? 1.46) * (sample.gain || 4) * 0.9 : (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) * Math.pow(Math.max(0.05, Math.min(1, vel)), globalThis.__g2vt ?? 0) : sample.real ? Math.pow(10, (-dynR + dynR * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
     if ((opts.art === 'acc' || opts.art === 'marc') && !pure) level = Math.min(1.15, level * 1.3);
     // a connected (slurred) note starts past the sample's attack and fades in: no new bow or tongue
     const connect = !!opts.connect && !decaying;
@@ -461,6 +533,20 @@ export class Sampler {
       depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(0, t + Math.min(0.35, dur * 0.3)); depth.gain.linearRampToValueAtTime(amt, t + Math.min(0.9, dur * 0.7));
       lfo.connect(depth).connect(src.playbackRate);
       lfo.start(t); lfo.stop(t + dur + 1.5);
+      // a string player's vibrato (measured on recordings: about ±15-25 cents, 5-6 a second): wider
+      // than the old one, never quite even (its width drifts slowly), and the tone swells a little with
+      // each swing (the body's resonances), not a pitch wobble on its own
+      if (BOWED.has(sid) && (globalThis.__vib2 ?? 0)) {
+        const amt2 = src.playbackRate.value * (Math.pow(2, (opts.vib * (globalThis.__vibWide ?? 1.6) * (0.7 + vel * 0.6)) / 1200) - 1);
+        lfo.frequency.value = 5.0 + vel * 0.8 + Math.random() * 0.6;
+        depth.gain.cancelScheduledValues(t); depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(0, t + Math.min(0.3, dur * 0.25)); depth.gain.linearRampToValueAtTime(amt2, t + Math.min(0.8, dur * 0.6));
+        const drift = ctx.createOscillator(); drift.frequency.value = 0.35 + Math.random() * 0.4;
+        const dd = ctx.createGain(); dd.gain.value = amt2 * 0.28;
+        drift.connect(dd).connect(depth.gain); drift.start(t); drift.stop(t + dur + 1.5);
+        const am = ctx.createGain(); am.gain.value = 0;
+        am.gain.setValueAtTime(0, t); am.gain.linearRampToValueAtTime(0, t + Math.min(0.3, dur * 0.25)); am.gain.linearRampToValueAtTime(level * (globalThis.__vibAm ?? 0.07), t + Math.min(0.8, dur * 0.6));
+        lfo.connect(am).connect(g.gain);
+      }
     }
     // a slurred step in strings, winds and voices: the pitch slides in from the note before
     if (connect && opts.from !== undefined && SLIDES.has(sid) && Math.abs(opts.from - midi) >= 2 && Math.abs(opts.from - midi) <= 12) {
@@ -473,6 +559,19 @@ export class Sampler {
       const r0 = src.playbackRate.value, r1 = r0 * Math.pow(2, (opts.glissTo - midi) / 12);
       src.playbackRate.setValueAtTime(r0, t + Math.min(0.15, dur * 0.25));
       src.playbackRate.exponentialRampToValueAtTime(Math.max(0.05, r1), t + dur);
+    }
+    // (a wind player lipping up into the note, recorded: heard in tune from its first moment, as a
+    // player in a section plays it, with a little of the movement left)
+    if (sample.pc && sample.pcT && /_sus$/.test(sample.set || '') && !(connect && opts.from !== undefined) && opts.glissTo === undefined && (globalThis.__pcFix ?? 1)) {
+      const r0 = src.playbackRate.value, P = sample.pcT, C = sample.pc, keep = globalThis.__pcKeep ?? 0.15;
+      let first = true;
+      for (let i = 0; i < P.length; i++) {
+        if (P[i] < offset) continue;
+        const c = i === 0 ? C[1] : C[i];
+        const at = t + (P[i] - offset) / r0, rate = r0 * Math.pow(2, -(Math.abs(c) < 12 ? 0 : c) * (1 - keep) / 1200);
+        if (first) { src.playbackRate.setValueAtTime(rate, t); first = false; } else src.playbackRate.linearRampToValueAtTime(rate, at);
+      }
+      if (!first) src.playbackRate.linearRampToValueAtTime(r0, t + (P[P.length - 1] - offset) / r0 + 0.1);
     }
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(level * (shape && dur > 0.6 && !pure ? 0.86 : 1), t + atk);

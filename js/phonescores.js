@@ -8,6 +8,7 @@
 // Pages come as pictures, the markings as a clear layer on top: shown or hidden with one switch.
 // Nothing can be changed here.
 import { db, getSetting, setSetting } from './db.js';
+import { nlog } from './link.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -144,7 +145,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       if (!d || !d.img) throw new Error('no');
       halt();
       await db.put('files', { id: pageKey(s.id, i, stamp), kind: 'ipadpage', stamp, w: d.w, h: d.h, img: await toBlob(d.img), ink: await toBlob(d.ink) });
+      d = null;
       if (onPage) onPage(i + 1, info.n);
+      // (a breath between pages: the memory of the page just kept is let go before the next comes)
+      await new Promise((r) => setTimeout(r, 40));
     }
     halt();
     const copy = { id: copyId(s.id), kind: 'ipadcopy', stamp, title: s.title, n: info.n, at: Date.now() };
@@ -164,7 +168,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const have = await haveCopies();
     const want = PS.list.filter((s) => !PS.removed.has(s.id) && have.get(s.id) !== s.stamp);
     if (!want.length) return;
-    PS.sync = { n: want.length, done: 0, failed: 0 }; sub();
+    PS.sync = { n: want.length, done: 0, failed: 0 }; sub(); nlog('iPhone: fetching ' + want.length + ' score(s) from the iPad');
     // (leaving the app for a moment does not stop it: iOS gives the newer apps some time)
     try { window.__nativeBusy && window.__nativeBusy(true, 'download'); } catch {}
     for (const s of want) {
@@ -178,7 +182,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       PS.sync.page = '';
       PS.sync.done++; sub(); if (!pane.hidden) render();
     }
-    const failed = PS.sync.failed, full = PS.sync.full; PS.sync = null; sub(); if (!pane.hidden) render();
+    const failed = PS.sync.failed, full = PS.sync.full; nlog('iPhone: fetched, ' + failed + ' failed' + (full ? ', full' : '')); PS.sync = null; sub(); if (!pane.hidden) render();
     try { window.__nativeBusy && window.__nativeBusy(false, 'download'); } catch {}
     if (full) toast('This iPhone is full: some scores could not be downloaded. Remove some downloads (Edit) or free some space.', 6000);
     else if (failed && !pane.hidden) toast('Some scores could not be downloaded. They come next time your iPad is found.');

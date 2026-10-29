@@ -23,7 +23,7 @@ function hubStart() {
   if (hub.started || !NATIVE()) return;
   hub.started = true;
   window.standPeerMessage = (str) => { let m; try { m = JSON.parse(str); } catch { return; } deliver(m); };
-  window.standPeerState = (n, names) => { hub.peers = n; hub.names = names || []; for (const f of [...direct.watch]) { try { f(n); } catch {} } };
+  window.standPeerState = (n, names) => { if (n !== hub.peers) nlog('link: ' + n + ' device(s) ' + (names || []).join(', ')); hub.peers = n; hub.names = names || []; for (const f of [...direct.watch]) { try { f(n); } catch {} } };
   window.standPeerFrame = (b64) => { if (direct.onFrame) direct.onFrame(b64); };
   window.standPeerFile = (meta, path, err) => { for (const f of [...direct.fileWatch]) { try { f(meta || {}, path, err); } catch {} } };
   window.standPeerProgress = (id, f, dir) => { const cb = direct.progress.get(id); if (cb) cb(f, dir); for (const w of [...direct.fileProgress]) { try { w(id, f, dir); } catch {} } };
@@ -38,6 +38,8 @@ function deliver(m) {
   if (sig && sig.onMsg) sig.onMsg(m);
 }
 export const nativeLink = () => NATIVE();
+// a line in the app's diagnostics (Files › Stand › Diagnostics › events.log), to find what happened
+export function nlog(text) { try { window.webkit.messageHandlers.standDiag.postMessage({ op: 'log', text: String(text).slice(0, 300) }); } catch {} }
 export { ANY_HOST };
 
 // ---------- the direct link carries everything (apps with the new native part) ----------

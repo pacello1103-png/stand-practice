@@ -12,7 +12,7 @@ const PROGRAM = {
   choir: 52, oohs: 53, trumpet: 56, trombone: 57, tuba: 58, horn: 60, brass: 61,
   sopsax: 64, altosax: 65, tenorsax: 66, barisax: 67, oboe: 68, englishhorn: 69, bassoon: 70, clarinet: 71,
   piccolo: 72, flute: 73, recorder: 74,
-  glockenspiel: 9, vibraphone: 11, marimba: 12, xylophone: 13, bells: 14, woodblock: 115, drum: 118,
+  glockenspiel: 9, vibraphone: 11, marimba: 12, xylophone: 13, bells: 14, woodblock: 115, drum: 118, snare: 118, bassdrum: 118, toms: 118, cymbals: 120, suspcymbal: 120, tambourine: 118, bongos: 118, triangle: 113, 
 };
 const PPQ = 480;
 const vlq = (n) => { n = Math.max(0, Math.round(n)); const out = [n & 0x7f]; while ((n >>= 7)) out.unshift((n & 0x7f) | 0x80); return out; };

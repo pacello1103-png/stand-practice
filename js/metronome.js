@@ -6,14 +6,14 @@ const LOOKAHEAD = 0.12;      // seconds scheduled ahead
 const TICK_MS = 25;          // scheduler wake-up
 
 // ---------- click sounds, synthesised once per sample rate ----------
-function synth(ctx, dur, fn) {
+function synth(ctx, dur, fn, drive = 3) {
   const sr = ctx.sampleRate, n = Math.ceil(dur * sr);
   const buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
   let peak = 0;
   for (let i = 0; i < n; i++) { const t = i / sr; d[i] = fn(t, i); peak = Math.max(peak, Math.abs(d[i])); }
   // (made dense, like a real click heard over a band: the peak stays, the sound around it is lifted
   // about 8 dB, so the small speakers of an iPad or iPhone are heard over an instrument)
-  const drive = 3, k = Math.tanh(drive);
+  const k = Math.tanh(drive);
   if (peak > 0) for (let i = 0; i < n; i++) d[i] = Math.tanh((drive * d[i]) / peak) / k;
   // 1 ms fade-in and fade-out: no clicks on the click.
   const f = Math.min(n >> 2, Math.round(sr * 0.001));
@@ -37,10 +37,12 @@ const VOICES = {
   }),
   // Woodblock: two resonant modes and a short knock
   wood: (ctx, f) => synth(ctx, 0.08, (t) => Math.sin(TAU * f * t) * Math.exp(-t * 50) + 0.55 * Math.sin(TAU * f * 2.42 * t) * Math.exp(-t * 85) + 0.15 * noise() * Math.exp(-t * 900)),
+  // Soft: a felt mallet on a small wooden bar, round and low, no edge (for quiet practice)
+  soft: (ctx, f) => synth(ctx, 0.12, (t) => (Math.sin(TAU * f * t) * Math.exp(-t * 34) + 0.22 * Math.sin(TAU * f * 3.9 * t) * Math.exp(-t * 90)) * Math.min(1, t / 0.004), 1.1),
   // Plain beep
   beep: (ctx, f) => synth(ctx, 0.06, (t) => Math.sin(TAU * f * t) * Math.min(1, t / 0.0015) * Math.exp(-t * 45)),
 };
-const PITCH = { click: [1750, 1250, 1250], wood: [1180, 860, 860], beep: [1500, 1000, 1000] };
+const PITCH = { click: [1750, 1250, 1250], wood: [1180, 860, 860], soft: [988, 740, 740], beep: [1500, 1000, 1000] };
 const GAINS = [1, 0.74, 0.44]; // accent, beat, subdivision
 
 // ---------- tempo names, as printed in scores ----------
