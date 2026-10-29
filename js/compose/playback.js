@@ -83,6 +83,13 @@ export const PLAY_STYLES = { expressive: 'Expressive', straight: 'Exact' };
 // The "expressive" style plays like a musician: it shapes phrases and long notes, leans on strong
 // beats, connects slurred notes, adds vibrato where players would, plays ornaments, rolls
 // arpeggios, follows rit. and accel., and slows a little at the very end.
+// The written dynamic (0..1, as DYN_VEL) as a pianist's key force (of 127): pp 38, p 46, mf 66,
+// f 84, ff 94 — a real pianist's range, which the concert grand's recordings then colour.
+const PIANO_KEY = [[0, 20], [DYN_VEL.pppp, 26], [DYN_VEL.ppp, 31], [DYN_VEL.pp, 38], [DYN_VEL.p, 46], [DYN_VEL.mp, 56], [DYN_VEL.mf, 66], [DYN_VEL.f, 84], [DYN_VEL.ff, 94], [DYN_VEL.fff, 104], [1, 110], [1.3, 118]];
+function pianoKey(x) {
+  for (let i = 1; i < PIANO_KEY.length; i++) if (x <= PIANO_KEY[i][0]) { const [a, va] = PIANO_KEY[i - 1], [b, vb] = PIANO_KEY[i]; return (va + (vb - va) * (x - a) / Math.max(1e-6, b - a)) / 127; }
+  return 118 / 127;
+}
 export function buildTimeline(score, { from = 0, humanize = true } = {}) {
   const style = (score.sound && score.sound.style) || 'expressive';
   const expr = style !== 'straight';
@@ -200,7 +207,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       AUTO_PED.set(part.id, segs);
     }
   }
-  for (const { st, part, inst } of info) {
+  for (const { st, part, inst, si } of info) {
     const sid = part.sound || inst.sound;
     const sustained = SUSTAIN.test(sid);
     const keyed = !sustained;
@@ -221,14 +228,20 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
       const f = flat[i];
       // (sfz, sffz, fz: a strong accent on the note; fp, sfp: loud then soft at once)
       const dk = f.ev.dyn === 'sffz' || f.ev.dyn === 'fz' ? 'sfz' : f.ev.dyn === 'sfp' ? 'fp' : f.ev.dyn;
-      if (f.ev.dyn && DYN_VEL[f.ev.dyn] !== undefined) vel = DYN_VEL[f.ev.dyn] * (dk === 'sfz' || dk === 'fp' ? 0.8 : 1);
-      f.vel = vel;
+      // (sf, sfz, fz, rfz: an accent on that one note, stronger than what is around it, and then
+      // the music goes on at the level it had: in a p passage, sf is a p player's accent)
+      const oneNote = (dk === 'sfz' || dk === 'sf' || dk === 'rfz') && (globalThis.__sfOne ?? 1);
+      if (oneNote) { f.vel = Math.min(1, Math.max(vel + 0.24, DYN_VEL.mf)); }
+      else {
+        if (f.ev.dyn && DYN_VEL[f.ev.dyn] !== undefined) vel = DYN_VEL[f.ev.dyn] * (dk === 'sfz' || dk === 'fp' ? 0.8 : 1);
+        f.vel = vel;
+      }
       f.accent = dk === 'sfz' || dk === 'sf' || dk === 'rfz' ? 'sfz' : dk === 'fp' ? 'fp' : null;
-      if (dk === 'fp' || dk === 'sfz') vel = DYN_VEL.p + (dk === 'sfz' ? 0.2 : 0);
+      if (dk === 'fp' || (dk === 'sfz' && !oneNote)) vel = DYN_VEL.p + (dk === 'sfz' ? 0.2 : 0);
       if (f.ev.hp === '<' || f.ev.hp === '>') {
         let j = i + 1;
         while (j < flat.length && !flat[j].ev.dyn && flat[j].ev.hp !== 'end') j++;
-        const target = j < flat.length && flat[j].ev.dyn ? DYN_VEL[flat[j].ev.dyn] ?? vel : Math.max(0.1, Math.min(1, vel + (f.ev.hp === '<' ? 0.22 : -0.22)));
+        const target = j < flat.length && flat[j].ev.dyn ? DYN_VEL[flat[j].ev.dyn] ?? vel : Math.max(0.1, Math.min(1, vel + (f.ev.hp === '<' ? 1 : -1) * (globalThis.__hpStep ?? 0.14)));
         const t0 = f.t, t1 = j < flat.length ? flat[j].t : f.t + f.dur;
         for (let k = i; k < j && k < flat.length; k++) flat[k].vel = vel + (target - vel) * ((flat[k].t - t0) / Math.max(0.01, t1 - t0));
         f.env = [[t1, target / Math.max(0.05, vel)]];
@@ -245,12 +258,14 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         if (!inSp(flat[i], sp) || (i > 0 && cont(flat[i - 1], flat[i]))) continue;
         let j = i; while (j + 1 < flat.length && cont(flat[j], flat[j + 1])) j++;
         const start = flat[i].vel;
-        const after = flat[j + 1];
+        // (the next note after it, past any rests: a dynamic there is where the hairpin goes)
+        let ka = j + 1; while (ka < flat.length && (!flat[ka].ev.notes || flat[ka].ev.rest) && !flat[ka].ev.dyn) ka++;
+        const after = flat[ka];
         const up = sp.dir === '<';
         // the level it arrives at: a dynamic on its last note, or on the note just after it
         const endDyn = j > i && flat[j].ev.dyn && DYN_VEL[flat[j].ev.dyn] !== undefined ? DYN_VEL[flat[j].ev.dyn] : null;
-        let target = endDyn ?? (after && after.ev.dyn && DYN_VEL[after.ev.dyn] !== undefined ? DYN_VEL[after.ev.dyn] : Math.max(0.1, Math.min(1, start + (up ? 0.3 : -0.3))));
-        if (up && target <= start) target = Math.min(1, start + 0.2); if (!up && target >= start) target = Math.max(0.08, start - 0.2);
+        let target = endDyn ?? (after && after.ev.dyn && DYN_VEL[after.ev.dyn] !== undefined ? DYN_VEL[after.ev.dyn] : Math.max(0.1, Math.min(1, start + (up ? 1 : -1) * (globalThis.__hpStep ?? 0.14))));
+        if (up && target <= start) target = Math.min(1, start + 0.14); if (!up && target >= start) target = Math.max(0.08, start - 0.14);
         // over several notes it arrives on the last one (as Sibelius plays it); over one note it swells through it
         const single = j === i;
         const last = single ? j : j - 1;
@@ -377,7 +392,10 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         if (humanize && ni === 0) drift = drift * 0.65 + rnd() * 0.7;
         const h = humanize ? drift : 0;
         const t0 = Math.max(0, f.t + gOff + h * (expr ? 0.008 : 0.012) + (roll ? ni * 0.045 : 0));
-        let v = Math.max(0.05, Math.min(1, f.vel * (1 + (humanize ? rnd() * 0.05 : 0))));
+        // (a keyboard's written dynamics as a pianist's key velocities: f about 86, p about 46)
+        // (the piano: the written dynamics as a pianist's key force, p about 46 and f about 86 of 127)
+        const kv = (x) => (sid === 'piano' && (globalThis.__keyMap ?? 1) ? pianoKey(x) : x);
+        let v = Math.max(0.05, Math.min(1, kv(f.vel) * (1 + (humanize ? rnd() * 0.05 : 0))));
         const head = n.head || ev.head;
         // an artificial harmonic: the stopped note sounds two octaves up, the touched note is silent
         if (head === 'harm' && !inst.unpitched) return;
@@ -385,10 +403,21 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         let pm = midi;
         if (harmBelow && ni === 0 && sorted.length > 1) pm = midi + 24;
         if (head === 'ghost') v *= 0.5;
-        // a chord on a keyboard or a harp: its top note sings out a little over the others
-        if (expr && keyed && sorted.length > 1 && !inst.unpitched) v *= ni === sorted.length - 1 ? 1.07 : 0.95;
+        // a pianist's balance: in the right hand the top of a chord sings and the inner notes are
+        // under it, the left hand stays under the right with its bass a little out, and quick
+        // accompanying figures are lighter (the steps of a MIDI velocity, as a pianist plays them)
+        let lead = 0;
+        if (expr && keyed && !inst.unpitched && (globalThis.__voicing ?? 1)) {
+          const lower = (si || 0) > 0 && part.staves.length > 1, top = ni === sorted.length - 1, bot = ni === 0;
+          let dv = 0;
+          if (sorted.length > 1) dv += lower ? (bot ? 3 : -5) : (top ? 5 : -6);
+          else if (f.len <= WHOLE / 16) dv -= lower ? 6 : 4;
+          if (lower) dv -= 3;
+          v = Math.max(0.05, Math.min(1, v + dv / 127));
+          if (!lower && top && sorted.length > 1) lead = 0.008;   // (the melody a touch before the chord)
+        } else if (expr && keyed && sorted.length > 1 && !inst.unpitched) v *= ni === sorted.length - 1 ? 1.07 : 0.95;
         if (head === 'x' && !inst.unpitched) v *= 0.75;
-        const base = { part: part.id, sid: sidF, midi: pm, t: t0, dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
+        const base = { part: part.id, sid: sidF, midi: pm, t: Math.max(0, t0 - lead), dur: dur - (roll ? ni * 0.045 : 0), vel: v, art: f.accent || art, env: f.env, ids, m: f.m, pos: f.pos };
         if (glissFrom.has(f) && ni === sorted.length - 1 && !inst.unpitched) { base.glissTo = glissFrom.get(f); base.dur = dur + 0.03; base.legato = true; }
         // which recording: plucked, short and bouncing (spiccato), or the bow held
         base.kind = f.pizz ? 'pizz' : (art === 'stacc' || art === 'stacciss') && dur < 0.5 ? 'spic' : 'sus';

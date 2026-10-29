@@ -6,7 +6,7 @@
 // plays through its own channel: volume, pan, tone (low, high, brightness), attack, release and
 // how much of the shared concert-hall reverb it gets.
 import { getCtx, master } from './audio.js';
-import { makeImpulse } from './recorder.js';
+import { makeImpulse, loadRefIR, refReady } from './recorder.js';
 
 export const SOUND_LABELS = {
   piano: 'Grand piano', epiano: 'Electric piano', harpsichord: 'Harpsichord', organ: 'Church organ', accordion: 'Accordion', celesta: 'Celesta',
@@ -122,6 +122,7 @@ function evenGain(I, sid, m, layer, rings) {
   // (the grand piano: its three strengths as loud as each other, the register only half evened, as
   // a piano's treble is lighter by nature)
   if (sid === 'grand2') {
+    if (globalThis.__pianoPure ?? 1) return 1;   // (each note as loud as it was recorded, like the piano itself)
     let r4 = MED.get('grand2:4');
     if (r4 === undefined) { const v = Object.entries(R).filter(([k]) => k.endsWith('_4')).map(([, x]) => x).sort((a, b) => a - b); r4 = v[v.length >> 1] || 1; MED.set('grand2:4', r4); }
     const rm = R[m + '_4'] || r4;
@@ -164,7 +165,9 @@ export class Sampler {
   live() { const ctx = getCtx(); if (this.ctx !== ctx) this.attach(ctx, master()); return this; }
   setRoom(room) {
     this.room = ROOMS[room] ? room : 'hall';
-    if (this.ctx) this.verb.buffer = makeImpulse(this.ctx, ROOMS[this.room]);
+    // (the concert hall: the room of the reference renders, heard at its own level)
+    const ref = this.room === 'hall' && (globalThis.__irRef ?? 1);
+    if (this.ctx) { this.verb.normalize = !ref; this.verb.buffer = makeImpulse(this.ctx, ref ? { ...ROOMS.hall, ref: true } : ROOMS[this.room]); this.verb._ref = ref && refReady(this.ctx.sampleRate); }
   }
   setRoomMix(v) { this.roomMix = v; if (this.verbIn) this.verbIn.gain.value = v; }
 
@@ -267,6 +270,12 @@ export class Sampler {
   }
   // Load every sample a list of notes needs, before playing starts.
   async prepare(list) {
+    // (the concert hall's room, for playing here and for a file made at 48 kHz)
+    if (globalThis.__irRef ?? 1) {
+      const rates = new Set([getCtx().sampleRate, 48000, 44100].filter(Boolean));
+      const got = await Promise.all([...rates].map((r) => loadRefIR(r)));
+      if (got.some(Boolean) && this.ctx && this.room === 'hall' && this.verb && !this.verb._ref) { this.setRoom(this.room); }
+    }
     const jobs = new Map();
     for (const { sid, midi, kind, vel } of list) jobs.set(sid + ':' + midi + ':' + (kind || '') + ':' + Math.round((vel ?? 0.7) * 20), this.sampleFor(sid, midi, kind || 'sus', vel ?? 0.7).catch(() => null));
     await Promise.all(jobs.values());
@@ -290,7 +299,8 @@ export class Sampler {
       let node = ch.input;
       ch.body = [];
       const bk = (sid === 'cello' || sid === 'viola') && !this.plain && (globalThis.__solo ?? 1) ? sid + '_solo' : sid;
-      for (const [type, f, gdb, q] of (globalThis.__bodyEq || BODY)[bk] || []) {
+      const pureBody = sid === 'piano' && (globalThis.__pianoPure ?? 1) && !this.plain;
+      for (const [type, f, gdb, q] of (pureBody && !globalThis.__bodyEq ? [] : ((globalThis.__bodyEq || BODY)[bk] || []))) {
         const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.gain.value = gdb; if (q) b.Q.value = q;
         node.connect(b); node = b; ch.body.push(b);
       }
@@ -309,15 +319,22 @@ export class Sampler {
     ch.gain.gain.setTargetAtTime(on ? Math.pow(mix.vol, 1.6) * 1.1 : 0, t, 0.02);
     ch.low.gain.setTargetAtTime(mix.low * 12, t, 0.02);
     ch.high.gain.setTargetAtTime(mix.high * 12, t, 0.02);
-    ch.bright.frequency.setTargetAtTime(1500 * Math.pow(14, mix.bright), t, 0.02);   // 1.5 kHz .. 21 kHz
+    // (the concert grand: its recordings are heard as they are, the brightness control only takes away)
+    const pureCh = ch.sid === 'piano' && (globalThis.__pianoPure ?? 1) && !this.plain;
+    ch.bright.frequency.setTargetAtTime(pureCh ? Math.min(22000, 1500 * Math.pow(14, Math.min(1, mix.bright + 0.5))) : 1500 * Math.pow(14, mix.bright), t, 0.02);
     if (ch.pan.pan) ch.pan.pan.setTargetAtTime(mix.pan ?? DEFAULT_PAN[ch.sid] ?? 0, t, 0.02);
-    ch.send.gain.setTargetAtTime(mix.reverb * 0.9, t, 0.02);
+    ch.send.gain.setTargetAtTime(this.room === 'hall' && (globalThis.__irRef ?? 1) ? mix.reverb * (0.55 / 0.35) * (globalThis.__refWet ?? 1) : mix.reverb * 0.9, t, 0.02);
   }
 
   // Play one note. vel 0..1 (soft..loud), dur seconds, t start time. Returns the voice.
   // opts: { art: 'stacc'|'ten'|'acc'|'marc'|'legato', env: [[time, level]] (for hairpins) }
   noteOn(ch, sample, midi, t, dur, vel = 0.7, opts = {}) {
     if (!sample) return null;
+    // The concert grand plays as a sampler of a real piano should: the one recording of the
+    // strength played (never two mixed, which blurs the sound), in tune, at its own level plus the
+    // key's force, the damper falling as on the instrument (the method of the reference renders)
+    const pure = sample.set === 'grand2' && (globalThis.__pianoPure ?? 1);
+    if (pure && sample.pair) sample = sample.w < 0.5 ? sample.pair : Object.assign(Object.create(sample), { pair: null });
     // two recordings blended (soft and loud): each played, their levels sharing the note (equal power)
     if (sample.pair && !opts.blend) {
       const hu = (Math.random() - 0.5) * 4;   // (the two in tune with each other)
@@ -327,7 +344,7 @@ export class Sampler {
     const ctx = this.ctx, sid = ch.sid, mix = ch.mix || DEFAULT_MIX();
     const src = ctx.createBufferSource(); src.buffer = sample.buf;
     // no two notes quite the same: a touch of pitch and level variation, as with a real player
-    const human = (opts.human ?? (Math.random() - 0.5) * 4) + (opts.tune || 0);
+    const human = pure ? 0 : (opts.human ?? (Math.random() - 0.5) * 4) + (opts.tune || 0);
     const cents = (midi - sample.midi) * 100 + 1200 * Math.log2(this.tuning / 440) + human + (sample.tc || 0);
     src.playbackRate.value = Math.pow(2, cents / 1200);
     // (a real recording played short, or plucked: it rings as recorded)
@@ -377,26 +394,27 @@ export class Sampler {
       const lastT = AT[lv.length - 1] - AT[i0];
       cg.gain.linearRampToValueAtTime(1, t + lastT + 0.12);
     }
-    if (cg) src.connect(tone).connect(cg).connect(g).connect(ch.input); else src.connect(tone).connect(g).connect(ch.input);
+    if (pure) src.connect(g).connect(ch.input);
+    else if (cg) src.connect(tone).connect(cg).connect(g).connect(ch.input); else src.connect(tone).connect(g).connect(ch.input);
     // (real recordings, now all as loud as each other: the dynamic gives the whole range, from a
     // true pp to ff, in even steps of about 3.5 dB from one dynamic to the next)
     // (the concert grand: its recordings are already as loud as the strength they were played at;
     // softer than its softest recording, it is turned down)
     const natural = sample.set === 'grand2';
-    let level = (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) : sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
-    if (opts.art === 'acc' || opts.art === 'marc') level = Math.min(1.15, level * 1.3);
+    let level = pure ? Math.pow(Math.max(0.02, Math.min(1, vel)), globalThis.__g2vt ?? 1.46) * (sample.gain || 4) * 0.9 : (natural ? Math.pow(Math.min(1, sample.under ?? 1), 1.6) * Math.pow(Math.max(0.05, Math.min(1, vel)), globalThis.__g2vt ?? 0) : sample.real ? Math.pow(10, (-26 + 26 * Math.max(0, Math.min(1.1, vel))) / 20) : 0.12 + Math.pow(vel, 1.5) * 0.88) * (sample.gain || 4) * 0.55 * (0.97 + Math.random() * 0.06) * (opts.blend ?? 1);
+    if ((opts.art === 'acc' || opts.art === 'marc') && !pure) level = Math.min(1.15, level * 1.3);
     // a connected (slurred) note starts past the sample's attack and fades in: no new bow or tongue
     const connect = !!opts.connect && !decaying;
     // long notes start gently and grow (a bow settling, a breath filling); short ones speak at once
     const accented = opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'stacc' || opts.art === 'stacciss';
     const shape = !decaying && !accented && !connect;
     const lenAtk = shape ? (dur > 1.2 ? 0.075 : dur > 0.6 ? 0.045 : dur > 0.25 ? 0.02 : 0.006) * (1.15 - vel * 0.5) * (real ? (globalThis.__lenAtkF ?? 0.4) : 1) : 0;
-    const atk = Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
+    const atk = pure ? 0.0015 : Math.max(bowed && !connect ? 0.018 : 0.004, mix.attack * 0.25 + (opts.art === 'legato' ? 0.03 : 0) + (connect ? 0.045 : 0) + lenAtk);
     let hold = dur;
     if (opts.art === 'stacc') hold = Math.min(dur, Math.max(0.07, dur * 0.42));
     else if (opts.art === 'stacciss') hold = Math.min(dur, Math.max(0.05, dur * 0.25));
     else if (opts.art === 'ten' || opts.art === 'legato') hold = dur * 1.02;
-    else hold = Math.max(0.05, dur * (BOWED.has(sid) || BLOWN.has(sid) ? (globalThis.__holdF ?? 1) : 0.94));
+    else hold = pure ? Math.max(0.03, dur) : Math.max(0.05, dur * (BOWED.has(sid) || BLOWN.has(sid) ? (globalThis.__holdF ?? 1) : 0.94));
     // a sharp, bright edge for accents
     let offset = 0;
     if ((opts.art === 'stacc' || opts.art === 'acc' || opts.art === 'marc') && !decaying && !bowed) offset = 0.02;
@@ -427,8 +445,8 @@ export class Sampler {
       src.playbackRate.exponentialRampToValueAtTime(Math.max(0.05, r1), t + dur);
     }
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(level * (shape && dur > 0.6 ? 0.86 : 1), t + atk);
-    if (shape && dur > 0.6 && !(opts.env && opts.env.length)) g.gain.linearRampToValueAtTime(level, t + atk + Math.min(0.35, dur * 0.3));
+    g.gain.linearRampToValueAtTime(level * (shape && dur > 0.6 && !pure ? 0.86 : 1), t + atk);
+    if (shape && dur > 0.6 && !pure && !(opts.env && opts.env.length)) g.gain.linearRampToValueAtTime(level, t + atk + Math.min(0.35, dur * 0.3));
     // the sound of the bow catching the string or the breath starting the note
     if ((BOWED.has(sid) || BLOWN.has(sid)) && !connect && !real && this.noise) {
       const n = ctx.createBufferSource(); n.buffer = this.noise;
@@ -447,11 +465,24 @@ export class Sampler {
         if (!ownColour) tone.frequency.linearRampToValueAtTime(Math.min(20000, (900 + Math.pow(Math.min(1, vel * ev), 1.7) * 17000)), et);
       }
     }
-    if ((opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'fp') && !decaying && hold > 0.25) {
+    if ((opts.art === 'acc' || opts.art === 'marc' || opts.art === 'sfz' || opts.art === 'fp') && !decaying && !pure && hold > 0.25) {
       g.gain.setTargetAtTime(level * (opts.art === 'fp' ? 0.35 : 0.62), t + 0.08, 0.06);
     }
     const rel = (RELEASE[sid] ?? 0.2) * (mix.release ?? 1);
     const end = t + hold;
+    if (pure) {
+      // the damper: about a quarter of a second in the middle, a little longer in the bass; the top
+      // strings have no damper and ring on
+      const tc = midi >= 89 ? 5 : midi > 60 ? 0.22 : 0.32;
+      g.gain.setValueAtTime(level, end);
+      g.gain.setTargetAtTime(0, end, tc);
+      const stopAt = end + Math.min(tc * 5, 6);
+      src.start(t, offset); src.stop(Math.min(stopAt, t + (sample.buf.duration - offset) / Math.max(0.01, src.playbackRate.value) + 0.01));
+      const v = { src, g, end: stopAt };
+      this.voices.add(v);
+      src.onended = () => { this.voices.delete(v); try { g.disconnect(); tone.disconnect(); if (cg) cg.disconnect(); } catch {} };
+      return v;
+    }
     if (decaying) {
       // ringing instruments: the note sounds on until it is damped (or rings out)
       const ringFor = sid === 'harp' || sid === 'vibraphone' || sid === 'bells' || sid === 'glockenspiel' || sid === 'celesta' ? Math.max(hold, 1.8) : sample.kind === 'pizz' ? Math.max(hold, 0.6) : hold;

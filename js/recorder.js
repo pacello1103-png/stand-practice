@@ -226,8 +226,63 @@ export function impulseData(sr, room) {
   return out;
 }
 const IR_CACHE = new Map();
+// The hall of the reference renders: a diffuse tail (RT60 1.9 s in the low and middle, the top
+// dying in about half of that), a few early reflections between 22 and 78 ms after an 18 ms gap.
+// Its energy is 1 (the convolver does not rescale it): the send sets how much room is heard.
+export function refImpulseData(sr, rt60 = 1.9, pre = 0.018) {
+  const n = Math.round(rt60 * 1.3 * sr), out = [new Float32Array(n), new Float32Array(n)];
+  let seed = 12345;
+  const u = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return (seed + 0.5) / 4294967296; };
+  const gauss = () => Math.sqrt(-2 * Math.log(u())) * Math.cos(2 * Math.PI * u());
+  // (a second-order Butterworth low-pass at 700 Hz splits low from high)
+  const w0 = 2 * Math.PI * 700 / sr, al = Math.sin(w0) / (2 * Math.SQRT1_2), cs = Math.cos(w0);
+  const b0 = (1 - cs) / 2, b1 = 1 - cs, b2 = (1 - cs) / 2, a0 = 1 + al, a1 = -2 * cs, a2 = 1 - al;
+  for (let ch = 0; ch < 2; ch++) {
+    const d = out[ch]; let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < n; i++) {
+      const x = gauss(), lo = (b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+      x2 = x1; x1 = x; y2 = y1; y1 = lo;
+      const t = i / sr;
+      d[i] = lo * Math.exp(-6.91 * t / rt60) + 0.6 * (x - lo) * Math.exp(-6.91 * t / (rt60 * 0.55));
+    }
+  }
+  for (let k = 0; k < 14; k++) {
+    const dd = pre + 0.004 + u() * 0.056, ch = k % 2;
+    out[ch][Math.round(dd * sr)] += (0.25 + u() * 0.35) * (u() > 0.5 ? 1 : -1);
+  }
+  const p0 = Math.round(pre * sr); for (const d of out) d.fill(0, 0, p0);
+  let e = 0; for (const d of out) for (let i = 0; i < n; i++) e += d[i] * d[i];
+  const g = 1 / Math.sqrt(e); for (const d of out) for (let i = 0; i < n; i++) d[i] *= g;
+  return out;
+}
+// The same hall exactly as the reference renders had it (their room, saved as a file): loaded once
+// for each sample rate in use; until it is here, the same kind of room made on the spot stands in.
+const REF_LOADING = new Map();
+export const refReady = (sr) => IR_CACHE.has(sr + ':ref');
+export function loadRefIR(sr) {
+  if (IR_CACHE.has(sr + ':ref')) return Promise.resolve(true);
+  if (REF_LOADING.has(sr)) return REF_LOADING.get(sr);
+  const file = Math.abs(sr - 44100) < Math.abs(sr - 48000) ? 'hall_44100.wav' : 'hall_48000.wav';
+  const p = fetch(new URL('../vendor/sounds/ir/' + file, import.meta.url)).then((r) => { if (!r.ok) throw new Error('ir'); return r.arrayBuffer(); })
+    .then((ab) => new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, 1, sr).decodeAudioData(ab))
+    .then((buf) => {
+      const d = [new Float32Array(buf.getChannelData(0)), new Float32Array(buf.numberOfChannels > 1 ? buf.getChannelData(1) : buf.getChannelData(0))];
+      let e = 0; for (const x of d) for (let i = 0; i < x.length; i++) e += x[i] * x[i];
+      const g = 1 / Math.sqrt(e || 1); for (const x of d) for (let i = 0; i < x.length; i++) x[i] *= g;
+      IR_CACHE.set(sr + ':ref', d); return true;
+    }).catch(() => false);
+  REF_LOADING.set(sr, p);
+  return p;
+}
 export function makeImpulse(ctx, room) {
   if (globalThis.__oldVerb) return makeImpulseOld(ctx, room);
+  if (room.ref) {
+    let data = IR_CACHE.get(ctx.sampleRate + ':ref') || IR_CACHE.get(ctx.sampleRate + ':refjs');
+    if (!data) { data = refImpulseData(ctx.sampleRate); IR_CACHE.set(ctx.sampleRate + ':refjs', data); loadRefIR(ctx.sampleRate); }
+    const ir = ctx.createBuffer(2, data[0].length, ctx.sampleRate);
+    ir.getChannelData(0).set(data[0]); ir.getChannelData(1).set(data[1]);
+    return ir;
+  }
   // (made once per room and sample rate: an export or a change of room does not make it again)
   const key = ctx.sampleRate + ':' + room.decay + ':' + room.pre + ':' + room.damp + ':' + (globalThis.__verbLevel ?? '');
   let data = IR_CACHE.get(key);
