@@ -80,14 +80,17 @@ void main(){
   lin *= vec3(1.0 + warmth * 0.16, 1.0 + tint * 0.08, 1.0 - warmth * 0.18) * pow(2.0, light);
   // the light around this point (blurred): shadows lifted and highlights brought down where they
   // are, and clarity (local contrast), without darkening or flattening the whole picture
-  float lb = luma(toLin(texture2D(blur, uv, 4.0).rgb)) * pow(2.0, light);
+  // (two sizes of surroundings together, and the point itself a little: a coarse one alone left a
+  // dark or light halo, a shadow, beside a bright face)
+  float lb = luma(toLin(mix(texture2D(blur, uv, 2.5).rgb, texture2D(blur, uv, 4.0).rgb, 0.5))) * pow(2.0, light);
   float lp = luma(lin);
-  float sh = shadows * 0.9 * (1.0 - smoothstep(0.02, 0.35, lb));
-  float hl = highlights * 0.55 * smoothstep(0.35, 1.0, lb);
+  float la = mix(lb, lp, 0.4);
+  float sh = shadows * 0.9 * (1.0 - smoothstep(0.02, 0.35, la));
+  float hl = highlights * 0.55 * smoothstep(0.35, 1.0, la);
   lin *= pow(2.0, sh - hl);
   if (clarity != 0.0) {
     float lbl = max(lb, 1e-4);
-    float r = clamp(lp / lbl, 0.25, 4.0);
+    float r = clamp(lp / lbl, 0.5, 2.0);
     lin *= pow(r, clarity * 0.5);
   }
   // a soft shoulder when the picture is made brighter: bright parts roll off instead of clipping
@@ -156,6 +159,10 @@ export class Grader {
     try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source); } catch { return null; }
     const p = lookParams(look);
     // the light around each point: the frame made small, with its smaller sizes
+    // (the small picture is let go from where it is read before it is drawn into again: on an iPad,
+    // drawing into a picture still being read did nothing, and the light of an old frame stayed on,
+    // a dark shadow where a face had been)
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, null); gl.activeTexture(gl.TEXTURE0);
     gl.useProgram(this.copy); gl.uniform1i(this.cu, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fb); gl.viewport(0, 0, this.B, this.B);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
