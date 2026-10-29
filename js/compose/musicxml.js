@@ -315,7 +315,10 @@ function guessInst(name, program, clefs) {
   const n = (name || '').toLowerCase();
   let best = null;
   // (the exact name first; else the longest name it begins with: "Violin II" is not "Violin")
-  if (n) best = INSTRUMENTS.find((i) => n === i.name.toLowerCase()) || INSTRUMENTS.filter((i) => n.startsWith(i.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length)[0] || null;
+  if (n) best = INSTRUMENTS.find((i) => n === i.name.toLowerCase()) || null;
+  // (a plural before a name it begins with: "Violini I" is the violins, not a violin)
+  const plural = /\b(violins|violini|violons|violas|viole|cellos|violoncellos|violoncelli|violoncelles|contrabasses|double basses|kontrabässe|contrabassi)\b/.test(n);
+  if (n && !best && !plural) best = INSTRUMENTS.filter((i) => n.startsWith(i.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length)[0] || null;
   // (a plural is a section: violins, violas, cellos, basses)
   if (!best) for (const [k, words] of [['violin1', ['violins', 'violini', 'violons']], ['violas', ['violas', 'viole', 'altos']], ['cellos', ['cellos', 'violoncellos', 'violoncelli', 'violoncelles']], ['contrabasses', ['contrabasses', 'double basses', 'kontrabässe', 'contrabassi']]]) {
     if (words.some((w) => n.includes(w))) { best = INST[k] && k === 'violin1' && /\b(ii|2)\b/.test(n) ? INST.violin2 : INST[k]; break; }
@@ -560,6 +563,14 @@ export function fromMusicXML(xmlText) {
     if (/solo/i.test(p.name || '')) continue;
     const nm = (p.name || '').toLowerCase();
     const to = p.inst === 'violin' ? (/\b(ii|2)\b/.test(nm) ? 'violin2' : 'violin1') : p.inst === 'viola' ? 'violas' : p.inst === 'cello' ? 'cellos' : p.inst === 'contrabass' ? 'contrabasses' : null;
+    if (to && INST[to]) p.inst = to;
+  }
+  // chamber music: "Violin I" and "Violin II" of a string quartet are one player each, not sections
+  // (only a plural name, violins, violini, violoncelli, keeps a section: a string orchestra)
+  if (!orch) for (const p of score.parts) {
+    const nm = (p.name || '').toLowerCase();
+    if (/violins|violini|violons|violas|viole\b|altos|cellos|violoncelli|violoncelles|basses|bassi|kontrab|section|tutti/.test(nm)) continue;
+    const to = p.inst === 'violin1' || p.inst === 'violin2' ? 'violin' : p.inst === 'violas' ? 'viola' : p.inst === 'cellos' ? 'cello' : p.inst === 'contrabasses' ? 'contrabass' : null;
     if (to && INST[to]) p.inst = to;
   }
   // slurs and hairpins were read as marks on notes: turn them into lines

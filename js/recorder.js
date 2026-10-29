@@ -274,11 +274,31 @@ export function loadRefIR(sr) {
   REF_LOADING.set(sr, p);
   return p;
 }
+// A hall's low notes reach two microphones a little apart almost alike (their waves are metres long):
+// below about 250 Hz the two sides of the room are made to share most of their sound, as in a real
+// recording, while above it they stay apart (the width). Energy is kept.
+const LOWCORR = new Map();
+function correlateLows(data, sr) {
+  const c = globalThis.__lowCorr ?? 0.5; if (!c) return data;
+  const key = data[0].length + ':' + sr + ':' + c + ':' + (globalThis.__lowCorrHz ?? 300); if (LOWCORR.get(data) && LOWCORR.get(data).key === key) return LOWCORR.get(data).out;
+  const w0 = 2 * Math.PI * (globalThis.__lowCorrHz ?? 300) / sr, al = Math.sin(w0) / (2 * Math.SQRT1_2), cs = Math.cos(w0);
+  const b0 = (1 - cs) / 2 / (1 + al), b1 = (1 - cs) / (1 + al), b2 = b0, a1 = -2 * cs / (1 + al), a2 = (1 - al) / (1 + al);
+  const lp = (x) => { const y = new Float32Array(x.length); let x1 = 0, x2 = 0, y1 = 0, y2 = 0; for (let i = 0; i < x.length; i++) { const v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v; } return y; };
+  const lo = [lp(data[0]), lp(data[1])], th = Math.asin(Math.min(1, c)) / 2, a = Math.cos(th), b = Math.sin(th);
+  const out = [new Float32Array(data[0].length), new Float32Array(data[1].length)];
+  for (let i = 0; i < out[0].length; i++) {
+    const l = lo[0][i], r = lo[1][i];
+    out[0][i] = data[0][i] - l + a * l + b * r; out[1][i] = data[1][i] - r + a * r + b * l;
+  }
+  LOWCORR.set(data, { key, out });
+  return out;
+}
 export function makeImpulse(ctx, room) {
   if (globalThis.__oldVerb) return makeImpulseOld(ctx, room);
   if (room.ref) {
     let data = IR_CACHE.get(ctx.sampleRate + ':ref') || IR_CACHE.get(ctx.sampleRate + ':refjs');
     if (!data) { data = refImpulseData(ctx.sampleRate); IR_CACHE.set(ctx.sampleRate + ':refjs', data); loadRefIR(ctx.sampleRate); }
+    data = correlateLows(data, ctx.sampleRate);
     const ir = ctx.createBuffer(2, data[0].length, ctx.sampleRate);
     ir.getChannelData(0).set(data[0]); ir.getChannelData(1).set(data[1]);
     return ir;
