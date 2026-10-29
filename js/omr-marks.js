@@ -1068,7 +1068,25 @@ function readWords(read, ctx, comps, taken, hairpins) {
       if (span.length < sp * 1.6) continue;
       const shut = opensRight ? avg(span.slice(0, q)) : avg(span.slice(-q)), open = mv;
       if (globalThis.__wordDbg) globalThis.__wordDbg.push({ hpCols: g.x0, open: +(open / sp).toFixed(2), shut: +(shut / sp).toFixed(2), n: cols.length });
-      if (open < sp * 0.45 || shut > sp * 0.35 || open < shut * 2.5) continue;
+      // (a long, flat wedge may open only a little; it still closes to a point)
+      const longFlat = g.w > sp * 4 && shut < sp * 0.12;
+      if (open < sp * (longFlat ? 0.36 : 0.45) || shut > sp * 0.35 || open < shut * 2.5) continue;
+      // two thin lines: in the open half of a wedge, a column crosses two thin strokes with white
+      // between them (a letter, an ff or a pp, crosses thick strokes or one solid shape)
+      if (globalThis.__hpTwo ?? 1) {
+        let two = 0, tot = 0;
+        const half = opensRight ? span.slice(Math.floor(span.length / 2)) : span.slice(0, Math.ceil(span.length / 2));
+        for (const [x] of half) {
+          let runs = 0, thick = 0, run = 0;
+          for (let y = g.y0; y <= g.y1 + 1; y++) {
+            const k = y * w + x; const on = y <= g.y1 && ctx.C[k] && ids.includes(ctx.labC[k]);
+            if (on) run++; else if (run) { runs++; if (run > sp * 0.32) thick++; run = 0; }
+          }
+          tot++; if (runs === 2 && !thick) two++;
+        }
+        if (globalThis.__wordDbg) globalThis.__wordDbg.push({ hpTwo: g.x0, two, tot });
+        if (tot && two < tot * 0.33) continue;
+      }
       // the opening grows evenly along the wedge (not a slur, a letter or a beam)
       let mono = 0, steps = 0; const seq = opensRight ? span : span.slice().reverse();
       for (let i = q; i + q <= seq.length; i += q) { steps++; if (avg(seq.slice(i, i + q)) >= avg(seq.slice(i - q, i)) - 1) mono++; }

@@ -73,10 +73,10 @@ function phrasesOf(score, order, info) {
   }
   return out;
 }
-const BOWED_SET = /violin|viola|cello|^bass$|strings/;
+const BOWED_SET = /violin|viola|cello|^bass$|^basses$|strings/;
 const secPerTick = (tempo) => 60 / (tempo.bpm * (WHOLE / (tempo.beat || 4)) * (tempo.dotted ? 1.5 : 1));
-const SUSTAIN = /violin|viola|cello|^bass$|strings|choir|oohs|flute|piccolo|recorder|oboe|englishhorn|clarinet|bassoon|sax|horn|trumpet|trombone|tuba|brass|organ|accordion/;
-const VIBRATO = { violin: 14, viola: 13, cello: 12, bass: 8, strings: 9, choir: 9, oohs: 8, flute: 7, piccolo: 6, oboe: 8, englishhorn: 7, bassoon: 5, sopsax: 9, altosax: 10, tenorsax: 10, barisax: 8, horn: 4, trumpet: 5, trombone: 4 };
+const SUSTAIN = /violin|viola|cello|^bass$|^basses$|strings|choir|oohs|flute|piccolo|recorder|oboe|englishhorn|clarinet|bassoon|sax|horn|trumpet|trombone|tuba|brass|organ|accordion/;
+const VIBRATO = { violin: 14, viola: 13, cello: 12, bass: 8, violins: 9, violas: 9, cellos: 9, basses: 7, strings: 9, choir: 9, oohs: 8, flute: 7, piccolo: 6, oboe: 8, englishhorn: 7, bassoon: 5, sopsax: 9, altosax: 10, tenorsax: 10, barisax: 8, horn: 4, trumpet: 5, trombone: 4 };
 export const PLAY_STYLES = { expressive: 'Expressive', straight: 'Exact' };
 
 // Every note of the score as { part, sid, midi, t, dur, vel, art, ids, m, pos }.
@@ -342,7 +342,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
     }
     const inTrill = (f) => trillSpans.some((q) => (f.m > q.a.m || (f.m === q.a.m && f.pos >= q.a.pos)) && (f.m < q.b.m || (f.m === q.b.m && f.pos <= q.b.pos)));
     // pizz. and arco written over the notes of a string instrument: plucked until arco
-    if (/violin|viola|cello|^bass$|strings/.test(sid)) {
+    if (/violin|viola|cello|^bass$|^basses$|strings/.test(sid)) {
       let pz = false;
       for (const f of flat) { const w = String(f.ev.txt || '').toLowerCase(); if (/\barco\b|\bord\./.test(w)) pz = false; if (/pizz/.test(w)) pz = true; f.pizz = pz; }
     }

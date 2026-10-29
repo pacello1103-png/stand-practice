@@ -14,7 +14,7 @@ const ART_XML = { stacc: 'staccato', stacciss: 'staccatissimo', ten: 'tenuto', a
 const ORN_XML = { trill: 'trill-mark', mord: 'mordent', prall: 'inverted-mordent', turn: 'turn', turnInv: 'inverted-turn' };
 const OTT = { '8va': 1, '8vb': 1, '15ma': 1, '15mb': 1 };
 const JUMP_WORDS = { dc: 'D.C.', dcfine: 'D.C. al Fine', dccoda: 'D.C. al Coda', ds: 'D.S.', dsfine: 'D.S. al Fine', dscoda: 'D.S. al Coda', tocoda: 'To Coda', fine: 'Fine' };
-const GM = { piano: 1, harpsichord: 7, celesta: 9, glockenspiel: 10, vibraphone: 12, marimba: 13, xylophone: 14, bells: 15, organ: 20, accordion: 22, guitar: 25, steelguitar: 26, eguitar: 28, jazzbass: 33, ebass: 34, violin: 41, viola: 42, cello: 43, bass: 44, tremolo: 45, pizz: 46, harp: 47, timpani: 48, strings: 49, choir: 53, oohs: 54, trumpet: 57, trombone: 58, tuba: 59, horn: 61, brass: 62, sopsax: 65, altosax: 66, tenorsax: 67, barisax: 68, oboe: 69, englishhorn: 70, bassoon: 71, clarinet: 72, piccolo: 73, flute: 74, recorder: 75, banjo: 106, woodblock: 116, drum: 119, epiano: 5 };
+const GM = { piano: 1, harpsichord: 7, celesta: 9, glockenspiel: 10, vibraphone: 12, marimba: 13, xylophone: 14, bells: 15, organ: 20, accordion: 22, guitar: 25, steelguitar: 26, eguitar: 28, jazzbass: 33, ebass: 34, violin: 41, viola: 42, cello: 43, bass: 44, violins: 49, violas: 49, cellos: 49, basses: 49, tremolo: 45, pizz: 46, harp: 47, timpani: 48, strings: 49, choir: 53, oohs: 54, trumpet: 57, trombone: 58, tuba: 59, horn: 61, brass: 62, sopsax: 65, altosax: 66, tenorsax: 67, barisax: 68, oboe: 69, englishhorn: 70, bassoon: 71, clarinet: 72, piccolo: 73, flute: 74, recorder: 75, banjo: 106, woodblock: 116, drum: 119, epiano: 5 };
 
 export function toMusicXML(score0) {
   const score = spansToMarks(score0);
@@ -314,7 +314,12 @@ export async function readMusicFile(file) {
 function guessInst(name, program, clefs) {
   const n = (name || '').toLowerCase();
   let best = null;
-  for (const i of INSTRUMENTS) if (n && (n === i.name.toLowerCase() || n.startsWith(i.name.toLowerCase()))) { best = i; break; }
+  // (the exact name first; else the longest name it begins with: "Violin II" is not "Violin")
+  if (n) best = INSTRUMENTS.find((i) => n === i.name.toLowerCase()) || INSTRUMENTS.filter((i) => n.startsWith(i.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length)[0] || null;
+  // (a plural is a section: violins, violas, cellos, basses)
+  if (!best) for (const [k, words] of [['violin1', ['violins', 'violini', 'violons']], ['violas', ['violas', 'viole', 'altos']], ['cellos', ['cellos', 'violoncellos', 'violoncelli', 'violoncelles']], ['contrabasses', ['contrabasses', 'double basses', 'kontrabässe', 'contrabassi']]]) {
+    if (words.some((w) => n.includes(w))) { best = INST[k] && k === 'violin1' && /\b(ii|2)\b/.test(n) ? INST.violin2 : INST[k]; break; }
+  }
   if (!best) for (const [k, words] of [['violin', ['violin', 'vln', 'violino']], ['viola', ['viola', 'vla']], ['cello', ['cello', 'violoncell', 'vc']], ['contrabass', ['contrabass', 'double bass', 'kontrabass']], ['flute', ['flute', 'flauto', 'fl.']], ['oboe', ['oboe']], ['clarinet', ['clarinet']], ['bassoon', ['bassoon', 'fagott']], ['horn', ['horn', 'corno']], ['trumpet', ['trumpet', 'tromba']], ['trombone', ['trombone']], ['tuba', ['tuba']], ['piano', ['piano', 'klavier']], ['harp', ['harp', 'arpa']], ['guitar', ['guitar']], ['soprano', ['soprano']], ['alto', ['alto']], ['tenor', ['tenor']], ['bass', ['bass']], ['timpani', ['timpani', 'pauken']], ['organ', ['organ']], ['voice', ['voice', 'voce', 'canto']]]) {
     if (words.some((w) => n.includes(w))) { best = INST[k]; break; }
   }
@@ -547,6 +552,16 @@ export function fromMusicXML(xmlText) {
   score.measures[score.measures.length - 1].bar = 'final';
   const n = score.parts.reduce((a, p) => a + p.staves.length, 0);
   score.layout.staffMm = n <= 2 ? 7 : n <= 4 ? 6.5 : n <= 8 ? 5.5 : 4.8;
+  // an orchestra's strings are sections (a part called solo stays solo): Violin I and II, violas,
+  // cellos and basses with winds and brass around them
+  const fam = (id) => (INST[id] || {}).fam;
+  const orch = score.parts.length >= 8 || (score.parts.some((p) => fam(p.inst) === 'brass') && score.parts.some((p) => fam(p.inst) === 'wind') && score.parts.some((p) => fam(p.inst) === 'str'));
+  if (orch) for (const p of score.parts) {
+    if (/solo/i.test(p.name || '')) continue;
+    const nm = (p.name || '').toLowerCase();
+    const to = p.inst === 'violin' ? (/\b(ii|2)\b/.test(nm) ? 'violin2' : 'violin1') : p.inst === 'viola' ? 'violas' : p.inst === 'cello' ? 'cellos' : p.inst === 'contrabass' ? 'contrabasses' : null;
+    if (to && INST[to]) p.inst = to;
+  }
   // slurs and hairpins were read as marks on notes: turn them into lines
   delete score._v2spans;
   return migrateScore(score);

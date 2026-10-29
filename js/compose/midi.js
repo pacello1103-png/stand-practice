@@ -8,7 +8,7 @@ import { buildTimeline } from './playback.js';
 const PROGRAM = {
   piano: 0, epiano: 4, harpsichord: 6, celesta: 8, organ: 19, accordion: 21,
   guitar: 24, steelguitar: 25, eguitar: 27, ebass: 33, jazzbass: 32, banjo: 105,
-  violin: 40, viola: 41, cello: 42, bass: 43, tremolo: 44, pizz: 45, harp: 46, timpani: 47, strings: 48,
+  violin: 40, viola: 41, cello: 42, bass: 43, violins: 48, violas: 48, cellos: 48, basses: 48, tremolo: 44, pizz: 45, harp: 46, timpani: 47, strings: 48,
   choir: 52, oohs: 53, trumpet: 56, trombone: 57, tuba: 58, horn: 60, brass: 61,
   sopsax: 64, altosax: 65, tenorsax: 66, barisax: 67, oboe: 68, englishhorn: 69, bassoon: 70, clarinet: 71,
   piccolo: 72, flute: 73, recorder: 74,

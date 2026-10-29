@@ -1293,7 +1293,7 @@ function readStaff(s, ctx, header) {
   for (const hd of heads) {
     if (hd.acc !== undefined || hd.left < startX) continue;
     let bestK = null;
-    for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ['natural', 0.8, 1.6, 1.6], ['flat', 1.0, 2.15, 0.8]]) {
+    for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8]]) {
       const ya = Math.round(hd.cy - up * sp), yb = Math.round(hd.cy + dn * sp);
       for (let x = Math.round(hd.left - sp * 2.2); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
         const xb = Math.min(Math.round(x + W * sp), Math.round(hd.left - sp * 0.04));
@@ -1306,7 +1306,8 @@ function readStaff(s, ctx, header) {
         // (nor the flag of the note just before, hanging off its stem)
         if (cls === 'flat' && heads.some((q) => q !== hd && q.stem && q.beams && q.cx < hd.cx && x0 >= q.stem.x - 2 && x0 - q.stem.x < sp * 1.2 && (q.stem.up ? y0 < q.stem.top + sp * 2.5 : y1 > q.stem.bot - sp * 2.5))) continue;
         const k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
-        if (k.cls === cls && k.d < 0.34 && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
+        if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2)]);
+        if (k.cls === cls && k.d < (cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
       }
     }
     if (!bestK) continue;
@@ -1410,6 +1411,44 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, nCut, pieces: pieces.map((q) => [q.x0, q.x1, q.y0, q.y1]) });
       if (pieces.length) cands.splice(ci, 1, ...pieces);
     }
+    const cClefShape = (x0, x1, y0, y1) => {
+      if (y1 - y0 < sp * 2.4 || y1 - y0 > sp * 4.6 || x1 - x0 < sp * 1.0 || x1 - x0 > sp * 2.4) return false;
+      // (the thick bar: several full columns side by side; a sharp's or a natural's strokes are thin)
+      let run = 0, best = 0, runs = 0;
+      for (let x = x0; x <= x0 + sp * 0.8; x++) { let n = 0; for (let y = y0; y <= y1; y++) if (C[y * w + x]) n++; if (n >= (y1 - y0 + 1) * 0.88) { if (!run) runs++; run++; best = Math.max(best, run); } else run = 0; }
+      const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
+      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cBars: x0, runs, best, bestSp: +(best / sp).toFixed(2), wSp: +((x1 - x0) / sp).toFixed(2), hSp: +((y1 - y0) / sp).toFixed(2), top: +top.toFixed(1), bot: +bot.toFixed(1), sp: +sp.toFixed(1) });
+      // (a C clef is the same above and below its middle line: a note with its stem and an
+      // accidental beside it is not)
+      let both = 0, any = 0; const H = y1 - y0;
+      for (let yy = 0; yy <= H / 2; yy++) for (let x = x0; x <= x1; x++) { const a1 = C[(y0 + yy) * w + x], b1 = C[(y1 - yy) * w + x]; if (a1 || b1) { any++; if (a1 && b1) both++; } }
+      const sym = any ? both / any : 0;
+      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cSym: x0, sym: +sym.toFixed(2) });
+      if (sym < (globalThis.__cSym ?? 0.7)) return false;
+      return runs >= 1 && best >= Math.max(3, sp * (globalThis.__cBarW ?? 0.15)) && x1 - x0 >= sp * 1.3 && top <= 10.5 && bot >= -2.5;
+    };
+    // (a C clef run into the notes before it, by a ledger line or a beam: its right part, where it
+    // stands alone as a C clef)
+    if (globalThis.__clefTrail ?? 1) for (let ci = cands.length - 1; ci >= 0; ci--) {
+      const c = cands[ci];
+      if (c.cut || c.spanning || c.w <= sp * 3.2) continue;
+      const ids = Array.isArray(c.id) ? c.id : [c.id], idS = new Set(ids);
+      const tY = Math.round(yAt(s, 8, c.x1)), bY = Math.round(yAt(s, 0, c.x1));
+      // (inside the staff only: a ledger line above or below may run into the clef)
+      const ya = Math.max(c.y0, Math.round(tY - sp * 0.45)), yb = Math.min(c.y1, Math.round(bY + sp * 0.45));
+      let found = null;
+      for (let xl = Math.round(c.x1 - sp * 2.6); xl <= c.x1 - sp * 1.2 && !found; xl += Math.max(1, Math.round(sp * 0.1))) {
+        // a white column (in this shape) just left of it: the clef stands apart from the notes there
+        let gap = true; for (let y = ya; y <= yb && gap; y++) { const q = y * w + xl - 1; if (C[q] && idS.has(labC[q])) gap = false; }
+        if (!gap) continue;
+        let y0 = Infinity, y1 = -1, x1b = -1; for (let y = ya; y <= yb; y++) for (let x = xl; x <= c.x1; x++) { const q = y * w + x; if (C[q] && idS.has(labC[q])) { if (y < y0) y0 = y; if (y > y1) y1 = y; if (x > x1b) x1b = x; } }
+        if (y1 < 0) continue;
+        if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ trTry: c.x0, xl, x1b, w: +((x1b - xl) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2) });
+        if (cClefShape(xl, x1b, y0, y1)) found = { x0: xl, x1: x1b, y0, y1 };
+      }
+      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ trail: c.x0, x1: c.x1, ya, yb, found });
+      if (found) cands.push({ ...c, ...found, w: found.x1 - found.x0 + 1, h: found.y1 - found.y0 + 1, cut: true, trail: true });
+    }
     // (a clef run into the notes after it, a ledger line or a beam: its left part, where that reads
     // clearly as a clef)
     if (globalThis.__clefLead ?? 1) for (let ci = cands.length - 1; ci >= 0; ci--) {
@@ -1436,7 +1475,7 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg && c.h > sp * 1.7) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), note: noteIn(c.x0, c.x1, c.y0, c.y1) });
       if (used.has(c) || c.h < sp * 1.7 || c.h > sp * 8.5 || c.w > sp * 3.2 || c.w < sp * 0.25) continue;
       // with any pieces of it just beside (the two dots of a bass clef, the bars and the bracket of a C clef)
-      const parts = cands.filter((q) => q !== c && !used.has(q) && q.x0 < c.x1 + sp * 0.6 && q.x1 > c.x0 - sp * 0.2 && q.x1 - c.x0 < sp * 3.2 && Math.min(q.y1, c.y1) - Math.max(q.y0, c.y0) > -sp * 0.6 && q.h < sp * 8.5);
+      const parts = cands.filter((q) => q !== c && !used.has(q) && q.x0 < c.x1 + sp * 0.6 && q.x1 > c.x0 - sp * 0.2 && q.x1 - c.x0 < sp * 3.2 && Math.min(q.y1, c.y1) - Math.max(q.y0, c.y0) > -sp * 0.6 && q.h < sp * 8.5 && !(c.trail && (q.w > sp * 3.2 || q.x0 < c.x0 - sp * 0.2)));
       const all = [c, ...parts.filter((q) => q.h > sp * 0.9)];
       const x0 = Math.min(...all.map((q) => q.x0)), x1 = Math.max(...all.map((q) => q.x1)), y0 = Math.min(...all.map((q) => q.y0)), y1 = Math.max(...all.map((q) => q.y1));
       const ids = all.flatMap((q) => (Array.isArray(q.id) ? q.id : [q.id]));
@@ -1449,7 +1488,11 @@ function readStaff(s, ctx, header) {
       if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ loose: x0, l: lz.slice(0, 3).map((q) => [q.cls, +q.d.toFixed(3)]) });
       // (a bass clef has its two dots: one each side of the 4th line, just right of it)
       const bassDots = () => { const xa = x1 + 1, xb = x1 + sp * 0.9; const dot = (p) => { const y = yAt(s, p, x1); return compsC.some((q) => q.x0 >= xa - 2 && q.x1 <= xb && q.w < sp * 0.6 && q.h < sp * 0.6 && q.w > sp * 0.15 && Math.abs((q.y0 + q.y1) / 2 - y) < sp * 0.35); }; return dot(5) && dot(7); };
-      if ((!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) && lz[0] && ['treble', 'bass', 'alto'].includes(lz[0].cls) && lz[0].d < 0.2 && (!lz[1] || lz[1].d - lz[0].d > 0.015 || (lz[0].cls === 'bass' && bassDots()))) k = { cls: lz[0].cls, d: 0.3 };
+      // (a C clef: on its left, a solid upright bar (and a thin one) the whole height of the sign)
+      const cBars = () => cClefShape(x0, x1, y0, y1);
+      // (a C clef, by its bars, when the likeness puts it among the first few)
+      if ((globalThis.__cBars ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38) && lz.slice(0, 3).some((q) => q.cls === 'alto' && q.d < 0.22) && cBars()) k = { cls: 'alto', d: 0.3 };
+      if ((!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) && lz[0] && ['treble', 'bass', 'alto'].includes(lz[0].cls) && lz[0].d < 0.2 && (!lz[1] || lz[1].d - lz[0].d > 0.015 || (lz[0].cls === 'bass' && bassDots()) || (lz[0].cls === 'alto' && (globalThis.__cBars ?? 1) && cBars()))) k = { cls: lz[0].cls, d: 0.3 };
       // (but a bass clef's two dots, either side of its line, are not a note's)
       const inkDots = () => { const tY = yAt(s, 8, x1), bY = yAt(s, 0, x1); const full = (x) => { for (let y = Math.round(tY) + 1; y < bY - 1; y++) if (!C[y * w + x]) return false; return true; };
         const dot = (p) => { const y = Math.round(yAt(s, p, x1)); let n = 0; for (let x = x1 + 1; x <= Math.round(x1 + sp * 0.8); x++) { if (full(x)) continue; for (let yy = y - Math.round(sp * 0.3); yy <= y + Math.round(sp * 0.3); yy++) if (C[yy * w + x]) n++; } return n >= sp * sp * 0.06 && n <= sp * sp * 0.5; };
@@ -1467,7 +1510,7 @@ function readStaff(s, ctx, header) {
       // a note inside it is believed over a weak likeness
 
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
-      const trustBass = (globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots();
+      const trustBass = ((globalThis.__bassDots ?? 1) && k.cls === 'bass' && k.d <= 0.38 && inkDots()) || ((globalThis.__cBars ?? 1) && k.cls === 'alto' && k.d <= 0.38 && cBars());
       if (ctx.dbg && k.cls === 'bass') (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, bassTrust: trustBass, x1, y7: Math.round(yAt(s, 7, x1)), y5: Math.round(yAt(s, 5, x1)) });
       // (a shape cut out from a barline is believed only as a clear treble clef or a bass clef with its dots)
       if (c.cut && !trustBass && !(k.cls === 'treble' && k.d < 0.3)) continue;
