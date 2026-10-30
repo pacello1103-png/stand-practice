@@ -21,7 +21,22 @@ export function linesOf(A) {
   }
   for (let i = 0; i < lines.length; i++) {
     const L = lines[i];
-    lines[i] = { y0: Math.max(0, L.y0) / H, y1: Math.min(H, L.y1) / H, x0: L.x0 / W, x1: L.x1 / W, cuts: L.cuts.map((x) => x / W) };
+    lines[i] = { y0: Math.max(0, L.y0) / H, y1: Math.min(H, L.y1) / H, x0: L.x0 / W, x1: L.x1 / W, cuts: L.cuts.map((x) => x / W), top: L.top / H, bot: L.bot / H, sp: L.sp / H };
   }
   return lines;
+}
+
+// only real lines of music: as wide as the others (a first line may be set in a little), staves of
+// the size of the page's own
+export function cleanLines(lines) {
+  const ok = (lines || []).filter((L) => L && L.x1 > L.x0 && L.y1 > L.y0);
+  if (!ok.length) return [];
+  const wmax = Math.max(...ok.map((L) => L.x1 - L.x0));
+  const sps = ok.map((L) => L.sp || 0).filter((x) => x > 0).sort((a, b) => a - b), sp = sps.length ? sps[sps.length >> 1] : 0;
+  return ok.filter((L) => (L.x1 - L.x0) >= wmax * 0.45 && (!sp || !L.sp || (L.sp > sp * 0.65 && L.sp < sp * 1.5))).map((L) => {
+    const s = L.sp || 0.01;
+    // (tight around the staves: what is above and below them, not the next line's notes)
+    const y0 = L.top !== undefined ? Math.max(L.y0, L.top - s * 3.4) : L.y0, y1 = L.bot !== undefined ? Math.min(L.y1, L.bot + s * 3.4) : L.y1;
+    return { x0: Math.max(0, L.x0 - 0.008), x1: Math.min(1, L.x1 + 0.008), y0: Math.max(0, y0), y1: Math.min(1, y1) };
+  });
 }

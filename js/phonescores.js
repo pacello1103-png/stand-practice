@@ -10,6 +10,7 @@
 import { db, getSetting, setSetting } from './db.js';
 import { nlog } from './link.js';
 import { looksBlank } from './score.js';
+import { cleanLines } from './picker-lines.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -380,6 +381,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // the reader: tap the right side for the next page, the left for the one before; swipe too
   function showScore(s, copy) {
     PS.view = { s, copy, i: 0 };
+    // (the lines for Play made ready quietly, page after page, while the score is open: Play then
+    // opens at once, even away from the iPad later)
+    const v0 = PS.view;
+    setTimeout(async () => { for (let q = 0; q < countOf(copy); q++) { if (PS.view !== v0) return; if (PP.copyId !== copy.id + copy.stamp) { PP.pages.clear(); PP.lines.clear(); PP.copyId = copy.id + copy.stamp; } const kept = await db.get('files', copy.id + ':s' + copy.stamp + ':play' + q).catch(() => null); if (kept) continue; try { const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i: q }, 30000); if (!d || !Array.isArray(d.lines) || PS.view !== v0) continue; const lines = []; for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: L.img ? await (await fetch(L.img)).blob() : null, ink: L.ink ? await (await fetch(L.ink)).blob() : null }); if (lines.length) await db.put('files', { id: copy.id + ':s' + copy.stamp + ':play' + q, kind: 'ipadplay', lines }).catch(() => {}); } catch { return; } } }, 2500);
     viewer.hidden = false; $('#phvTitle').textContent = s.title;
     $('#phvInk').hidden = false;
     drawPage();
@@ -420,8 +425,6 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
     $('#phvInk').classList.toggle('on', PS.ink);
     $('#phvInk span').textContent = PS.ink ? 'Markings on' : 'Markings off';
-    // (the lines of this page found quietly, a moment after it shows: Play then opens at once)
-    setTimeout(() => { if (PS.view === v && v.i === i0 && !PP.open && typeof linesOfPage === 'function') linesOfPage(v.copy, i0).catch(() => {}); }, 1500);
     // the next page ready ahead
     const n = v.i + 1 < countOf(v.copy) ? await pageOf(v.copy, v.i + 1) : null; if (n && PS.view === v) { const pre = new Image(); const un = URL.createObjectURL(n.img); PS.urls.push(un); pre.src = un; }
   }
@@ -502,9 +505,12 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   pzResetHook = pzReset;
 
   // ---------- Play: the music two lines at a time, as big as the iPhone held sideways allows ----------
-  // Each page's lines of music are found once (in a thread of their own) and kept; a tap, a wink or
-  // the pedal moves on by one line, so the line being played comes up to the top, across pages.
-  const PP = { open: false, p: 0, k: 0, lines: new Map(), imgs: new Map(), finding: new Map(), quietT: 0 };
+  // Only the lines of music (no titles, no text), two at a time; a tap, a wink or the pedal brings
+  // the next two, across the pages. Each line comes from the iPad drawn on its own, sharp, from the
+  // score itself, and is kept here: the next time it opens at once. Away from the iPad, the lines
+  // are cut from the pages already here.
+  const PP = { open: false, p: 0, k: 0, pages: new Map(), loading: new Map(), bmp: new Map(), quietT: 0, lines: new Map() };
+  const halves = [{ y0: 0, y1: 0.5, x0: 0, x1: 1 }, { y0: 0.5, y1: 1, x0: 0, x1: 1 }];
   let LW2 = null, lwSeq2 = 0; const lwWait2 = new Map();
   const linesInThread = (bmp) => new Promise((res) => {
     try {
@@ -519,92 +525,109 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       LW2.postMessage({ id, page: bmp }, [bmp]);
     } catch { res(null); }
   });
-  const halves = [{ y0: 0, y1: 0.5, x0: 0, x1: 1 }, { y0: 0.5, y1: 1, x0: 0, x1: 1 }];
+  // (away from the iPad: the lines found here, on the page picture)
   async function linesOfPage(copy, i) {
     if (PP.lines.has(i)) return PP.lines.get(i);
-    if (PP.finding.has(i)) return PP.finding.get(i);
-    const job = (async () => {
-      const lk = copy.id + ':lines:' + copy.stamp + ':' + i;
-      const kept = await db.get('files', lk).catch(() => null);
-      if (kept && kept.lines) return kept.lines;
-      const p = await pageOf(copy, i); if (!p || !p.img) return halves;
-      let lines = null;
-      try { lines = await linesInThread(await createImageBitmap(p.img)); } catch {}
-      if (lines === null) {
-        // (no thread for it: read here, from a smaller picture)
-        try {
-          const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]);
-          const bmp = await createImageBitmap(p.img); const k = Math.min(1, 1100 / bmp.width);
-          const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-          c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); if (bmp.close) bmp.close();
-          lines = linesOf(await analyse(c)); c.width = c.height = 0;
-        } catch { lines = []; }
-      }
-      // (a page with no lines found, a title page: shown in two halves)
-      if (!lines || !lines.length) lines = halves;
-      await db.put('files', { id: lk, kind: 'ipadlines', lines }).catch(() => {});
-      return lines;
-    })();
-    PP.finding.set(i, job);
-    const lines = await job; PP.finding.delete(i); PP.lines.set(i, lines);
+    const p = await pageOf(copy, i); if (!p || !p.img) return halves;
+    let found = null;
+    try { found = await linesInThread(await createImageBitmap(p.img)); } catch {}
+    let lines = cleanLines(found || []);
+    if (!lines.length) lines = halves;
+    PP.lines.set(i, lines);
     return lines;
   }
-  async function pageImages(copy, i) {
-    if (PP.imgs.has(i)) return PP.imgs.get(i);
-    const p = await pageOf(copy, i); if (!p || !p.img) return null;
-    const img = await createImageBitmap(p.img).catch(() => null);
-    const ink = p.ink && PS.ink ? await createImageBitmap(p.ink).catch(() => null) : null;
-    const v = img ? { img, ink } : null;
-    PP.imgs.set(i, v);
-    // (only the pages around are kept)
-    for (const k of [...PP.imgs.keys()]) if (Math.abs(k - PP.p) > 2) { const o = PP.imgs.get(k); PP.imgs.delete(k); try { o && o.img.close(); o && o.ink && o.ink.close(); } catch {} }
+  const dataBlob = async (u) => (u ? (await fetch(u)).blob() : null);
+  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play' + i;   // (kept with the version's pages, gone with them)
+  // the lines of page i: [{ img, ink, w, h }] (pictures as they are kept)
+  async function playLines(copy, i) {
+    if (PP.pages.has(i)) return PP.pages.get(i);
+    if (PP.loading.has(i)) return PP.loading.get(i);
+    const job = (async () => {
+      const kept = await db.get('files', playKey(copy, i)).catch(() => null);
+      if (kept && kept.lines) return kept.lines;
+      // from the iPad, sharp
+      try {
+        const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i }, 30000);
+        if (d && Array.isArray(d.lines)) {
+          const lines = [];
+          for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: await dataBlob(L.img), ink: await dataBlob(L.ink) });
+          if (lines.length) { await db.put('files', { id: playKey(copy, i), kind: 'ipadplay', lines }).catch(() => {}); return lines; }
+        }
+      } catch {}
+      // here, from the page picture (not kept: the iPad's are sharper)
+      const p = await pageOf(copy, i); if (!p || !p.img) return [];
+      const Ls = await linesOfPage(copy, i);
+      const bmp = await createImageBitmap(p.img).catch(() => null); if (!bmp) return [];
+      const inkB = p.ink ? await createImageBitmap(p.ink).catch(() => null) : null;
+      const out = [];
+      for (const L of Ls) {
+        const sx = L.x0 * bmp.width, sy = L.y0 * bmp.height, sw = Math.max(1, (L.x1 - L.x0) * bmp.width), sh = Math.max(1, (L.y1 - L.y0) * bmp.height);
+        const c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
+        c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        const img = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+        let ink = null;
+        if (inkB) { c.getContext('2d').clearRect(0, 0, c.width, c.height); c.getContext('2d').drawImage(inkB, L.x0 * inkB.width, L.y0 * inkB.height, (L.x1 - L.x0) * inkB.width, (L.y1 - L.y0) * inkB.height, 0, 0, c.width, c.height); ink = await new Promise((r) => c.toBlob(r, 'image/png')); }
+        out.push({ w: c.width, h: c.height, img, ink }); c.width = c.height = 0;
+      }
+      try { bmp.close(); inkB && inkB.close(); } catch {}
+      return out;
+    })();
+    PP.loading.set(i, job);
+    const lines = await job.catch(() => []);
+    PP.loading.delete(i); PP.pages.set(i, lines);
+    return lines;
+  }
+  // the line n lines after (p, k), across pages (pages without music are passed), or null
+  async function after(copy, p, k, n) {
+    let L = await playLines(copy, p), q = k + n, guard = 0;
+    while ((q < 0 || q >= L.length) && guard++ < 400) {
+      if (q >= L.length) { q -= L.length; p++; if (p >= countOf(copy)) return null; L = await playLines(copy, p); }
+      else { p--; if (p < 0) return null; L = await playLines(copy, p); q += L.length; }
+    }
+    return q >= 0 && q < L.length ? { p, k: q } : null;
+  }
+  async function bitmapOf(at, which) {
+    const key = at.p + ':' + at.k + ':' + which;
+    if (PP.bmp.has(key)) return PP.bmp.get(key);
+    const L = (PP.pages.get(at.p) || [])[at.k]; const b = L && L[which];
+    const v = b ? await createImageBitmap(b).catch(() => null) : null;
+    PP.bmp.set(key, v);
+    // (only the few lines around are kept)
+    while (PP.bmp.size > 16) { const k0 = PP.bmp.keys().next().value; const o = PP.bmp.get(k0); PP.bmp.delete(k0); try { o && o.close(); } catch {} }
     return v;
   }
-  // the line after (p, k), across pages, or null at the end
-  async function after(copy, p, k, d) {
-    let L = await linesOfPage(copy, p);
-    let q = k + d;
-    while (q < 0 || q >= L.length) {
-      p += q < 0 ? -1 : 1;
-      if (p < 0 || p >= countOf(copy)) return null;
-      L = await linesOfPage(copy, p);
-      q = q < 0 ? L.length - 1 : 0;
-    }
-    return { p, k: q };
-  }
   async function drawLine(cv, at) {
-    const g = cv.getContext('2d');
-    const W = Math.round(cv.clientWidth * Math.min(3, devicePixelRatio || 1)), H = Math.round(cv.clientHeight * Math.min(3, devicePixelRatio || 1));
+    const dpr = Math.min(3, devicePixelRatio || 1), W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
+    const img = at ? await bitmapOf(at, 'img') : null, ink = at && PS.ink ? await bitmapOf(at, 'ink') : null;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
-    const v = PS.view; if (!at || !v) return;
-    const L = (await linesOfPage(v.copy, at.p))[at.k], pi = await pageImages(v.copy, at.p);
-    if (!L || !pi) return;
-    const iw = pi.img.width, ih = pi.img.height;
-    const sx = L.x0 * iw, sy = L.y0 * ih, sw = Math.max(1, (L.x1 - L.x0) * iw), sh = Math.max(1, (L.y1 - L.y0) * ih);
-    const k = Math.min(W / sw, H / sh), dw = sw * k, dh = sh * k, dx = (W - dw) / 2, dy = (H - dh) / 2;
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    if (!img) return;
+    const pad = 0.04, k = Math.min(W * (1 - pad) / img.width, H * (1 - pad) / img.height), dw = img.width * k, dh = img.height * k, dx = (W - dw) / 2, dy = (H - dh) / 2;
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(pi.img, sx, sy, sw, sh, dx, dy, dw, dh);
-    if (pi.ink) g.drawImage(pi.ink, sx / iw * pi.ink.width, sy / ih * pi.ink.height, sw / iw * pi.ink.width, sh / ih * pi.ink.height, dx, dy, dw, dh);
+    g.drawImage(img, dx, dy, dw, dh);
+    if (ink) g.drawImage(ink, dx, dy, dw, dh);
   }
   let drawTok = 0;
   async function ppDraw() {
     const v = PS.view; if (!v || !PP.open) return;
     const tok = ++drawTok;
-    const busyT = setTimeout(() => { if (tok === drawTok) $('#phpBusy').hidden = false; }, 250);
-    const a = { p: PP.p, k: PP.k };
+    const busyT = setTimeout(() => { if (tok === drawTok) $('#phpBusy').hidden = false; }, 200);
+    let a = { p: PP.p, k: PP.k };
+    // (a page with no music at all: on to the first that has)
+    if (!(await playLines(v.copy, a.p)).length) { const n = await after(v.copy, a.p, 0, 0); if (n) { a = n; PP.p = n.p; PP.k = n.k; } }
     const b = await after(v.copy, a.p, a.k, 1);
     if (tok !== drawTok) return;
-    await drawLine($('#phpA'), a); await drawLine($('#phpB'), b);
+    await Promise.all([drawLine($('#phpA'), a), drawLine($('#phpB'), b)]);
+    if (tok !== drawTok) return;
     clearTimeout(busyT); $('#phpBusy').hidden = true;
     $('#phpWhere').textContent = `Page ${a.p + 1} of ${countOf(v.copy)}`;
     v.i = a.p;
-    // the next pages' lines found ahead, quietly
-    for (const q of [a.p + 1, a.p + 2]) if (q < countOf(v.copy)) linesOfPage(v.copy, q).catch(() => {});
+    // the pages ahead made ready meanwhile, one after the other
+    (async () => { for (const q of [a.p + 1, a.p + 2]) { if (!PP.open || q >= countOf(v.copy)) break; await playLines(v.copy, q).catch(() => {}); } })();
   }
   async function ppStep(d) {
     const v = PS.view; if (!v || !PP.open) return;
-    const n = await after(v.copy, PP.p, PP.k, d);
+    const n = await after(v.copy, PP.p, PP.k, d * 2);
     if (!n) return;
     PP.p = n.p; PP.k = n.k; ppDraw(); ppQuiet();
   }
@@ -613,6 +636,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   async function ppOpen() {
     const v = PS.view; if (!v) return;
     PP.open = true; PP.p = v.i; PP.k = 0;
+    if (PP.copyId !== v.copy.id + v.copy.stamp) { PP.pages.clear(); PP.lines.clear(); for (const o of PP.bmp.values()) { try { o && o.close(); } catch {} } PP.bmp.clear(); PP.copyId = v.copy.id + v.copy.stamp; }
     $('#phPlay').hidden = false; orient('landscape'); ppQuiet();
     window.__phonePlay = { active: true, wink: (eye) => ppStep(eye === 'right' ? 1 : -1) };
     if (window.__sendFace) window.__sendFace();
@@ -621,7 +645,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   function ppClose() {
     PP.open = false; $('#phPlay').hidden = true; orient('auto');
     window.__phonePlay = null; if (window.__sendFace) window.__sendFace();
-    for (const o of PP.imgs.values()) { try { o && o.img.close(); o && o.ink && o.ink.close(); } catch {} } PP.imgs.clear();
+    for (const o of PP.bmp.values()) { try { o && o.close(); } catch {} } PP.bmp.clear();
     drawPage();
   }
   $('#phvPlay').addEventListener('click', ppOpen);

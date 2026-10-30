@@ -11,6 +11,7 @@ import { paintCover, COVER_PHOTOS, PHOTO_CATS, photoById } from './covers.js';
 import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage, PAGE_W as NB_PW, PAGE_H as NB_PH } from './notebook.js';
 import { usableFiles, filesAsPictures } from './addpages.js';
 import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
+import { cleanLines } from './picker-lines.js';
 import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
@@ -5238,10 +5239,10 @@ const phoneAnswers = new Map();
 // (the same question come twice at once, nearby and over the internet: answered by the same work)
 const phoneLive = new Map();
 function answerPhone(q) {
-  if (q && (q.what === 'page' || q.what === 'scoreinfo')) {
+  if (q && (q.what === 'page' || q.what === 'scoreinfo' || q.what === 'lines')) {
     const k = q.what + ':' + q.id + ':' + (q.i ?? '');
     if (phoneLive.has(k)) return phoneLive.get(k);
-    const p = q.what === 'page' ? pageForPhone(q.id, q.i) : infoForPhone(q.id);
+    const p = q.what === 'page' ? pageForPhone(q.id, q.i) : q.what === 'lines' ? linesForPhone(q.id, q.i) : infoForPhone(q.id);
     phoneLive.set(k, p); const off = () => { if (phoneLive.get(k) === p) phoneLive.delete(k); }; p.then(off, off);
     return p;
   }
@@ -5283,6 +5284,71 @@ function infoForPhone(id) {
   return phoneJob(async () => {
     const P = await phoneDoc(id);
     return { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
+  });
+}
+// The iPhone's Play: the lines of music of a page (staves only, no titles or text), each drawn on
+// its own, sharp, from the score itself. The lines are found in a thread of their own (the stand
+// stays free) and remembered.
+const PLINES = new Map();
+let PLW = null, plSeq = 0; const plWait = new Map();
+function plFind(canvas) {
+  return createImageBitmap(canvas).then((bmp) => new Promise((res) => {
+    try {
+      if (!PLW) {
+        PLW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
+        PLW.onmessage = (e) => { const d = e.data || {}; const w = plWait.get(d.id); if (!w) return; plWait.delete(d.id); clearTimeout(w.t); w.res(d.error ? [] : d.lines || []); };
+        PLW.onerror = () => { for (const w of plWait.values()) { clearTimeout(w.t); w.res(null); } plWait.clear(); try { PLW.terminate(); } catch {} PLW = null; };
+      }
+      const id = ++plSeq; const t = setTimeout(() => { plWait.delete(id); try { PLW.terminate(); } catch {} PLW = null; res(null); }, 20000);
+      plWait.set(id, { res, t }); PLW.postMessage({ id, page: bmp }, [bmp]);
+    } catch { res(null); }
+  }), () => null);
+}
+function linesForPhone(id, i) {
+  return phoneJob(async () => {
+    if (Date.now() < (window.__phoneHoldUntil || 0) || recState || player.playing) throw new Error('busy');
+    const P = await phoneDoc(id), doc = P.doc;
+    if (!(i >= 0 && i < doc.pages)) throw new Error('none');
+    const [pw, ph] = doc.sizes[i];
+    const lk = id + ':' + phoneStamp(id) + ':' + i;
+    let lines = PLINES.get(lk);
+    if (!lines) {
+      const kept = await db.get('files', 'plines:' + lk).catch(() => null);
+      if (kept && kept.lines) lines = kept.lines;
+    }
+    if (!lines) {
+      const W0 = 1700, c0 = document.createElement('canvas');
+      try { await doc.render(i, c0, W0, Math.round((W0 * ph) / pw)); } catch { c0.width = c0.height = 0; throw new Error('draw'); }
+      const found = await plFind(c0); c0.width = c0.height = 0;
+      if (found === null) throw new Error('busy');
+      lines = cleanLines(found);
+      PLINES.set(lk, lines); db.put('files', { id: 'plines:' + lk, kind: 'plines', lines }).catch(() => {});
+    }
+    if (!lines.length) return { v: 1, id, i, lines: [] };
+    // the page drawn once, big enough for the widest line to be 2000 px across (never more than 3000 wide)
+    const wl = Math.max(...lines.map((L) => L.x1 - L.x0));
+    const W = Math.min(3000, Math.round(2000 / wl)), H = Math.round((W * ph) / pw);
+    const c = document.createElement('canvas');
+    try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; throw new Error('draw'); }
+    if (looksBlank(c) || looksBlack(c)) { c.width = c.height = 0; throw new Error('busy'); }
+    const ik = doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i);
+    const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
+    let k2 = null;
+    if (items.length) { await preloadAssets(items); await preloadMasks(items); k2 = document.createElement('canvas'); k2.width = W; k2.height = H; const g = k2.getContext('2d'); for (const it of items) drawItem(g, it, W, H, false); }
+    const out = [];
+    for (const L of lines) {
+      const sx = Math.round(L.x0 * W), sy = Math.round(L.y0 * H), sw = Math.max(1, Math.round((L.x1 - L.x0) * W)), sh = Math.max(1, Math.round((L.y1 - L.y0) * H));
+      const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
+      lc.getContext('2d', { alpha: false }).drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+      const img = await canvasData(lc, 'image/jpeg', 0.82);
+      let ink = null;
+      if (k2) { const kc = document.createElement('canvas'); kc.width = sw; kc.height = sh; kc.getContext('2d').drawImage(k2, sx, sy, sw, sh, 0, 0, sw, sh); ink = await canvasData(kc, 'image/png'); kc.width = kc.height = 0; }
+      lc.width = lc.height = 0;
+      out.push({ w: sw, h: sh, img, ink });
+    }
+    c.width = c.height = 0; if (k2) { k2.width = k2.height = 0; }
+    P.t = Date.now();
+    return { v: 1, id, i, lines: out };
   });
 }
 const BLANK_ONCE = new Set();
