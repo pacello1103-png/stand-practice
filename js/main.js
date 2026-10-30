@@ -11,7 +11,7 @@ import { paintCover, COVER_PHOTOS, PHOTO_CATS, photoById } from './covers.js';
 import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage, PAGE_W as NB_PW, PAGE_H as NB_PH } from './notebook.js';
 import { usableFiles, filesAsPictures } from './addpages.js';
 import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
-import { openDocument, sizesKey, makeThumb, looksBlack, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
+import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
 import { ELEMENTS, ELEMENT_CATS, elementAspect } from './elements.js';
@@ -1446,7 +1446,7 @@ async function layout(fade) {
 // The next pages (and the ones before) are drawn ahead, after the pages on screen.
 function prefetch(token) {
   if (token !== layoutToken || !V.doc) return;
-  for (const start of [V.page + V.spread, V.page - V.spread, ...(V.spread === 1 ? [V.page + 2] : [])]) {
+  for (const start of [V.page + V.spread, V.page - V.spread]) {   // (one more ahead used memory that a long session needed)
     if (start < 0 || start >= V.doc.pages) continue;
     const ids = [start]; if (V.spread === 2 && start + 1 <= lastPg()) ids.push(start + 1);
     pageBox(ids).forEach((b, k) => renderPage(ids[k], innerW(ids[k], b[0]), innerH(ids[k], b[1]), 1, 1));
@@ -5275,6 +5275,7 @@ function infoForPhone(id) {
     return { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
   });
 }
+const BLANK_ONCE = new Set();
 function pageForPhone(id, i) {
   // one page at a time, in turn (two questions at once never draw two pages together)
   return phoneJob(async () => {
@@ -5289,6 +5290,10 @@ function pageForPhone(id, i) {
     const c = document.createElement('canvas');
     // (a page that could not be drawn is an error, never a white page kept on the iPhone)
     try { await doc.render(i, c, W, H); } catch (e) { c.width = c.height = 0; throw new Error('draw'); }
+    // (a page that came out white or black, the iPad short of memory: asked again later, never sent)
+    // (drawn white twice: the page really is empty, and it is sent)
+    const bk = id + ':' + i;
+    if ((looksBlank(c) && !BLANK_ONCE.has(bk)) || looksBlack(c)) { BLANK_ONCE.add(bk); c.width = c.height = 0; window.__phoneHoldUntil = Date.now() + 20000; throw new Error('busy'); }
     const img = await canvasData(c, 'image/jpeg', 0.8);
     c.width = c.height = 0;
     if (!img) throw new Error('draw');

@@ -79,6 +79,12 @@ export async function lightPut(f, i, b) {
 export async function lightKeys(f) {
   try { const d = await open(); const ks = await wrap(d.transaction('L').objectStore('L').getAllKeys()); return new Set(ks.filter((k) => String(k).startsWith(f + '|')).map((k) => +String(k).slice(f.length + 1))); } catch { return new Set(); }
 }
+export async function lightDel(f, i) {
+  try { const d = await open(); const tx = d.transaction('L', 'readwrite'); tx.objectStore('L').delete(f + '|' + i); } catch {}
+}
+export async function pixDel(k) {
+  try { const d = await open(); const tx = d.transaction('p', 'readwrite'); tx.objectStore('p').delete(k); if (known) { if (known.delete(k)) count--; } } catch {}
+}
 async function lightDrop(f) {
   try { const d = await open(); const ks = (await wrap(d.transaction('L').objectStore('L').getAllKeys())).filter((k) => String(k).startsWith(f + ':') || String(k).startsWith(f + '|')); if (!ks.length) return; const tx = d.transaction('L', 'readwrite'); for (const k of ks) tx.objectStore('L').delete(k); } catch {}
 }

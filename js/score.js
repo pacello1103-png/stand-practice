@@ -3,7 +3,7 @@
 import * as pdfjsLib from '../vendor/pdf.min.mjs';
 import { loadMusicFont } from './ink.js';
 import { paintCover } from './covers.js';
-import { pixGet, pixPut, pixHas, lightGet, lightPut, lightKeys } from './pixcache.js';
+import { pixGet, pixPut, pixHas, pixDel, lightGet, lightPut, lightKeys, lightDel } from './pixcache.js';
 // heavy scans, for the whole app: their pages are drawn one at a time, wherever they are drawn
 const HEAVY = { chain: Promise.resolve(), active: 0, fids: new Set(), lightening: new Set() };
 import { db } from './db.js';
@@ -223,7 +223,7 @@ async function openDocumentOne(file, known) {
             await (HEAVY.chain = HEAVY.chain.then(() => pg.render({ canvasContext: c.getContext('2d', { alpha: false }), viewport: pg.getViewport({ scale: sc }), background: 'rgb(255,255,255)' }).promise).then(() => { ok = true; }).catch(() => {}));
           } finally { HEAVY.active--; }
           // (a page that did not draw is never kept: it would show black from then on)
-          const b = ok && !looksBlack(c) ? await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86)) : null;
+          const b = ok && !looksBlack(c) && !looksBlank(c) ? await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86)) : null;
           c.width = c.height = 0; pg.cleanup();
           if (b && !gone) { await lightPut(fid, k, b); lightHave.add(k); }
           await new Promise((r) => setTimeout(r, 300));
@@ -255,7 +255,9 @@ async function openDocumentOne(file, known) {
               canvas.width = W; canvas.height = H;
               const g = canvas.getContext('2d', { alpha: false });
               g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
-              return;
+              // (a white copy kept by mistake: thrown away, the page drawn from the original)
+              if (!looksBlank(canvas)) return;
+              lightHave.delete(i); lightDel(fid, i);
             } catch { /* drawn from the original below */ }
           }
         }
@@ -269,7 +271,8 @@ async function openDocumentOne(file, known) {
               canvas.width = W; canvas.height = H;
               const g = canvas.getContext('2d', { alpha: false });
               g.drawImage(bmp, 0, 0, W, H); if (bmp.close) bmp.close();
-              return;
+              if (!looksBlank(canvas)) return;
+              pixDel(key);
             } catch { /* drawn again below */ }
           }
         }
@@ -290,9 +293,9 @@ async function openDocumentOne(file, known) {
         if (opts.ctl) { if (opts.ctl.aborted) task.cancel(); else opts.ctl.fns.push(() => task.cancel()); }
         await task.promise;
         // only pages that were slow to draw are kept (quick vector pages are drawn sharp each time)
-        if (key && (opts.keep || performance.now() - t0 > PIX_SLOW)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
+        if (key && (opts.keep || performance.now() - t0 > PIX_SLOW) && !looksBlank(canvas) && !looksBlack(canvas)) canvas.toBlob((b) => pixPut(key, b, fid), 'image/jpeg', 0.9);
         // a heavy page just drawn big enough is its own light copy (no need to draw it twice)
-        if (heavy && fid && lightHave && !lightHave.has(i) && Math.max(W, H) >= LIGHT_LONG * 0.75 && !looksBlack(canvas)) {
+        if (heavy && fid && lightHave && !lightHave.has(i) && Math.max(W, H) >= LIGHT_LONG * 0.75 && !looksBlack(canvas) && !looksBlank(canvas)) {
           lightHave.add(i);
           canvas.toBlob((b) => { if (b && !gone) lightPut(fid, i, b).catch(() => lightHave.delete(i)); else lightHave.delete(i); }, 'image/jpeg', 0.86);
         }
@@ -344,6 +347,18 @@ async function openDocumentOne(file, known) {
 
 // a picture that came out (almost) all black: the page did not really draw (out of memory, or
 // stopped half way), never something to keep
+// A page that came out white, with no ink at all (iOS short of memory draws a scan's picture as
+// nothing): never kept, and one kept before is thrown away and drawn again.
+export function looksBlank(src, w = 64, h = 88) {
+  try {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data; let s = 0, s2 = 0; const n = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) { const l = (d[i] + d[i + 1] + d[i + 2]) / 3; s += l; s2 += l * l; }
+    const m = s / n, sd = Math.sqrt(Math.max(0, s2 / n - m * m));
+    return m > 238 && sd < 2.5;
+  } catch { return false; }
+}
 export function looksBlack(src, w = 24, h = 32) {
   try {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -359,7 +374,7 @@ export async function makeThumb(doc, { dark = false } = {}) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const c = document.createElement('canvas');
     try { await doc.render(0, c, w, h); } catch { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }
-    if (!dark && looksBlack(c)) { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }
+    if ((!dark && looksBlack(c)) || (attempt === 0 && looksBlank(c))) { c.width = c.height = 0; await new Promise((r) => setTimeout(r, 800)); continue; }
     const b = await new Promise((res) => c.toBlob((x) => res(x), 'image/jpeg', 0.82));
     c.width = c.height = 0;
     return b;

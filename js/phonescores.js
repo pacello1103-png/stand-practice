@@ -9,6 +9,7 @@
 // Nothing can be changed here.
 import { db, getSetting, setSetting } from './db.js';
 import { nlog } from './link.js';
+import { looksBlank } from './score.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -397,6 +398,22 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = [];
     const img = $('#phvImg'), ink = $('#phvInkImg');
     const u = URL.createObjectURL(p.img); PS.urls.push(u); img.src = u;
+    // (a page that came white from the iPad, drawn when it was short of memory: thrown away, and the
+    // score asked for again, those pages only, the next time the iPad is found)
+    img.onload = async () => {
+      img.onload = null;
+      if (PS.view !== v || v.i !== i0 || !looksBlank(img)) return;
+      const id = v.copy.id.slice(9);
+      // (asked again once already: the page really is empty)
+      const once = (() => { try { return JSON.parse(localStorage.getItem('standBlankOnce') || '[]'); } catch { return []; } })();
+      const bk = id + ':' + i0; if (once.includes(bk)) return;
+      try { localStorage.setItem('standBlankOnce', JSON.stringify([...once, bk].slice(-300))); } catch {}
+      await db.del('files', pageKey(id, i0, v.copy.stamp)).catch(() => {});
+      const c2 = await db.get('files', v.copy.id).catch(() => null);
+      if (c2) { c2.stamp = 'again:' + c2.stamp; await db.put('files', c2).catch(() => {}); }
+      nlog('iPhone: a white page thrown away (' + (i0 + 1) + ')');
+      toast('This page came white from your iPad. It comes again the next time your iPad is found.', 4500);
+    };
     if (p.ink && PS.ink) { const ui = URL.createObjectURL(p.ink); PS.urls.push(ui); ink.src = ui; ink.hidden = false; } else { ink.hidden = true; ink.removeAttribute('src'); }
     $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
     $('#phvInk').classList.toggle('on', PS.ink);
