@@ -281,7 +281,7 @@ function findStaves(b, w, h, sp, T, gaps = false) {
       let best = null, bd = Infinity;
       for (const t of tracks) {
         const last = t[t.length - 1];
-        if (gr.xc - last.xc > SW * 4 || last.xc === gr.xc) continue;
+        if (gr.xc - last.xc > SW * (globalThis.__trackGap ?? 4) || last.xc === gr.xc) continue;
         let pred = (last.ys[0] + last.ys[4]) / 2;
         if (t.length > 1) { const p2 = t[t.length - 2]; const slope = (pred - (p2.ys[0] + p2.ys[4]) / 2) / (last.xc - p2.xc); if (Math.abs(slope) < 0.15) pred += slope * (gr.xc - last.xc); }
         const d = Math.abs(mid - pred);
@@ -292,6 +292,7 @@ function findStaves(b, w, h, sp, T, gaps = false) {
     return tracks;
   };
   const tracks = tracksOf(groups.filter((g2) => !g2.weak));
+  if (globalThis.__fsDbg) globalThis.__fsDbg.push({ sp, SW, groups: groups.map((g2) => [Math.round(g2.xc), g2.ys.map(Math.round), +g2.score.toFixed(2), g2.weak]), tracks: tracks.map((t) => [Math.round(t[0].xc), Math.round(t[t.length - 1].xc), Math.round(t[0].ys[0]), t.length]) });
   if (groups.some((g2) => g2.weak)) for (const t of tracksOf(groups)) { if (t.some((g2) => g2.weak)) { t.mixed = true; tracks.push(t); } }
   const staves = [];
   for (const t of tracks) {
@@ -324,9 +325,28 @@ function findStaves(b, w, h, sp, T, gaps = false) {
   }
   // drop a staff that overlaps a better one
   staves.sort((a, b2) => a.top - b2.top);
+  if (globalThis.__fsDbg) globalThis.__fsDbg.push({ staves: staves.map((q) => [Math.round(q.top), Math.round(q.x0), Math.round(q.x1), q.samples.length, !!q.mixed]) });
   const out = [];
   const strongN = (st) => st.samples.filter((q) => !q.weak).length;
-  for (const s of staves) { const l = out[out.length - 1]; if (l && s.top < l.bottom + s.sp * 0.5) { if ((l.mixed && !s.mixed) || (!!l.mixed === !!s.mixed && (strongN(s) > strongN(l) || (strongN(s) === strongN(l) && s.samples.length > l.samples.length)))) out[out.length - 1] = s; continue; } out.push(s); }
+  // (two pieces of the same staff, side by side, found apart where beams lie along its lines: one staff)
+  const joinable = (a, c) => {
+    if (!(globalThis.__staffJoin ?? 1)) return false;
+    const ov = Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0), short = Math.min(a.x1 - a.x0, c.x1 - c.x0);
+    if (ov > short * 0.3) return false;
+    const xm = Math.round((Math.max(a.x0, c.x0) + Math.min(a.x1, c.x1)) / 2);
+    // at the place between them, each one's lines where the other's are
+    return [0, 4].every((k) => Math.abs(a.L[k][xm] - c.L[k][xm]) < Math.min(a.sp, c.sp) * 0.45);
+  };
+  for (const s of staves) {
+    const l = out[out.length - 1];
+    if (l && s.top < l.bottom + s.sp * 0.5 && joinable(l, s)) {
+      const sam = [...l.samples, ...s.samples].sort((a, b2) => a.xc - b2.xc).filter((q, i, arr) => i === 0 || q.xc !== arr[i - 1].xc);
+      const mid = (q) => (q.ys[0] + q.ys[4]) / 2, med = sam.map(mid).sort((a, b2) => a - b2)[sam.length >> 1];
+      const keep = sam.filter((q) => Math.abs(mid(q) - med) < Math.min(l.sp, s.sp) * 0.5);
+      if (keep.length >= 2) { const j = makeStaff(keep, b, w, h, T, gaps); if (l.mixed && s.mixed) j.mixed = true; out[out.length - 1] = j; continue; }
+    }
+    if (l && s.top < l.bottom + s.sp * 0.5) { if ((l.mixed && !s.mixed) || (!!l.mixed === !!s.mixed && (strongN(s) > strongN(l) || (strongN(s) === strongN(l) && s.samples.length > l.samples.length)))) out[out.length - 1] = s; continue; } out.push(s);
+  }
   return out;
 }
 function makeStaff(samples, b, w, h, T, gaps = false) {
@@ -1309,10 +1329,11 @@ function readStaff(s, ctx, header) {
         if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
         if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
         // not cut off at the edges of the window (then it is part of something bigger)
-        if (y0 <= ya || y1 >= yb) continue;
+        let cutK = false;
+        if (y0 <= ya || y1 >= yb) { if (!(globalThis.__cutSign ?? 1) || cls === 'flat' || (y0 <= ya && y1 >= yb)) continue; cutK = true; }
         const se = globalThis.__stemEdge ?? 1;
         // (a 'note' sitting at the sign itself, its stroke read as a stem, is part of the sign)
-        const atSign = (q) => (globalThis.__atSign ?? 1) && (q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1 && q.cy > y0 && q.cy < y1;
+        const atSign = (q) => (globalThis.__atSign ?? 1) && q.cy > y0 && q.cy < y1 && (((q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1) || (q.cx > x0 + sp * 0.15 && q.cx < x1 - sp * 0.15));
         if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -1 : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
         // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
         if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * 0.2 && q.cy < y1 - sp * 0.2)) continue;
@@ -1321,7 +1342,7 @@ function readStaff(s, ctx, header) {
         if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
         const k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
         if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
-        if (k.cls === cls && k.d < (cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
+        if (k.cls === cls && k.d < (cutK ? (globalThis.__cutD ?? 0.22) : cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
       }
     }
     if (!bestK) continue;
@@ -2375,7 +2396,8 @@ export async function analyse(canvas, dbg, sub = false, opts = {}) {
     const alt = findStaves(Bs, w, h, sp0, T, sub);
     if (globalThis.__stfDbg) globalThis.__stfDbg.push({ n: staves.map((s) => [s.top, s.bottom, s.x0, s.x1].map(Math.round)), a: alt.map((s) => [s.top, s.bottom, s.x0, s.x1].map(Math.round)) });
     staves = staves.map((s) => {
-      const q = alt.find((a) => Math.abs(a.top - s.top) < s.sp * 0.4 && Math.abs(a.bottom - s.bottom) < s.sp * 0.4);
+      const xm = Math.round((s.x0 + s.x1) / 2); const q = alt.find((a) => (Math.abs(a.top - s.top) < s.sp * 0.4 && Math.abs(a.bottom - s.bottom) < s.sp * 0.4) || ((globalThis.__altAt ?? 1) && Math.abs(a.L[0][xm] - s.L[0][xm]) < s.sp * 0.8 && Math.abs(a.L[4][xm] - s.L[4][xm]) < s.sp * 0.8));
+      if (globalThis.__stfDbg) globalThis.__stfDbg.push({ s: [s.top, s.x0, s.x1, xm].map(Math.round), q: q && [q.top, q.x0, q.x1].map(Math.round), aL: alt.map((a) => [Math.round(a.L[0][xm]), Math.round(a.L[4][xm])]), sL: [Math.round(s.L[0][xm]), Math.round(s.L[4][xm])] });
       if (!q || q.x1 - q.x0 < s.x1 - s.x0 + s.sp * 3 || q.x0 > s.x0 + s.sp || q.x1 < s.x1 - s.sp) return s;
       return q;
     });
