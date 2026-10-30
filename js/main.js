@@ -1319,7 +1319,14 @@ function renderPage(i, w, h, zoom = 1, prio = 0) {
   const phone = document.body.classList.contains('phone');
   const pxOf = (k) => { const m = /\|(\d+)x(\d+)/.exec(k); return m ? m[1] * m[2] : 0; };
   let total = 0; for (const k of V.cache.keys()) total += pxOf(k);
-  while (V.cache.size > 2 && (V.cache.size > (phone ? 4 : 6) || total > (phone ? 8e6 : 20e6))) { const k = V.cache.keys().next().value; total -= pxOf(k); const old = V.cache.get(k); V.cache.delete(k); old.then((c) => { INCACHE.delete(c); freeCanvas(c); }, () => {}); }
+  // (never the pages on the stand now, nor the one just asked for: one of them let go while it was
+  // being put on the page came out white, after the music had shown)
+  const onStand = (k) => { const pi = +k.split('|')[0]; return k === key || (pi >= V.page && pi < V.page + (V.spread || 1)); };
+  for (const k of [...V.cache.keys()]) {
+    if (!(V.cache.size > 2 && (V.cache.size > (phone ? 4 : 6) || total > (phone ? 8e6 : 20e6)))) break;
+    if (onStand(k)) continue;
+    total -= pxOf(k); const old = V.cache.get(k); V.cache.delete(k); old.then((c) => { INCACHE.delete(c); freeCanvas(c); }, () => {});
+  }
   return p;
 }
 // A drawing of page i that can be shown straight away (another size), or null.
@@ -1410,7 +1417,8 @@ async function layout(fade) {
     const stale = idx.map((i, k) => staleFor(i, pageKey(i, made[k].iw, made[k].ih).key));
     const quick = await Promise.all(proms.map((p, k) => (stale[k] ? Promise.race([p, new Promise((r) => setTimeout(() => r(null), 30))]) : p)));
     if (token !== layoutToken) return;
-    const canvases = quick.map((c, k) => c || stale[k]);
+    // (a drawing let go before it was shown has no size: drawn again)
+    const canvases = quick.map((c, k) => (c && c.width ? c : null) || stale[k]);
     // a drawing stopped on the way (very quick turning): asked for again
     if (canvases.some((c) => !c)) { if (!layout.retry) { layout.retry = true; setTimeout(() => { layout.retry = false; if (token === layoutToken) layout(); }, 0); } return; }
     idx.forEach((i, k) => {
@@ -1419,6 +1427,8 @@ async function layout(fade) {
       if (!quick[k]) proms[k].then((sharp) => {
         const e = V.pages.find((x) => x.art === art);
         if (!sharp || !e || token !== layoutToken) return;
+        // (a drawing that was let go meanwhile, or came out white: the one showing stays)
+        if (!sharp.width || (looksBlank(sharp) && !looksBlank(art))) return;
         sharp.className = 'art'; e.inner.replaceChild(sharp, art); e.art = sharp;
         inkFollowsArt(e);
         if (!INCACHE.has(art)) freeCanvas(art);
@@ -1967,7 +1977,7 @@ async function sharpen() {
     if (!shown && want > 1) continue;
     const art = await renderPage(p.index, p.iw, p.ih, want);
     if (token !== layoutToken) return;
-    if (art !== p.art) {
+    if (art !== p.art && art && art.width && !(looksBlank(art) && p.art && p.art.width && !looksBlank(p.art))) {
       art.className = 'art';
       p.inner.replaceChild(art, p.art); p.art = art;
       inkFollowsArt(p);
