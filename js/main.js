@@ -5313,7 +5313,7 @@ function linesForPhone(id, i) {
     const lk = id + ':' + phoneStamp(id) + ':' + i;
     let lines = PLINES.get(lk);
     if (!lines) {
-      const kept = await db.get('files', 'plines:' + lk).catch(() => null);
+      const kept = await db.get('files', 'plines3:' + lk).catch(() => null);
       if (kept && kept.lines) lines = kept.lines;
     }
     if (!lines) {
@@ -5322,7 +5322,7 @@ function linesForPhone(id, i) {
       const found = await plFind(c0); c0.width = c0.height = 0;
       if (found === null) throw new Error('busy');
       lines = cleanLines(found);
-      PLINES.set(lk, lines); db.put('files', { id: 'plines:' + lk, kind: 'plines', lines }).catch(() => {});
+      PLINES.set(lk, lines); db.put('files', { id: 'plines3:' + lk, kind: 'plines', lines }).catch(() => {});
     }
     if (!lines.length) return { v: 1, id, i, lines: [] };
     // the page drawn once, big enough for the widest line to be 2000 px across (never more than 3000 wide)

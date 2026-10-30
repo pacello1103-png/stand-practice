@@ -29,14 +29,32 @@ export function linesOf(A) {
 // only real lines of music: as wide as the others (a first line may be set in a little), staves of
 // the size of the page's own
 export function cleanLines(lines) {
-  const ok = (lines || []).filter((L) => L && L.x1 > L.x0 && L.y1 > L.y0);
+  let ok = (lines || []).filter((L) => L && L.x1 > L.x0 && L.y1 > L.y0).sort((a, b) => a.y0 - b.y0);
   if (!ok.length) return [];
+  // the staves played together (a violin over its piano, a quartet): one line, even where no bar
+  // line joins them. Staves closer to each other than the lines of music are to each other belong
+  // together.
+  if (ok.length >= 2 && ok.every((L) => L.top !== undefined && L.sp)) {
+    // (a staff this close to the next one, much closer than the lines of music are to each other,
+    // and closer than about one and a half staves: they are played together)
+    const gaps = ok.slice(1).map((L, i) => L.top - ok[i].bot), gmax = Math.max(...gaps);
+    const out = [{ ...ok[0] }];
+    gaps.forEach((g, i) => {
+      const L = ok[i + 1], cur = out[out.length - 1], staff = Math.min(4 * cur.sp, 4 * L.sp);
+      if (g < gmax * 0.4 && g < staff * 1.6) Object.assign(cur, { x0: Math.min(cur.x0, L.x0), x1: Math.max(cur.x1, L.x1), y1: L.y1, bot: L.bot, sp: Math.max(cur.sp, L.sp) });
+      else out.push({ ...L });
+    });
+    ok = out;
+  }
   const wmax = Math.max(...ok.map((L) => L.x1 - L.x0));
   const sps = ok.map((L) => L.sp || 0).filter((x) => x > 0).sort((a, b) => a - b), sp = sps.length ? sps[sps.length >> 1] : 0;
-  return ok.filter((L) => (L.x1 - L.x0) >= wmax * 0.45 && (!sp || !L.sp || (L.sp > sp * 0.65 && L.sp < sp * 1.5))).map((L) => {
+  const kept = ok.filter((L) => (L.x1 - L.x0) >= wmax * 0.45 && (!sp || !L.sp || (L.sp > sp * 0.65 && L.sp < sp * 1.5)));
+  return kept.map((L, i) => {
     const s = L.sp || 0.01;
-    // (tight around the staves: what is above and below them, not the next line's notes)
-    const y0 = L.top !== undefined ? Math.max(L.y0, L.top - s * 3.4) : L.y0, y1 = L.bot !== undefined ? Math.min(L.y1, L.bot + s * 3.4) : L.y1;
+    // (tight around the staves: what is above and below them, not the next line's notes; above the
+    // first line of a page (a title, a composer) and below the last (a footnote), tighter still)
+    const up = i === 0 ? 3.0 : 4.2, down = i === kept.length - 1 ? 2.8 : 3.6;
+    const y0 = L.top !== undefined ? Math.max(L.y0, L.top - s * up) : L.y0, y1 = L.bot !== undefined ? Math.min(L.y1, L.bot + s * down) : L.y1;
     return { x0: Math.max(0, L.x0 - 0.008), x1: Math.min(1, L.x1 + 0.008), y0: Math.max(0, y0), y1: Math.min(1, y1) };
   });
 }
