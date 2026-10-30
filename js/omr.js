@@ -1290,23 +1290,37 @@ function readStaff(s, ctx, header) {
   }
   // accidentals that touch their note (close engraving, small print, blur): look in a window just
   // before each head instead of at whole shapes
+  const slurAcc = globalThis.__slurAcc ?? 1;
   for (const hd of heads) {
+    if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp * 3 && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * (globalThis.__accWinY ?? 3)) globalThis.__accWin.push(['HEAD', Math.round(hd.cx), Math.round(hd.cy), Math.round(hd.left), hd.acc]);
     if (hd.acc !== undefined || hd.left < startX) continue;
     let bestK = null;
-    for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8]]) {
+    for (const [cls, W, up, dn] of [['sharp', 1.05, 1.6, 1.6], ...(globalThis.__wideSharp ?? 1 ? [['sharp', 1.25, 1.9, 1.9]] : []), ['natural', 0.8, 1.6, 1.6], ['natural', 0.8, 2.0, 2.0], ['flat', 1.0, 2.15, 0.8], ...(globalThis.__tallFlat ?? 1 ? [['flat', 1.0, 2.7, 0.8]] : [])]) {
       const ya = Math.round(hd.cy - up * sp), yb = Math.round(hd.cy + dn * sp);
       for (let x = Math.round(hd.left - sp * 2.2); x <= Math.round(hd.left - sp * (W + 0.03)); x++) {
         const xb = Math.min(Math.round(x + W * sp), Math.round(hd.left - sp * 0.04));
-        let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
-        for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (C[y * w + xx]) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        const boxIn = (I) => {
+          let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
+          for (let y = Math.max(0, ya); y <= Math.min(h - 1, yb); y++) for (let xx = Math.max(0, x); xx <= xb; xx++) if (I[y * w + xx]) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          return [x0, x1, y0, y1];
+        };
+        let [x0, x1, y0, y1] = boxIn(C);
+        // (a slur or tie run into the sign: its box without the thin curves)
+        if (x1 >= 0 && (y0 <= ya || y1 >= yb) && slurAcc) { const b = boxIn(ctx.D); if (b[1] >= 0 && b[2] > ya && b[3] < yb) [x0, x1, y0, y1] = b; }
         if (x1 < 0 || x0 > x + sp * 0.2 || (y1 - y0) < sp * (cls === 'flat' ? 1.8 : 2.0) || x1 - x0 < sp * 0.35) continue;
         // not cut off at the edges of the window (then it is part of something bigger)
         if (y0 <= ya || y1 >= yb) continue;
-        if (heads.some((q) => q !== hd && q.stem && q.stem.x >= x0 + 1 && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
+        const se = globalThis.__stemEdge ?? 1;
+        // (a 'note' sitting at the sign itself, its stroke read as a stem, is part of the sign)
+        const atSign = (q) => (globalThis.__atSign ?? 1) && (q.hollow || !q.stem) && q.cx > x0 - sp * 0.4 && q.cx < x1 && q.cy > y0 && q.cy < y1;
+        if (heads.some((q) => q !== hd && q.stem && !atSign(q) && q.stem.x >= x0 + (se ? -1 : 1) && q.stem.x <= x1 - 1 && q.stem.top < y1 - sp * 0.5 && q.stem.bot > y0 + sp * 0.5)) continue;
+        // (nor starting inside the head of the note before: its edge, and a slur or stem by it, can look like a sign)
+        if ((globalThis.__winHead ?? 1) && heads.some((q) => q !== hd && !atSign(q) && q.cx < x0 && (q.left ?? q.cx - sp * 0.65) < x0 - sp * 0.5 && Math.max(q.right ?? 0, (q.left ?? q.cx - sp * 0.65) + sp * 1.42) > x0 && q.cy > y0 + sp * 0.2 && q.cy < y1 - sp * 0.2)) continue;
         // (nor the flag of the note just before, hanging off its stem)
-        if (cls === 'flat' && heads.some((q) => q !== hd && q.stem && q.beams && q.cx < hd.cx && x0 >= q.stem.x - 2 && x0 - q.stem.x < sp * 1.2 && (q.stem.up ? y0 < q.stem.top + sp * 2.5 : y1 > q.stem.bot - sp * 2.5))) continue;
+        // (a beamed note has no flag: there, only a box reaching up or down to its beam)
+        if (cls === 'flat' && heads.some((q) => { if (q === hd || !q.stem || !q.beams || q.cx >= hd.cx || x0 < q.stem.x - 2 || x0 - q.stem.x >= sp * 1.2) return false; const r = q.bg != null && (globalThis.__bgFlag ?? 1) ? (globalThis.__bgR ?? 0.6) : 2.5; return q.stem.up ? y0 < q.stem.top + sp * r : y1 > q.stem.bot - sp * r; })) continue;
         const k = classify(shapeOf(C, w, x0, y0, x1, y1, sp), ['sharp', 'natural', 'flat', 'r4', 'r8', 'r16', 'd4', 'd1']);
-        if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2)]);
+        if (globalThis.__accWin && Math.abs(hd.cx - globalThis.__accWin[0]) < sp && Math.abs(hd.cy - globalThis.__accWin[1]) < sp * 2) globalThis.__accWin.push([cls, x, k.cls, +k.d.toFixed(3), +((y1 - y0) / sp).toFixed(2), x0, x1, y0, y1]);
         if (k.cls === cls && k.d < (cls === 'natural' ? (globalThis.__natWin ?? 0.36) : 0.34) && (!bestK || k.d < bestK.d)) bestK = { ...k, x0, x1, y0, y1 };
       }
     }
@@ -1329,7 +1343,7 @@ function readStaff(s, ctx, header) {
   }
   // a 'head' inside an accidental is the bowl of a flat or the middle of a sharp
   const accBoxes = compsC.filter((c) => isAcc.has(c.id));
-  heads = heads.filter((hd) => ![...accBoxes, ...accBoxesW].some((c) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1));
+  heads = heads.filter((hd) => ![...accBoxes, ...accBoxesW].some((c) => hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1) && !((globalThis.__accEdge ?? 1) && accBoxesW.some((c) => hd.acc === undefined && hd.cx > c.x0 - sp * 0.35 && hd.cx <= c.x0 && hd.cy > c.y0 && hd.cy < c.y1)));
   if (TR) trk(966, heads);
   // ---- rests
   const rests = [];
@@ -1379,7 +1393,7 @@ function readStaff(s, ctx, header) {
   {
     const onStaffC = (c) => c.y1 > yAt(s, 8, c.x0) + sp * 0.3 && c.y0 < yAt(s, 0, c.x0) - sp * 0.3;
     const used = new Set();
-    if (ctx.dbg && globalThis.__compX) (ctx.signTrace = ctx.signTrace || []).push({ near: compsC.filter((c) => c.x1 > globalThis.__compX[0] && c.x0 < globalThis.__compX[1] && c.y1 > s.top - sp * 3 && c.y0 < s.bottom + sp * 3).map((c) => [c.x0, c.x1, c.y0, c.y1, c.x0 > startX + sp * 0.5, onStaffC(c), isAcc.has(c.id), ctx.staffOf((c.y0 + c.y1) / 2, (c.x0 + c.x1) / 2) === s]) });
+    if ((ctx.dbg || globalThis.__sigDbg) && globalThis.__compX) (ctx.signTrace = ctx.signTrace || []).push({ near: compsC.filter((c) => c.x1 > globalThis.__compX[0] && c.x0 < globalThis.__compX[1] && c.y1 > s.top - sp * 3 && c.y0 < s.bottom + sp * 3).map((c) => [c.x0, c.x1, c.y0, c.y1, c.x0 > startX + sp * 0.5, onStaffC(c), isAcc.has(c.id), ctx.staffOf((c.y0 + c.y1) / 2, (c.x0 + c.x1) / 2) === s]) });
     const clefBar = globalThis.__clefBar ?? 1;
     // (a shape across the staves, a barline with a clef run into it, is looked at below, for its pieces)
     const spans = (c) => clefBar && c.h > sp * 6 && c.w > sp * 1.2 && c.y0 <= s.top + sp * 0.5 && c.y1 >= s.bottom - sp * 0.5;
@@ -1408,7 +1422,7 @@ function readStaff(s, ctx, header) {
           for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = vx + dx, ny = vy + dy; if (nx < 0 || ny < 0 || nx >= W2 || ny >= H2) continue; const u = ny * W2 + nx; if (seen[u] || cut[nx] || !mine((ny + ya) * w + nx + c.x0)) continue; seen[u] = 1; st.push(u); } }
         if (x0 > startX + sp * 0.5 && y1 - y0 >= sp * 1.7 && y1 - y0 <= sp * 8.5 && x1 - x0 >= sp * 0.9 && x1 - x0 <= sp * 3.2 && n > sp * sp * 0.5) pieces.push({ ...c, x0, x1, y0, y1, w: x1 - x0 + 1, h: y1 - y0 + 1, n, cut: true, spanning: false });
       }
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, nCut, pieces: pieces.map((q) => [q.x0, q.x1, q.y0, q.y1]) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, nCut, pieces: pieces.map((q) => [q.x0, q.x1, q.y0, q.y1]) });
       if (pieces.length) cands.splice(ci, 1, ...pieces);
     }
     const cClefShape = (x0, x1, y0, y1) => {
@@ -1417,13 +1431,13 @@ function readStaff(s, ctx, header) {
       let run = 0, best = 0, runs = 0;
       for (let x = x0; x <= x0 + sp * 0.8; x++) { let n = 0; for (let y = y0; y <= y1; y++) if (C[y * w + x]) n++; if (n >= (y1 - y0 + 1) * 0.88) { if (!run) runs++; run++; best = Math.max(best, run); } else run = 0; }
       const top = pAt(s, y0, (x0 + x1) / 2), bot = pAt(s, y1, (x0 + x1) / 2);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cBars: x0, runs, best, bestSp: +(best / sp).toFixed(2), wSp: +((x1 - x0) / sp).toFixed(2), hSp: +((y1 - y0) / sp).toFixed(2), top: +top.toFixed(1), bot: +bot.toFixed(1), sp: +sp.toFixed(1) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cBars: x0, runs, best, bestSp: +(best / sp).toFixed(2), wSp: +((x1 - x0) / sp).toFixed(2), hSp: +((y1 - y0) / sp).toFixed(2), top: +top.toFixed(1), bot: +bot.toFixed(1), sp: +sp.toFixed(1) });
       // (a C clef is the same above and below its middle line: a note with its stem and an
       // accidental beside it is not)
       let both = 0, any = 0; const H = y1 - y0;
       for (let yy = 0; yy <= H / 2; yy++) for (let x = x0; x <= x1; x++) { const a1 = C[(y0 + yy) * w + x], b1 = C[(y1 - yy) * w + x]; if (a1 || b1) { any++; if (a1 && b1) both++; } }
       const sym = any ? both / any : 0;
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cSym: x0, sym: +sym.toFixed(2) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cSym: x0, sym: +sym.toFixed(2) });
       if (sym < (globalThis.__cSym ?? 0.7)) return false;
       return runs >= 1 && best >= Math.max(3, sp * (globalThis.__cBarW ?? 0.15)) && x1 - x0 >= sp * 1.3 && top <= 10.5 && bot >= -2.5;
     };
@@ -1443,10 +1457,31 @@ function readStaff(s, ctx, header) {
         if (!gap) continue;
         let y0 = Infinity, y1 = -1, x1b = -1; for (let y = ya; y <= yb; y++) for (let x = xl; x <= c.x1; x++) { const q = y * w + x; if (C[q] && idS.has(labC[q])) { if (y < y0) y0 = y; if (y > y1) y1 = y; if (x > x1b) x1b = x; } }
         if (y1 < 0) continue;
-        if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ trTry: c.x0, xl, x1b, w: +((x1b - xl) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2) });
+        if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ trTry: c.x0, xl, x1b, w: +((x1b - xl) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2) });
         if (cClefShape(xl, x1b, y0, y1)) found = { x0: xl, x1: x1b, y0, y1 };
       }
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ trail: c.x0, x1: c.x1, ya, yb, found });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ trail: c.x0, x1: c.x1, ya, yb, found });
+      if (found) cands.push({ ...c, ...found, w: found.x1 - found.x0 + 1, h: found.y1 - found.y0 + 1, cut: true, trail: true });
+    }
+    // (a C clef inside a beamed group, under the beam: a part standing apart, a white column on
+    // either side of it within the staff, that reads as a C clef)
+    if (globalThis.__clefMid ?? 1) for (let ci = cands.length - 1; ci >= 0; ci--) {
+      const c = cands[ci];
+      if (c.cut || c.spanning || c.w <= sp * 3.2) continue;
+      const ids = Array.isArray(c.id) ? c.id : [c.id], idS = new Set(ids);
+      const tY = Math.round(yAt(s, 8, (c.x0 + c.x1) / 2)), bY = Math.round(yAt(s, 0, (c.x0 + c.x1) / 2));
+      const ya = Math.max(c.y0, Math.round(tY - sp * 0.45)), yb = Math.min(c.y1, Math.round(bY + sp * 0.45));
+      const white = (x) => { for (let y = ya; y <= yb; y++) { const q = y * w + x; if (C[q] && idS.has(labC[q])) return false; } return true; };
+      let found = null;
+      for (let xl = Math.round(c.x0 + sp * 0.3); xl <= c.x1 - sp * 2.6 && !found; xl++) {
+        if (!white(xl - 1) || white(xl)) continue;
+        let xr = -1; for (let x = Math.round(xl + sp * 0.9); x <= Math.min(c.x1 - 1, xl + sp * 2.4); x++) if (white(x)) { xr = x - 1; break; }
+        if (xr < 0) continue;
+        let y0 = Infinity, y1 = -1; for (let y = ya; y <= yb; y++) for (let x = xl; x <= xr; x++) { const q = y * w + x; if (C[q] && idS.has(labC[q])) { if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+        if (y1 < 0) continue;
+        if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ midTry: c.x0, xl, xr, w: +((xr - xl) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2) });
+        if (cClefShape(xl, xr, y0, y1)) found = { x0: xl, x1: xr, y0, y1 };
+      }
       if (found) cands.push({ ...c, ...found, w: found.x1 - found.x0 + 1, h: found.y1 - found.y0 + 1, cut: true, trail: true });
     }
     // (a clef run into the notes after it, a ledger line or a beam: its left part, where that reads
@@ -1466,13 +1501,13 @@ function readStaff(s, ctx, header) {
       }
       const holesIn = (b) => { let n = 0; for (let y = b.y0; y <= b.y1; y++) for (let x = c.x0; x <= b.xr; x++) if (ctx.holes[y * w + x]) n++; return n / (sp * sp); };
       if (best) best.holes = +holesIn(best).toFixed(2);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ lead: c.x0, best });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ lead: c.x0, best });
       if (best && best.d < 0.3 && best.holes >= 0.3) { const tp = pAt(s, best.y0, c.x0 + sp), bp = pAt(s, best.y1, c.x0 + sp); if (tp > 8.6 && bp < 1.2) cands.push({ ...c, x1: best.xr, y0: best.y0, y1: best.y1, w: best.xr - c.x0 + 1, h: best.y1 - best.y0 + 1, cut: true, lead: true }); }
     }
     cands.sort((a2, b2) => a2.x0 - b2.x0);
     for (let ci = cands.length - 1; ci >= 0; ci--) if (cands[ci].spanning) cands.splice(ci, 1);
     for (const c of cands) {
-      if (ctx.dbg && c.h > sp * 1.7) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), note: noteIn(c.x0, c.x1, c.y0, c.y1) });
+      if ((ctx.dbg || globalThis.__sigDbg) && c.h > sp * 1.7) (ctx.signTrace = ctx.signTrace || []).push({ pre: c.x0, w: +(c.w / sp).toFixed(2), h: +(c.h / sp).toFixed(2), note: noteIn(c.x0, c.x1, c.y0, c.y1) });
       if (used.has(c) || c.h < sp * 1.7 || c.h > sp * 8.5 || c.w > sp * 3.2 || c.w < sp * 0.25) continue;
       // with any pieces of it just beside (the two dots of a bass clef, the bars and the bracket of a C clef)
       const parts = cands.filter((q) => q !== c && !used.has(q) && q.x0 < c.x1 + sp * 0.6 && q.x1 > c.x0 - sp * 0.2 && q.x1 - c.x0 < sp * 3.2 && Math.min(q.y1, c.y1) - Math.max(q.y0, c.y0) > -sp * 0.6 && q.h < sp * 8.5 && !(c.trail && (q.w > sp * 3.2 || q.x0 < c.x0 - sp * 0.2)));
@@ -1485,7 +1520,7 @@ function readStaff(s, ctx, header) {
       // (a small clef in the middle of a line is often thicker or thinner than the fonts': the loose
       // comparison decides between the clefs and the rest)
       const lz = classifyLoose(shC, CLS);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ loose: x0, l: lz.slice(0, 3).map((q) => [q.cls, +q.d.toFixed(3)]) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ loose: x0, l: lz.slice(0, 3).map((q) => [q.cls, +q.d.toFixed(3)]) });
       // (a bass clef has its two dots: one each side of the 4th line, just right of it)
       const bassDots = () => { const xa = x1 + 1, xb = x1 + sp * 0.9; const dot = (p) => { const y = yAt(s, p, x1); return compsC.some((q) => q.x0 >= xa - 2 && q.x1 <= xb && q.w < sp * 0.6 && q.h < sp * 0.6 && q.w > sp * 0.15 && Math.abs((q.y0 + q.y1) / 2 - y) < sp * 0.35); }; return dot(5) && dot(7); };
       // (a C clef: on its left, a solid upright bar (and a thin one) the whole height of the sign)
@@ -1503,10 +1538,10 @@ function readStaff(s, ctx, header) {
       if ((globalThis.__bassGeo ?? 1) && !(['treble', 'bass', 'alto'].includes(k.cls) && k.d <= 0.38)) {
         const tp = pAt(s, y0, (x0 + x1) / 2), bp = pAt(s, y1, (x0 + x1) / 2);
         const lb = lz.slice(0, 3).find((q) => q.cls === 'bass');
-        if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
+        if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ bassGeo: x0, tp: +tp.toFixed(1), bp: +bp.toFixed(1), lb: lb && +lb.d.toFixed(3) });
         if (tp > 7 && tp < 10.3 && bp > 0.3 && bp < 3.6 && x1 - x0 >= sp * 1.2 && x1 - x0 <= sp * 2.8 && lb && lb.d < 0.35 && inkDots()) k = { cls: 'bass', d: 0.3 };
       }
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cand: x0, w: +((x1 - x0) / sp).toFixed(2), h: +((y1 - y0) / sp).toFixed(2), k: k.cls, d: +k.d.toFixed(3) });
       // a note inside it is believed over a weak likeness
 
       if (!['treble', 'bass', 'alto'].includes(k.cls) || k.d > 0.38) continue;
@@ -1528,7 +1563,7 @@ function readStaff(s, ctx, header) {
       // what was read inside the clef (its curls look like heads, its bars like stems) goes
       for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > x0 - sp * 0.1 && heads[k2].cx < x1 + sp * 0.1 && heads[k2].cy > y0 - sp * 0.2 && heads[k2].cy < y1 + sp * 0.2) heads.splice(k2, 1);
       for (let k2 = merged.length - 1; k2 >= 0; k2--) if (merged[k2].x > x0 - sp * 0.2 && merged[k2].x < x1 + sp * 0.2) merged.splice(k2, 1);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ clef: name, x0, d: +k.d.toFixed(3) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ clef: name, x0, d: +k.d.toFixed(3) });
     }
     // time signatures: two digits one above the other, filling the staff, with no note there
     const digitsIn = cands.filter((c) => !used.has(c) && !c.cut && c.h > sp * 1.1 && c.h < sp * 2.8 && c.w > sp * 0.6 && c.w < sp * 2.6 && !noteIn(c.x0, c.x1, c.y0, c.y1));
@@ -1543,7 +1578,7 @@ function readStaff(s, ctx, header) {
       if (!(u.e < 0.42 || u.l < 0.15) || !(d.e < 0.42 || d.l < 0.15) || ![2, 4, 8, 16].includes(d.v)) continue;
       used.add(a); used.add(b2);
       signs.push({ x: Math.min(a.x0, b2.x0), x1: Math.max(a.x1, b2.x1), time: [u.v, d.v] });
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ time: [u.v, d.v], x0: a.x0 });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ time: [u.v, d.v], x0: a.x0 });
     }
     // or the two digits touching, one tall shape the height of the staff: cut where it is thinnest,
     // about the middle line (a head read in a digit's hole is not a note)
@@ -1553,7 +1588,7 @@ function readStaff(s, ctx, header) {
       if (signs.some((g) => g.time && c.x0 < g.x1 && c.x1 > g.x0)) continue;
       if (used.has(c) || c.h < sp * 3.3 || c.h > sp * 4.8 || c.w < sp * 0.8 || c.w > sp * 2.4) continue;
       const pt = pAt(s, c.y0, c.x0), pb = pAt(s, c.y1, c.x0);
-      const why = (r) => { if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ cutNo: c.x0, r }); };
+      const why = (r) => { if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ cutNo: c.x0, r }); };
       if (pt < 7.2 || pt > 9.6 || pb > 0.8 || pb < -1.6) { why(['p', pt, pb]); continue; }
       if (heads.some((hd) => hd.stem && !(hd.cx > c.x0 && hd.cx < c.x1 && hd.cy > c.y0 && hd.cy < c.y1) && hd.stem.x > c.x0 + 2 && hd.stem.x < c.x1 - 2 && hd.stem.top < c.y1 && hd.stem.bot > c.y0)) continue;
       const ym = yAt(s, 4, (c.x0 + c.x1) / 2);
@@ -1568,12 +1603,12 @@ function readStaff(s, ctx, header) {
       if (!A || !Bx || A.y1 - A.y0 < sp * 1.2 || Bx.y1 - Bx.y0 < sp * 1.2 || A.x1 - A.x0 < sp * 0.6 || Bx.x1 - Bx.x0 < sp * 0.6 || Math.abs((A.x0 + A.x1) - (Bx.x0 + Bx.x1)) / 2 > sp * 0.6) continue;
       const rd = (q) => { const cl = readDigitBox(ctx, sp, { ...q, ids: c.id }, img, lab); return cl ? cl.filter((r) => r.v)[0] : { v: 0, e: 9, l: 9 }; };
       const u = rd(A), d = rd(Bx);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ timeCut: c.x0, u, d });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ timeCut: c.x0, u, d });
       if (!(u.e < 0.42 || u.l < 0.15) || !(d.e < 0.42 || d.l < 0.15) || ![2, 4, 8, 16].includes(d.v)) continue;
       used.add(c);
       signs.push({ x: c.x0, x1: c.x1, time: [u.v, d.v] });
       for (let k2 = heads.length - 1; k2 >= 0; k2--) if (heads[k2].cx > c.x0 && heads[k2].cx < c.x1 && heads[k2].cy > c.y0 && heads[k2].cy < c.y1) heads.splice(k2, 1);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ time: [u.v, d.v], x0: c.x0, cut: true });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ time: [u.v, d.v], x0: c.x0, cut: true });
     }
     // (the two digits may touch the middle line, and so each other: one tall shape filling the staff)
     for (const c of cands.filter((q) => !q.cut)) {
@@ -1587,7 +1622,7 @@ function readStaff(s, ctx, header) {
       if (!up || !dn || up.y1 - up.y0 < sp * 1.2 || dn.y1 - dn.y0 < sp * 1.2) continue;
       const rd2 = (bx) => { const sh = shapeOf(C, w, bx.x0, bx.y0, bx.x1, bx.y1, sp, labC, bx.ids); const lz = new Map(classifyLoose(sh, ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9']).map((q) => [q.cls, q.d])); return ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9'].map((d) => ({ v: +d.slice(1), e: classify(sh, [d]).d, l: lz.get(d) })).sort((x, y) => Math.min(x.e, x.l * 1.1 + 0.04) - Math.min(y.e, y.l * 1.1 + 0.04))[0]; };
       const u = rd2(up), d = rd2(dn);
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ tall: c.x0, u, d });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ tall: c.x0, u, d });
       if (!(u.e < 0.45 || u.l < 0.16) || !(d.e < 0.45 || d.l < 0.16) || ![2, 4, 8, 16].includes(d.v)) continue;
       used.add(c);
       signs.push({ x: c.x0, x1: c.x1, time: [u.v, d.v] });
@@ -1621,7 +1656,7 @@ function readStaff(s, ctx, header) {
       const sc = Math.min(u.e, u.l * 1.1 + 0.04) + Math.min(d.e, d.l * 1.1 + 0.04);
       if (!best || sc < best.sc) best = { sc, u, d, x1: Math.max(A.x1, Bx.x1) };
     }
-    if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ afterBar: Math.round(bl.x), best: best && { u: best.u.v, d: best.d.v, ue: +best.u.e.toFixed(2), ul: +best.u.l.toFixed(2), de: +best.d.e.toFixed(2), dl: +best.d.l.toFixed(2) } });
+    if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ afterBar: Math.round(bl.x), best: best && { u: best.u.v, d: best.d.v, ue: +best.u.e.toFixed(2), ul: +best.u.l.toFixed(2), de: +best.d.e.toFixed(2), dl: +best.d.l.toFixed(2) } });
     if (!best) continue;
     const { u, d } = best;
     if (!(u.e < 0.32 || u.l < 0.1) || !(d.e < 0.32 || d.l < 0.1) || ![2, 4, 8, 16].includes(d.v)) continue;
@@ -1678,7 +1713,7 @@ function readStaff(s, ctx, header) {
       const hk = readHeader({ ...s, x0: x2 - sp * 0.5 }, zone.filter((c) => c.x0 >= x2), kctx, { clef: clefNow }, heads);
       if (globalThis.__keyMidDbg) (ctx.signTrace = ctx.signTrace || []).push({ keyMidTrace: kctx.trace.filter((t) => !t.inAccDbg).slice(0, 30) });
       let key = hk.key || 0, end = hk.end;
-      if (ctx.dbg) (ctx.signTrace = ctx.signTrace || []).push({ keyMid: xb, nNat, key, end: Math.round(end), cur: curKey, zone: zone.slice(0, 6).map((c) => [c.x0, c.x1, +(c.w / sp).toFixed(2), +(c.h / sp).toFixed(2), classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['natural', 'sharp', 'flat', 'd2', 'd3', 'd4'])]) });
+      if (ctx.dbg || globalThis.__sigDbg) (ctx.signTrace = ctx.signTrace || []).push({ keyMid: xb, nNat, key, end: Math.round(end), cur: curKey, zone: zone.slice(0, 6).map((c) => [c.x0, c.x1, +(c.w / sp).toFixed(2), +(c.h / sp).toFixed(2), classify(shapeOf(C, w, c.x0, c.y0, c.x1, c.y1, sp, labC, c.id), ['natural', 'sharp', 'flat', 'd2', 'd3', 'd4'])]) });
       if (!key) { if (!nNat || !curKey || nNat < Math.min(2, Math.abs(curKey))) continue; end = x2; }
       // (one sign alone, with nothing cancelled before it, is more likely a note's)
       if (Math.abs(key) < 2 && !nNat) continue;
@@ -2148,6 +2183,27 @@ function readHeader(s, comps, ctx, prev, heads) {
       // (handwritten signs, known only loosely, count when there are several in their order)
       if (nLoose && cnt < 3) { cnt = exact; lx = lxExact; }
       // (one sign right against a note at about its height is that note's accidental, not a key)
+      // (nor is a lone 'sign' that is, whole, a time signature's C or cut C)
+      if (cnt === 1 && firstSign && (globalThis.__keyNotC ?? 1)) {
+        const CK = ctx.Cb || C, ya = Math.round(s.top - sp * 1.5), yb = Math.round(s.bottom + sp * 1.5);
+        // the ink there, out to blank columns on either side (small gaps bridged)
+        const colInk = (x) => { let y0c = Infinity, y1c = -1; for (let y = Math.max(0, ya); y <= Math.min(ctx.h - 1, yb); y++) if (C[y * w + x]) { if (y < y0c) y0c = y; y1c = y; } return y1c >= 0 ? [y0c, y1c] : null; };
+        let bx0 = Math.round((firstSign.x0 + firstSign.x1) / 2), bx1 = bx0, by0 = Infinity, by1 = -1;
+        const gapMax = Math.max(2, Math.round(sp * 0.25));
+        for (const dir of [-1, 1]) {
+          let gap = 0;
+          for (let x = bx0 + dir, n2 = 0; n2 < sp * 2.5 && x > 0 && x < w - 1; x += dir, n2++) {
+            const ci = colInk(x);
+            if (ci) { gap = 0; if (dir < 0) bx0 = x; else bx1 = x; if (ci[0] < by0) by0 = ci[0]; if (ci[1] > by1) by1 = ci[1]; } else if (++gap > gapMax) break;
+          }
+        }
+        { const ci = colInk(Math.round((firstSign.x0 + firstSign.x1) / 2)); if (ci) { by0 = Math.min(by0, ci[0]); by1 = Math.max(by1, ci[1]); } }
+        if (bx1 > bx0 && by1 - by0 > sp * 1.5) {
+          const k2 = classify(shapeOf(CK, w, bx0, by0, bx1, by1, sp), ['tC', 'tCut', 'sharp', 'flat', 'natural']);
+          if (globalThis.__kcDbg) globalThis.__kcDbg.push([a, bx0, bx1, by0, by1, k2.cls, k2.d]);
+          if ((k2.cls === 'tC' || k2.cls === 'tCut') && k2.d < 0.4) cnt = 0;
+        }
+      }
       if (cnt === 1 && firstSign && (heads.some((hd) => hd.left - firstSign.x1 > -sp * 0.2 && hd.left - firstSign.x1 < sp * 0.9 && Math.abs(hd.p - firstSign.p) <= 1) || ovalAfter(firstSign))) cnt = 0;
       if (cnt && (firstD < bestFirst - 0.02 || (Math.abs(firstD - bestFirst) <= 0.02 && cnt > n))) { n = cnt; kind = a; lastX = lx; bestFirst = firstD; keyFirst = firstSign; }
     }
