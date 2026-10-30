@@ -970,6 +970,13 @@ enum StandRunWatch {
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in
             if UIApplication.shared.applicationState != .background { StandRunWatch.set(true) }
         }
+        // the first two minutes, the memory in use every 10 s (an app closed by iOS for memory
+        // shows its climb here)
+        var n = 0
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { t in
+            n += 1; if n > 12 { t.invalidate(); return }
+            StandLog.write("memory \(StandRunWatch.footprintMB()) MB (\(n * 10) s)")
+        }
     }
     private static func set(_ on: Bool) {
         if on { try? Data().write(to: marker) } else { try? FileManager.default.removeItem(at: marker) }

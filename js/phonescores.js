@@ -384,7 +384,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     // (the lines for Play made ready quietly, page after page, while the score is open: Play then
     // opens at once, even away from the iPad later)
     const v0 = PS.view;
-    setTimeout(async () => { for (let q = 0; q < countOf(copy); q++) { if (PS.view !== v0) return; if (PP.copyId !== copy.id + copy.stamp) { PP.pages.clear(); PP.lines.clear(); PP.copyId = copy.id + copy.stamp; } const kept = await db.get('files', copy.id + ':s' + copy.stamp + ':play3-' + q).catch(() => null); if (kept) continue; try { const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i: q }, 30000); if (!d || !Array.isArray(d.lines) || PS.view !== v0) continue; const lines = []; for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: L.img ? await (await fetch(L.img)).blob() : null, ink: L.ink ? await (await fetch(L.ink)).blob() : null }); if (lines.length) await db.put('files', { id: copy.id + ':s' + copy.stamp + ':play3-' + q, kind: 'ipadplay', lines }).catch(() => {}); } catch { return; } } }, 2500);
+    setTimeout(async () => { for (let q = 0; q < countOf(copy); q++) { if (PS.view !== v0) return; if (PP.copyId !== copy.id + copy.stamp) { PP.pages.clear(); PP.lines.clear(); PP.copyId = copy.id + copy.stamp; } const kept = await db.get('files', copy.id + ':s' + copy.stamp + ':play4-' + q).catch(() => null); if (kept) continue; try { const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i: q }, 30000); if (!d || !Array.isArray(d.lines) || PS.view !== v0) continue; const lines = []; for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: L.img ? await (await fetch(L.img)).blob() : null, ink: L.ink ? await (await fetch(L.ink)).blob() : null }); if (lines.length) await db.put('files', { id: copy.id + ':s' + copy.stamp + ':play4-' + q, kind: 'ipadplay', lines }).catch(() => {}); } catch { return; } } }, 2500);
     viewer.hidden = false; $('#phvTitle').textContent = s.title;
     $('#phvInk').hidden = false;
     drawPage();
@@ -537,7 +537,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     return lines;
   }
   const dataBlob = async (u) => (u ? (await fetch(u)).blob() : null);
-  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play3-' + i;   // (kept with the version's pages, gone with them)
+  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play4-' + i;   // (kept with the version's pages, gone with them)
   // the lines of page i: [{ img, ink, w, h }] (pictures as they are kept)
   async function playLines(copy, i) {
     if (PP.pages.has(i)) return PP.pages.get(i);

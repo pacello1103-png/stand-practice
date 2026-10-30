@@ -115,14 +115,14 @@ function linesElsewhere(canvas) {
   if (!LW) {
     try {
       LW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
-      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) w.res([]); else w.res(d.lines || []); };   // (a page that could not be read: only that page)
+      LW.onmessage = (e) => { const d = e.data || {}; const w = lwWait.get(d.id); if (!w) return; lwWait.delete(d.id); clearTimeout(w.t); if (d.error) { lwBroken = true; w.res(null); } else w.res(d.lines || []); };   // (the thread could not read: read here from now on, as before)
       LW.onerror = () => { lwBroken = true; for (const w of lwWait.values()) { clearTimeout(w.t); w.res(null); } lwWait.clear(); dropReader(); };
     } catch { lwBroken = true; return Promise.resolve(null); }
   }
   return createImageBitmap(canvas).then((page) => new Promise((res) => {
     const id = ++lwSeq;
     // (a page that takes too long: given up, the music can still be chosen by drawing a loop)
-    const t = setTimeout(() => { lwWait.delete(id); dropReader(); res('slow'); }, 12000);
+    const t = setTimeout(() => { lwWait.delete(id); dropReader(); lwBroken = true; res(null); }, 9000);   // (a thread that does not answer: read here instead, from now on)
     lwWait.set(id, { res, t });
     try { LW.postMessage({ id, page }, [page]); } catch { clearTimeout(t); lwWait.delete(id); lwBroken = true; res(null); }
   }), () => null);
@@ -154,15 +154,10 @@ async function findLines() {
     // read in a thread of its own (the page stays free to turn); here only if that cannot be had
     lines = await linesElsewhere(c);
     if (lines === 'dropped') { c.width = c.height = 0; return; }
-    // (no thread for it: read here, from a smaller picture, so the page never freezes for long)
+    // (no thread for it: read here, the page only, once it is the one shown)
     if (lines === null && PK.page === page) {
       await idle();
-      if (PK.page === page) {
-        const k = Math.min(1, 1100 / c.width), s2 = document.createElement('canvas');
-        s2.width = Math.round(c.width * k); s2.height = Math.round(c.height * k);
-        s2.getContext('2d').drawImage(c, 0, 0, s2.width, s2.height);
-        const A = await analyse(s2); lines = linesOf(A); s2.width = s2.height = 0;
-      }
+      if (PK.page === page) { const A = await analyse(c); lines = linesOf(A); }
     }
     c.width = c.height = 0;
   } catch (err) { console.error(err); lines = []; }

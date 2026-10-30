@@ -5289,14 +5289,14 @@ function infoForPhone(id) {
 // The iPhone's Play: the lines of music of a page (staves only, no titles or text), each drawn on
 // its own, sharp, from the score itself. The lines are found in a thread of their own (the stand
 // stays free) and remembered.
-const PLINES = new Map();
+const PLINES = new Map(); let PL_BROKEN = false;
 let PLW = null, plSeq = 0; const plWait = new Map();
 function plFind(canvas) {
   return createImageBitmap(canvas).then((bmp) => new Promise((res) => {
     try {
       if (!PLW) {
         PLW = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
-        PLW.onmessage = (e) => { const d = e.data || {}; const w = plWait.get(d.id); if (!w) return; plWait.delete(d.id); clearTimeout(w.t); w.res(d.error ? [] : d.lines || []); };
+        PLW.onmessage = (e) => { const d = e.data || {}; const w = plWait.get(d.id); if (!w) return; plWait.delete(d.id); clearTimeout(w.t); w.res(d.error ? null : d.lines || []); };
         PLW.onerror = () => { for (const w of plWait.values()) { clearTimeout(w.t); w.res(null); } plWait.clear(); try { PLW.terminate(); } catch {} PLW = null; };
       }
       const id = ++plSeq; const t = setTimeout(() => { plWait.delete(id); try { PLW.terminate(); } catch {} PLW = null; res(null); }, 20000);
@@ -5319,8 +5319,10 @@ function linesForPhone(id, i) {
     if (!lines) {
       const W0 = 1700, c0 = document.createElement('canvas');
       try { await doc.render(i, c0, W0, Math.round((W0 * ph) / pw)); } catch { c0.width = c0.height = 0; throw new Error('draw'); }
-      const found = await plFind(c0); c0.width = c0.height = 0;
-      if (found === null) throw new Error('busy');
+      let found = PL_BROKEN ? null : await plFind(c0);
+      // (no thread for it here: read on the stand itself, a page at a time, as Capture does)
+      if (found === null) { PL_BROKEN = true; try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0)); } catch { found = []; } }
+      c0.width = c0.height = 0;
       lines = cleanLines(found);
       PLINES.set(lk, lines); db.put('files', { id: 'plines3:' + lk, kind: 'plines', lines }).catch(() => {});
     }
@@ -5339,7 +5341,14 @@ function linesForPhone(id, i) {
     for (const L of lines) {
       const sx = Math.round(L.x0 * W), sy = Math.round(L.y0 * H), sw = Math.max(1, Math.round((L.x1 - L.x0) * W)), sh = Math.max(1, Math.round((L.y1 - L.y0) * H));
       const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
-      lc.getContext('2d', { alpha: false }).drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+      const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+      // (a scan's grey paper made white, its ink kept: the line reads as cleanly as a printed one)
+      try {
+        const id2 = lg.getImageData(0, 0, sw, sh), d = id2.data, hist = new Uint32Array(256);
+        for (let q = 0; q < d.length; q += 16) hist[(d[q] * 0.3 + d[q + 1] * 0.59 + d[q + 2] * 0.11) | 0]++;
+        let tot = 0; for (const x of hist) tot += x; let acc = 0, paper = 255; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > tot * 0.4) { paper = v; break; } }
+        if (paper < 252 && paper > 120) { const k = 255 / paper; for (let q = 0; q < d.length; q += 4) { d[q] = Math.min(255, d[q] * k); d[q + 1] = Math.min(255, d[q + 1] * k); d[q + 2] = Math.min(255, d[q + 2] * k); } lg.putImageData(id2, 0, 0); }
+      } catch {}
       const img = await canvasData(lc, 'image/jpeg', 0.82);
       let ink = null;
       if (k2) { const kc = document.createElement('canvas'); kc.width = sw; kc.height = sh; kc.getContext('2d').drawImage(k2, sx, sy, sw, sh, 0, 0, sw, sh); ink = await canvasData(kc, 'image/png'); kc.width = kc.height = 0; }
