@@ -326,6 +326,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
         const ph = spans2.find((q) => f.t >= q.t0 - 1e-6 && f.t < q.t1);
         if (!ph) continue;
         const pr = Math.max(0, Math.min(1, (f.t - ph.t0) / Math.max(0.05, ph.t1 - ph.t0)));
+        f.phr = pr;
         f.vel = Math.max(0.05, Math.min(1, f.vel * (1 + A * Math.sin(Math.PI * Math.pow(pr, 0.8)) - A * 0.4 * Math.max(0, pr - 0.85) / 0.15)));
       }
     }
@@ -440,7 +441,7 @@ export function buildTimeline(score, { from = 0, humanize = true } = {}) {
           if (IOWA_STR && /^(violin|viola|cello)$/.test(sid)) {
             // a string player's swell: every note of some length grows into its middle and gives a
             // little back, each a bit differently (the peak earlier or later, larger on longer notes)
-            base.phraseEnd = !!f.phraseEnd;
+            base.phraseEnd = !!f.phraseEnd; base.phr = f.phr ?? 0.5;
             if (dur > 0.5 && !f.env && !f.hpEnd) {
               const sw = Math.min(0.24, 0.08 + dur * 0.06) * (0.7 + rnd2() * 0.6), pk = 0.35 + rnd2() * 0.25;
               base.env = [[t0 + dur * pk, 1 + sw], [t0 + dur * 0.95, f.phraseEnd ? 0.78 : 0.93 + rnd2() * 0.06]];

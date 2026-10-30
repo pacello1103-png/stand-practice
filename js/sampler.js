@@ -411,11 +411,25 @@ export class Sampler {
       // passes across them and the colour shimmers band by band, as a real instrument's does (a
       // recording played faster or slower carries its resonances along with it, and stays flat)
       const RES = (globalThis.__res || ((globalThis.__iowaS ?? 1) && (globalThis.__resOn ?? 1) ? BODY_RES : {}))[sid];
+      // the other strings ringing along (sympathetic resonance): the open strings and their first
+      // harmonics answer whenever a note shares them, a faint glow around the tone that a sample
+      // played alone lacks
+      const OPEN = { violin: [55, 62, 69, 76], viola: [48, 55, 62, 69], cello: [36, 43, 50, 57] }[sid];
+      if (OPEN && iowaOn && (globalThis.__symp ?? 1)) {
+        const sym = ctx.createGain(); sym.gain.value = (globalThis.__symp ?? 1) * 0.5;
+        for (const m of OPEN) for (const h of [1, 2, 3]) {
+          const f = 440 * Math.pow(2, (m - 69) / 12) * h; if (f > 5000) continue;
+          const b = ctx.createBiquadFilter(); b.type = 'bandpass'; b.frequency.value = f; b.Q.value = 140 / Math.sqrt(h);
+          node.connect(b).connect(sym); ch.body.push(b);
+        }
+        ch.sym = sym;
+      }
       if (RES && !this.plain) for (const [f, gdb, q] of RES) { const b = ctx.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.gain.value = gdb; b.Q.value = q; node.connect(b); node = b; ch.body.push(b); }
       // (the orchestra's recordings, made close and soft at the top: the air a hall recording keeps)
       const air = (globalThis.__hiFix ?? 1) && !this.plain && (/^(violins|violas|cellos|basses)$/.test(sid) || REAL_W[sid]) ? (globalThis.__air ?? 3) : 0;
       if (air) { const b = ctx.createBiquadFilter(); b.type = 'highshelf'; b.frequency.value = 6000; b.gain.value = air; node.connect(b); node = b; ch.body.push(b); }
       node.connect(ch.low).connect(ch.high).connect(ch.bright).connect(ch.gain).connect(ch.pan).connect(this.out);
+      if (ch.sym) ch.sym.connect(ch.low);
       // the orchestra as a pair of microphones above the stage hears it: a player to the right reaches
       // the right microphone a moment sooner and a little louder (not only louder, as a pan control
       // makes it), which is what gives a real orchestra recording its open, wide sound
@@ -609,16 +623,20 @@ export class Sampler {
       // each note gets its own width and speed, around the instrument's own.
       const V = this.vibFor(ch);
       const R = Math.random;
-      const base = { violin: 11, viola: 10.5, cello: 10 }[sid] || 10.5;
+      const base = { violin: 12.5, viola: 12, cello: 11.5 }[sid] || 12;
       const centre = { violin: 76, viola: 64, cello: 52 }[sid] || 64;
       const charge = Math.max(-0.15, Math.min(0.2, (midi - centre) * 0.012));
       const lenF = dur < 0.18 ? 0.25 : dur < 0.3 ? 0.55 : dur < 0.6 ? 0.85 : dur < 1.2 ? 1 : 1.1;
       const own = 0.82 + R() * 0.4;   // (this note's own)
-      const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * lenF * own * (1 + charge) * (opts.phraseEnd ? 0.8 : 1);
+      // (and the phrase: it opens towards the phrase's height and settles at its end, the way a
+      // player sings a line; now and then a note starts almost plain and blooms)
+      const arc = opts.phr !== undefined ? 0.85 + 0.35 * Math.sin(Math.PI * Math.min(1, Math.max(0, opts.phr))) : 1;
+      const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * lenF * own * (1 + charge) * arc * (opts.phraseEnd ? 0.8 : 1);
+      const bloom = !connect && dur > 0.9 && R() < 0.3;
       const k = src.playbackRate.value * (Math.pow(2, cents / 1200) - 1);
       vibG = ctx.createGain(); vibG.gain.value = 0;
       // (it opens as the note settles: slurred, it carries on from the note before)
-      const delay = connect ? 0 : 0.05 + R() * 0.1, grow = Math.min(dur * 0.6, (connect ? 0.12 : 0.22) + R() * 0.25 + (dur > 1.5 ? 0.2 : 0));
+      const delay = connect ? 0 : (bloom ? 0.18 + R() * 0.15 : 0.05 + R() * 0.1), grow = Math.min(dur * 0.6, (connect ? 0.12 : 0.22) + R() * 0.25 + (dur > 1.5 ? 0.2 : 0) + (bloom ? 0.25 : 0));
       vibG.gain.setValueAtTime(k * (connect ? 0.75 + R() * 0.15 : 0.12 + R() * 0.15), t);
       if (delay) vibG.gain.setValueAtTime(k * 0.2, t + delay);
       vibG.gain.linearRampToValueAtTime(k * (0.9 + R() * 0.1), t + delay + Math.max(0.06, grow));
