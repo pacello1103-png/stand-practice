@@ -415,7 +415,7 @@ export class Sampler {
       // harmonics answer whenever a note shares them, a faint glow around the tone that a sample
       // played alone lacks
       const OPEN = { violin: [55, 62, 69, 76], viola: [48, 55, 62, 69], cello: [36, 43, 50, 57] }[sid];
-      if (OPEN && iowaOn && (globalThis.__symp ?? 1)) {
+      if (OPEN && iowaOn && (globalThis.__symp ?? 0)) {
         const sym = ctx.createGain(); sym.gain.value = (globalThis.__symp ?? 1) * 0.5;
         for (const m of OPEN) for (const h of [1, 2, 3]) {
           const f = 440 * Math.pow(2, (m - 69) / 12) * h; if (f > 5000) continue;
@@ -623,16 +623,17 @@ export class Sampler {
       // each note gets its own width and speed, around the instrument's own.
       const V = this.vibFor(ch);
       const R = Math.random;
-      const base = { violin: 12.5, viola: 12, cello: 11.5 }[sid] || 12;
+      const v3 = globalThis.__vib3 ?? 0;
+      const base = (v3 ? { violin: 12.5, viola: 12, cello: 11.5 } : { violin: 11, viola: 10.5, cello: 10 })[sid] || 11;
       const centre = { violin: 76, viola: 64, cello: 52 }[sid] || 64;
       const charge = Math.max(-0.15, Math.min(0.2, (midi - centre) * 0.012));
       const lenF = dur < 0.18 ? 0.25 : dur < 0.3 ? 0.55 : dur < 0.6 ? 0.85 : dur < 1.2 ? 1 : 1.1;
       const own = 0.82 + R() * 0.4;   // (this note's own)
       // (and the phrase: it opens towards the phrase's height and settles at its end, the way a
       // player sings a line; now and then a note starts almost plain and blooms)
-      const arc = opts.phr !== undefined ? 0.85 + 0.35 * Math.sin(Math.PI * Math.min(1, Math.max(0, opts.phr))) : 1;
+      const arc = v3 && opts.phr !== undefined ? 0.85 + 0.35 * Math.sin(Math.PI * Math.min(1, Math.max(0, opts.phr))) : 1;
       const cents = base * (globalThis.__vibDepth ?? 1) * (0.55 + Math.min(1, vel) * 0.6) * lenF * own * (1 + charge) * arc * (opts.phraseEnd ? 0.8 : 1);
-      const bloom = !connect && dur > 0.9 && R() < 0.3;
+      const bloom = v3 && !connect && dur > 0.9 && R() < 0.3;
       const k = src.playbackRate.value * (Math.pow(2, cents / 1200) - 1);
       vibG = ctx.createGain(); vibG.gain.value = 0;
       // (it opens as the note settles: slurred, it carries on from the note before)
