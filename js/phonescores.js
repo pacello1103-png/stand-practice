@@ -10,7 +10,7 @@
 import { db, getSetting, setSetting } from './db.js';
 import { nlog } from './link.js';
 import { looksBlank } from './score.js';
-import { cleanLines } from './picker-lines.js';
+import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -381,11 +381,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // the reader: tap the right side for the next page, the left for the one before; swipe too
   function showScore(s, copy) {
     PS.view = { s, copy, i: 0 };
-    // (the lines for Play made ready quietly, page after page, while the score is open: Play then
-    // opens at once, even away from the iPad later)
-    const v0 = PS.view;
-    setTimeout(async () => { for (let q = 0; q < countOf(copy); q++) { if (PS.view !== v0) return; if (PP.copyId !== copy.id + copy.stamp) { PP.pages.clear(); PP.lines.clear(); PP.copyId = copy.id + copy.stamp; } const kept = await db.get('files', copy.id + ':s' + copy.stamp + ':play4-' + q).catch(() => null); if (kept) continue; try { const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i: q }, 30000); if (!d || !Array.isArray(d.lines) || PS.view !== v0) continue; const lines = []; for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: L.img ? await (await fetch(L.img)).blob() : null, ink: L.ink ? await (await fetch(L.ink)).blob() : null }); if (lines.length) await db.put('files', { id: copy.id + ':s' + copy.stamp + ':play4-' + q, kind: 'ipadplay', lines }).catch(() => {}); } catch { return; } } }, 2500);
-    viewer.hidden = false; $('#phvTitle').textContent = s.title;
+    viewer.hidden = false; $('#phvTitle').textContent = s.title; if (window.__sendFace) window.__sendFace();
     $('#phvInk').hidden = false;
     drawPage();
   }
@@ -428,8 +424,9 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     // the next page ready ahead
     const n = v.i + 1 < countOf(v.copy) ? await pageOf(v.copy, v.i + 1) : null; if (n && PS.view === v) { const pre = new Image(); const un = URL.createObjectURL(n.img); PS.urls.push(un); pre.src = un; }
   }
+  window.__phoneViewer = { active: () => !viewer.hidden, wink: (eye) => { if (!PP.open) go(eye === 'right' ? 1 : -1); } };
   const go = (d) => { const v = PS.view; if (!v) return; const i = Math.max(0, Math.min(countOf(v.copy) - 1, v.i + d)); if (i !== v.i) { v.i = i; drawPage(); } };
-  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; });
+  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; if (window.__sendFace) window.__sendFace(); for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; });
   $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
   let sx = null, sy = 0;
   const stage = $('#phvStage');
@@ -528,16 +525,26 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // (away from the iPad: the lines found here, on the page picture)
   async function linesOfPage(copy, i) {
     if (PP.lines.has(i)) return PP.lines.get(i);
-    const p = await pageOf(copy, i); if (!p || !p.img) return halves;
+    const p = await pageOf(copy, i); if (!p || !p.img) return [];
     let found = null;
-    try { found = await linesInThread(await createImageBitmap(p.img)); } catch {}
-    let lines = cleanLines(found || []);
-    if (!lines.length) lines = halves;
+    if (!PP.threadBroken) { try { found = await linesInThread(await createImageBitmap(p.img)); } catch {} }
+    // (no thread for it on this iPhone: read here, as Capture does; a moment, once per page)
+    if (found === null) {
+      PP.threadBroken = true;
+      try {
+        const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]);
+        const bmp = await createImageBitmap(p.img); const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+        c.getContext('2d').drawImage(bmp, 0, 0); try { bmp.close(); } catch {}
+        found = linesOf(await analyse(c)); c.width = c.height = 0;
+      } catch { found = []; }
+    }
+    // (a page with no music on it, a title page, is passed over)
+    const lines = cleanLines(found || []);
     PP.lines.set(i, lines);
     return lines;
   }
   const dataBlob = async (u) => (u ? (await fetch(u)).blob() : null);
-  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play4-' + i;   // (kept with the version's pages, gone with them)
+  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play10-' + i;   // (kept with the version's pages, gone with them)
   // the lines of page i: [{ img, ink, w, h }] (pictures as they are kept)
   async function playLines(copy, i) {
     if (PP.pages.has(i)) return PP.pages.get(i);
@@ -560,15 +567,21 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const bmp = await createImageBitmap(p.img).catch(() => null); if (!bmp) return [];
       const inkB = p.ink ? await createImageBitmap(p.ink).catch(() => null) : null;
       const out = [];
-      for (const L of Ls) {
-        const sx = L.x0 * bmp.width, sy = L.y0 * bmp.height, sw = Math.max(1, (L.x1 - L.x0) * bmp.width), sh = Math.max(1, (L.y1 - L.y0) * bmp.height);
+      const pc = document.createElement('canvas'); pc.width = bmp.width; pc.height = bmp.height;
+      const pg = pc.getContext('2d', { willReadFrequently: true }); pg.drawImage(bmp, 0, 0);
+      const edges = cleanEdges(pg, bmp.width, bmp.height, Ls);
+      for (let li = 0; li < Ls.length; li++) {
+        const L = Ls[li], E = edges[li];
+        const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
         const c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
-        c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        c.getContext('2d', { willReadFrequently: true }).drawImage(pc, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        try { eraseCrossings(c.getContext('2d', { willReadFrequently: true }), c.width, c.height, pg, sx, sy, bmp.height); } catch {}
         const img = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
         let ink = null;
-        if (inkB) { c.getContext('2d').clearRect(0, 0, c.width, c.height); c.getContext('2d').drawImage(inkB, L.x0 * inkB.width, L.y0 * inkB.height, (L.x1 - L.x0) * inkB.width, (L.y1 - L.y0) * inkB.height, 0, 0, c.width, c.height); ink = await new Promise((r) => c.toBlob(r, 'image/png')); }
+        if (inkB) { c.getContext('2d').clearRect(0, 0, c.width, c.height); c.getContext('2d').drawImage(inkB, sx / bmp.width * inkB.width, sy / bmp.height * inkB.height, sw / bmp.width * inkB.width, sh / bmp.height * inkB.height, 0, 0, c.width, c.height); ink = await new Promise((r) => c.toBlob(r, 'image/png')); }
         out.push({ w: c.width, h: c.height, img, ink }); c.width = c.height = 0;
       }
+      pc.width = pc.height = 0;
       try { bmp.close(); inkB && inkB.close(); } catch {}
       return out;
     })();
@@ -652,7 +665,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   $('#phpClose').addEventListener('click', (e) => { e.stopPropagation(); ppClose(); });
   {
     const pl = $('#phPlay'); let tx = null, ty = 0;
-    pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-bar button')) return; tx = e.clientX; ty = e.clientY; });
+    pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-close')) { tx = null; return; } tx = e.clientX; ty = e.clientY; });
     pl.addEventListener('pointerup', (e) => {
       if (tx === null) return; const dx = e.clientX - tx, dy = e.clientY - ty; tx = null;
       if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { ppStep(dx < 0 ? 1 : -1); return; }

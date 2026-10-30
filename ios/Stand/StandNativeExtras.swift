@@ -147,6 +147,8 @@ final class StandNativeExtras: NSObject {
         browser = br
         adv.startAdvertisingPeer()
         br.startBrowsingForPeers()
+        searching = true
+        scheduleRest(after: 120)
     }
 
     // The same identity every time (Apple's advice): a new one each start left the other device
@@ -163,6 +165,7 @@ final class StandNativeExtras: NSObject {
     }
 
     private func stopPeer() {
+        restTimer?.invalidate(); restTimer = nil; searching = false
         advertiser?.stopAdvertisingPeer(); advertiser = nil
         browser?.stopBrowsingForPeers(); browser = nil
         session?.disconnect(); session = nil
@@ -179,6 +182,30 @@ final class StandNativeExtras: NSObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 self.advertiser?.startAdvertisingPeer()
                 self.browser?.startBrowsingForPeers()
+                self.searching = true
+                self.scheduleRest(after: 120)
+            }
+        }
+    }
+    // Looking for the other device keeps the Wi-Fi radio busy all the time, which costs battery on
+    // both. So it looks for two minutes (after opening Stand, coming back to it, or losing the
+    // other), then rests, looking again for 20 s every 3 minutes; once linked it stops looking
+    // (the link itself stays).
+    private var searching = false
+    private var restTimer: Timer?
+    private func scheduleRest(after secs: TimeInterval) {
+        restTimer?.invalidate()
+        restTimer = Timer.scheduledTimer(withTimeInterval: secs, repeats: false) { [weak self] _ in self?.rest() }
+    }
+    private func rest() {
+        guard let s = session else { return }
+        browser?.stopBrowsingForPeers(); advertiser?.stopAdvertisingPeer(); searching = false
+        // (linked: nothing more to look for; not linked: a short look again in a while)
+        if s.connectedPeers.isEmpty {
+            restTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: false) { [weak self] _ in
+                guard let self = self, self.session != nil, UIApplication.shared.applicationState == .active, (self.session?.connectedPeers.isEmpty ?? true) else { if let me = self, me.session != nil { me.scheduleRest(after: 180) }; return }
+                self.advertiser?.startAdvertisingPeer(); self.browser?.startBrowsingForPeers(); self.searching = true
+                self.scheduleRest(after: 20)
             }
         }
     }
@@ -225,6 +252,7 @@ extension StandNativeExtras: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         StandLog.write("link: \(peerID.displayName) " + (state == .connected ? "connected" : state == .connecting ? "connecting" : "not connected"))
         reportPeers()
+        if state == .connected { DispatchQueue.main.async { self.scheduleRest(after: 5) } }
         if state == .notConnected {
             DispatchQueue.main.async { self.invited.removeValue(forKey: peerID) }
             // find each other again by itself

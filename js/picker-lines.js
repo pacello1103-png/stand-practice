@@ -58,3 +58,53 @@ export function cleanLines(lines) {
     return { x0: Math.max(0, L.x0 - 0.008), x1: Math.min(1, L.x1 + 0.008), y0: Math.max(0, y0), y1: Math.min(1, y1) };
   });
 }
+
+// Each line's top and bottom edges, in pixels of a page drawn W x H, moved onto clean paper: a word
+// or a note that the edge would cut through (a tempo above, a high note of the next line below) is
+// either taken in whole or left out whole. g: the page's 2d context.
+export function cleanEdges(g, W, H, lines) {
+  const inkRow = (y, x0, w) => { if (y < 0 || y >= H) return false; const d = g.getImageData(x0, y, w, 1).data; for (let q = 0; q < d.length; q += 4) if (d[q] + d[q + 1] + d[q + 2] < 330) return true; return false; };
+  const edges = lines.map((L) => ({ sx: Math.max(0, Math.round(L.x0 * W)), sw: Math.max(1, Math.min(W, Math.round(L.x1 * W)) - Math.max(0, Math.round(L.x0 * W))), a: Math.round(L.y0 * H), b: Math.min(H - 1, Math.round(L.y1 * H)) }));
+  edges.forEach((E, k) => {
+    const reach = Math.round(H * 0.035);
+    const upLimit = k > 0 ? edges[k - 1].b : 0, downLimit = k < edges.length - 1 ? edges[k + 1].a : H - 1;
+    if (inkRow(E.a, E.sx, E.sw)) {
+      let y = E.a; while (y > Math.max(upLimit, E.a - reach) && inkRow(y, E.sx, E.sw)) y--;
+      if (!inkRow(y, E.sx, E.sw)) E.a = y; else { y = E.a; const stop = E.a + Math.round((E.b - E.a) * 0.3); while (y < stop && inkRow(y, E.sx, E.sw)) y++; if (!inkRow(y, E.sx, E.sw)) E.a = y; }
+    }
+    if (inkRow(E.b, E.sx, E.sw)) {
+      let y = E.b; while (y < Math.min(downLimit, E.b + reach) && inkRow(y, E.sx, E.sw)) y++;
+      if (!inkRow(y, E.sx, E.sw)) E.b = y; else { y = E.b; const stop = E.b - Math.round((E.b - E.a) * 0.3); while (y > stop && inkRow(y, E.sx, E.sw)) y--; if (!inkRow(y, E.sx, E.sw)) E.b = y; }
+    }
+  });
+  return edges;
+}
+
+// What reaches into a line from beyond its edge (the stems of the next line's high notes, the tail of
+// the line above) is taken away: at each edge, ink that goes on past it is wiped back to the paper.
+// crop: the line's own 2d context (sw x sh), drawn from the page at (sx, sy); page: the page's context.
+export function eraseCrossings(crop, sw, sh, page, sx, sy, H) {
+  const dark = (d, i) => d[i] + d[i + 1] + d[i + 2] < 600;
+  const img = crop.getImageData(0, 0, sw, sh), d = img.data;
+  const out = (y) => (y >= 0 && y < H ? page.getImageData(sx, y, sw, 1).data : null);
+  const below = out(sy + sh), above = out(sy - 1);
+  let changed = false;
+  for (const [edge, beyond, dir] of [[sh - 1, below, -1], [0, above, 1]]) {
+    if (!beyond) continue;
+    for (let x = 0; x < sw; x++) {
+      if (!dark(beyond, x * 4) || !dark(d, (edge * sw + x) * 4)) continue;
+      // (the run of ink from the edge inwards, at most a fifth of the line's height)
+      // (only the thin part, a stem's end: where it meets something wider, a note head or a beam of
+      // this line, it stops, and that is kept)
+      const wide = (yy) => { let a = x, b = x; while (a > 0 && x - a < 8 && dark(d, (yy * sw + a - 1) * 4)) a--; while (b < sw - 1 && b - x < 8 && dark(d, (yy * sw + b + 1) * 4)) b++; return b - a + 1 > Math.max(6, sw * 0.004); };
+      let y = edge, n = 0; const lim = Math.round(sh * 0.2);
+      while (y >= 0 && y < sh && n < lim && dark(d, (y * sw + x) * 4) && !wide(y)) { y += dir; n++; }
+      // (a long run, or one that ends in a note head or a beam inside: this line's own, kept; only a
+      // thin end that stops on the paper inside belongs to the line beyond)
+      if (n >= lim || n === 0 || (y >= 0 && y < sh && dark(d, (y * sw + x) * 4))) continue;
+      for (let k = 0, yy = edge; k < n; k++, yy += dir) { for (const xx of [x - 2, x - 1, x, x + 1, x + 2]) { if (xx < 0 || xx >= sw || yy < 0 || yy >= sh) continue; const i = (yy * sw + xx) * 4; d[i] = d[i + 1] = d[i + 2] = 255; } }
+      changed = true;
+    }
+  }
+  if (changed) crop.putImageData(img, 0, 0);
+}

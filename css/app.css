@@ -1781,10 +1781,10 @@ body:not(.phone) .phs-bar { display: none; }
 .phv-play svg { width: 14px; height: 14px; }
 .php { position: fixed; inset: 0; z-index: 75; background: #fff; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
 .php[hidden] { display: none; }
-.php-lines { flex: 1; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 0; padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 26px) max(8px, env(safe-area-inset-left, 0px)); }
+.php-lines { flex: 1; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 0; padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 50px) max(8px, env(safe-area-inset-left, 0px)); }
 .php-lines canvas { width: 100%; height: 100%; display: block; min-height: 0; }
 .php-lines canvas + canvas { border-top: 1px solid rgba(0,0,0,.08); }
-.php-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 4px max(10px, env(safe-area-inset-left, 0px)) calc(env(safe-area-inset-bottom, 0px) + 4px); background: linear-gradient(to top, rgba(255,255,255,.95), rgba(255,255,255,0)); font-size: 12px; color: #6b7080; transition: opacity .4s; }
+.php-bar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(env(safe-area-inset-bottom, 0px) + 50px); display: flex; align-items: center; gap: 10px; padding: 0 max(14px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) calc(max(10px, env(safe-area-inset-left, 0px)) + 104px); background: linear-gradient(to top, rgba(255,255,255,.95), rgba(255,255,255,0)); font-size: 12px; color: #6b7080; transition: opacity .4s; }
 .php.quiet .php-bar { opacity: 0; }
 .php-hint { margin-left: auto; }
 .php-turn { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; background: #fff; color: #1f2a4d; padding: 24px; }
@@ -1796,3 +1796,11 @@ body:not(.phone) .phs-bar { display: none; }
 .php-busy[hidden] { display: none; }
 .php-busy i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: php-spin 0.9s linear infinite; }
 @keyframes php-spin { to { transform: rotate(360deg); } }
+
+/* Play: a clear way out, always there, out of the music's way */
+.php-close { position: absolute; z-index: 3; bottom: calc(env(safe-area-inset-bottom, 0px) + 7px); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 11px; border-radius: 999px; border: 0; background: rgba(28, 32, 48, .78); color: #fff; font: 600 14px/1 var(--font, -apple-system, system-ui, sans-serif); box-shadow: 0 2px 10px rgba(0,0,0,.18); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); cursor: pointer; }
+.php-close svg { width: 15px; height: 15px; }
+.php-close:active { transform: scale(.96); }
+.php-bar { pointer-events: none; }
+.php.quiet .php-bar .php-hint { opacity: 0; transition: opacity .4s; }
+.php.quiet .php-bar { opacity: 1; }

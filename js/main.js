@@ -11,7 +11,7 @@ import { paintCover, COVER_PHOTOS, PHOTO_CATS, photoById } from './covers.js';
 import { drawNotebookPage, drawCover, PAPER_GROUPS, PAPER_TYPES, RASTRAL, COVER_STYLES, COVER_COLORS, systemsPerPage, PAGE_W as NB_PW, PAGE_H as NB_PH } from './notebook.js';
 import { usableFiles, filesAsPictures } from './addpages.js';
 import { initNotes, renderNotes, noteId, openNote, closeAllNotes } from './notes.js';
-import { cleanLines } from './picker-lines.js';
+import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 import { openDocument, sizesKey, makeThumb, looksBlack, looksBlank, readScoreInfo, findSplit, PAPERS, mapDoc, contentBox, unionBox, commonGaps, pageGaps } from './score.js';
 import { openCropper, openCutter, openGluer } from './pagetools.js';
 import { putPicture, PEN_KINDS, PEN_WIDTH, PALETTE, TEXT_STYLES, TEXT_EFFECTS, STICKERS, TAPES, FONTS, FRAMES, LOOK_DEFAULT, tbFont, recogniseShape, SHAPES, BACKGROUNDS, BG_PATTERNS, PHOTO_FILTERS, PHOTO_SHAPES, PALETTES, METALS, WORD_FONTS, shapePath } from './inkx.js';
@@ -5329,7 +5329,7 @@ function linesForPhone(id, i) {
     if (!lines.length) return { v: 1, id, i, lines: [] };
     // the page drawn once, big enough for the widest line to be 2000 px across (never more than 3000 wide)
     const wl = Math.max(...lines.map((L) => L.x1 - L.x0));
-    const W = Math.min(3000, Math.round(2000 / wl)), H = Math.round((W * ph) / pw);
+    const W = Math.min(2600, Math.round(2000 / wl)), H = Math.round((W * ph) / pw);
     const c = document.createElement('canvas');
     try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; throw new Error('draw'); }
     if (looksBlank(c) || looksBlack(c)) { c.width = c.height = 0; throw new Error('busy'); }
@@ -5338,10 +5338,12 @@ function linesForPhone(id, i) {
     let k2 = null;
     if (items.length) { await preloadAssets(items); await preloadMasks(items); k2 = document.createElement('canvas'); k2.width = W; k2.height = H; const g = k2.getContext('2d'); for (const it of items) drawItem(g, it, W, H, false); }
     const out = [];
-    for (const L of lines) {
-      const sx = Math.round(L.x0 * W), sy = Math.round(L.y0 * H), sw = Math.max(1, Math.round((L.x1 - L.x0) * W)), sh = Math.max(1, Math.round((L.y1 - L.y0) * H));
+    const edges = cleanEdges(c.getContext('2d', { willReadFrequently: true }), W, H, lines);
+    for (const E of edges) {
+      const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
       const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
       const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+      try { eraseCrossings(lg, sw, sh, c.getContext('2d', { willReadFrequently: true }), sx, sy, H); } catch {}
       // (a scan's grey paper made white, its ink kept: the line reads as cleanly as a printed one)
       try {
         const id2 = lg.getImageData(0, 0, sw, sh), d = id2.data, hist = new Uint32Array(256);
@@ -7996,7 +7998,7 @@ function sendFace() {
   if (!winkSupported()) return;
   // (while the eyes are followed, the camera is in use here, and winks are seen from it)
   let jsCam = false; try { jsCam = !!(eyes.running || EC.on); } catch {}
-  const active = !jsCam && ((S.wink && (!$('#score').hidden || !!(window.__phonePlay && window.__phonePlay.active)) && !(recState && recState.kind === 'video')) || wink.testing);
+  const active = !jsCam && ((S.wink && (!$('#score').hidden || !!(window.__phonePlay && window.__phonePlay.active) || !!(window.__phoneViewer && window.__phoneViewer.active())) && !(recState && recState.kind === 'video')) || wink.testing);
   // (the eye levels always come: a wink is checked against them, the other eye clearly open)
   NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing || !!(S.winkGate ?? 1) });
   wink.on = !!active;
@@ -8044,6 +8046,8 @@ function winkFound(rawEye, src = 'ipad') {
   if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
   // (the iPhone's Play: a wink moves on by one line)
   if (window.__phonePlay && window.__phonePlay.active && S.wink) { window.__phonePlay.wink(eye); return; }
+  // (the iPhone's reader: a wink turns its page too)
+  if (window.__phoneViewer && window.__phoneViewer.active() && S.wink) { window.__phoneViewer.wink(eye); return; }
   if (!$('#score').hidden && S.wink) {
     // (a wink's turn: the new page at once, without the fade; the eyes are already on it)
     V.instant = true; turn(eye === 'right' ? 1 : -1); setTimeout(() => { V.instant = false; }, 50);

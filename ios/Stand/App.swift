@@ -974,7 +974,10 @@ enum StandRunWatch {
         // shows its climb here)
         var n = 0
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { t in
-            n += 1; if n > 12 { t.invalidate(); return }
+            n += 1
+            // (every 10 s at first, then once a minute while the app is open: a climb before an end shows)
+            if n > 12 && n % 6 != 0 { return }
+            if UIApplication.shared.applicationState == .background { return }
             StandLog.write("memory \(StandRunWatch.footprintMB()) MB (\(n * 10) s)")
         }
     }
