@@ -7915,12 +7915,13 @@ window.standTapEvent = (ev) => {
   if (!$('#score').hidden && S.tapStand && !V.inking) turn(1);
 };
 
+window.__sendFace = () => sendFace();
 function sendFace() {
   sendTap();
   if (!winkSupported()) return;
   // (while the eyes are followed, the camera is in use here, and winks are seen from it)
   let jsCam = false; try { jsCam = !!(eyes.running || EC.on); } catch {}
-  const active = !jsCam && ((S.wink && !$('#score').hidden && !(recState && recState.kind === 'video')) || wink.testing);
+  const active = !jsCam && ((S.wink && (!$('#score').hidden || !!(window.__phonePlay && window.__phonePlay.active)) && !(recState && recState.kind === 'video')) || wink.testing);
   // (the eye levels always come: a wink is checked against them, the other eye clearly open)
   NATIVE.standFace.postMessage({ on: !!active, sensitivity: S.winkSens || 0.7, test: wink.testing || !!(S.winkGate ?? 1) });
   wink.on = !!active;
@@ -7966,6 +7967,8 @@ function winkFound(rawEye, src = 'ipad') {
   const now = performance.now(); if (now - wink.lastTurn < (src !== wink.lastSrc ? 900 : 400)) return; wink.lastTurn = now; wink.lastSrc = src;
   let eye = rawEye; if (S.winkSwap) eye = eye === 'left' ? 'right' : 'left';
   if (wink.testing) { const t = $('#winkLast'); t.textContent = eye === 'right' ? 'Right wink → next page' : 'Left wink → previous page'; }
+  // (the iPhone's Play: a wink moves on by one line)
+  if (window.__phonePlay && window.__phonePlay.active && S.wink) { window.__phonePlay.wink(eye); return; }
   if (!$('#score').hidden && S.wink) {
     // (a wink's turn: the new page at once, without the fade; the eyes are already on it)
     V.instant = true; turn(eye === 'right' ? 1 : -1); setTimeout(() => { V.instant = false; }, 50);

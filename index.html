@@ -1109,8 +1109,14 @@
   <div class="phs-loading" id="phsLoading" hidden><i></i><span id="phsLoadingText">Getting it from your iPad…</span><button class="btn small ghost" id="phsLoadingCancel">Cancel</button></div>
 </div>
 <div class="phv" id="phView" hidden>
-  <div class="phv-bar"><button class="icon-btn" id="phvClose" aria-label="Back to my scores"><svg><use href="#i-back"/></svg></button><div class="phv-t"><b id="phvTitle"></b><small id="phvPage"></small></div><button class="phv-ink on" id="phvInk"><svg><use href="#i-pen"/></svg><span>Markings on</span></button></div>
-  <div class="phv-stage" id="phvStage"><div class="phv-page"><img id="phvImg" alt=""><img id="phvInkImg" alt="" hidden></div></div>
+  <div class="phv-bar"><button class="icon-btn" id="phvClose" aria-label="Back to my scores"><svg><use href="#i-back"/></svg></button><div class="phv-t"><b id="phvTitle"></b><small id="phvPage"></small></div><button class="phv-ink on" id="phvInk"><svg><use href="#i-pen"/></svg><span>Markings on</span></button><button class="phv-ink phv-play" id="phvPlay" aria-label="Play: two lines at a time, big"><svg><use href="#i-play"/></svg><span>Play</span></button></div>
+  <div class="phv-stage" id="phvStage"><div class="phv-page" id="phvPageBox"><img id="phvImg" alt=""><img id="phvInkImg" alt="" hidden></div></div>
+  <div class="php" id="phPlay" hidden>
+    <div class="php-lines" id="phpLines"><canvas id="phpA"></canvas><canvas id="phpB"></canvas></div>
+    <div class="php-turn" id="phpTurn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2.5" transform="rotate(90 12 12)"/><path d="M4 7a8 8 0 0 1 6-4M20 17a8 8 0 0 1-6 4"/></svg><b>Turn your iPhone sideways</b><span>Two lines at a time, as big as they go</span></div>
+    <div class="php-bar"><button class="icon-btn" id="phpClose" aria-label="Close Play"><svg><use href="#i-back"/></svg></button><span id="phpWhere"></span><span class="php-hint" id="phpHint">Tap, wink or the pedal: next line</span></div>
+    <div class="php-busy" id="phpBusy" hidden><i></i><span>Finding the lines…</span></div>
+  </div>
 </div>
 
 <aside class="panel" id="panel-backup" hidden aria-label="Backup">

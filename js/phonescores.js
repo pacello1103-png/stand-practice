@@ -390,8 +390,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const id = copy.id.slice(9);
     return (await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null)) || db.get('files', oldPageKey(id, i)).catch(() => null);
   };
+  let zoomHeld = () => false, pzResetHook = () => {};
   async function drawPage() {
     const v = PS.view; if (!v) return;
+    pzResetHook();
     const i0 = v.i, p = await pageOf(v.copy, v.i);
     if (PS.view !== v || v.i !== i0) return;
     if (!p) { $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`; toast('This page is missing on this iPhone. It comes again next time your iPad is found.'); return; }
@@ -418,21 +420,223 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     $('#phvPage').textContent = `${v.i + 1} / ${countOf(v.copy)}`;
     $('#phvInk').classList.toggle('on', PS.ink);
     $('#phvInk span').textContent = PS.ink ? 'Markings on' : 'Markings off';
+    // (the lines of this page found quietly, a moment after it shows: Play then opens at once)
+    setTimeout(() => { if (PS.view === v && v.i === i0 && !PP.open && typeof linesOfPage === 'function') linesOfPage(v.copy, i0).catch(() => {}); }, 1500);
     // the next page ready ahead
     const n = v.i + 1 < countOf(v.copy) ? await pageOf(v.copy, v.i + 1) : null; if (n && PS.view === v) { const pre = new Image(); const un = URL.createObjectURL(n.img); PS.urls.push(un); pre.src = un; }
   }
   const go = (d) => { const v = PS.view; if (!v) return; const i = Math.max(0, Math.min(countOf(v.copy) - 1, v.i + d)); if (i !== v.i) { v.i = i; drawPage(); } };
-  $('#phvClose').addEventListener('click', () => { viewer.hidden = true; PS.view = null; for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; });
+  $('#phvClose').addEventListener('click', () => { if (PP.open) ppClose(); viewer.hidden = true; PS.view = null; for (const u of PS.urls) URL.revokeObjectURL(u); PS.urls = []; });
   $('#phvInk').addEventListener('click', () => { PS.ink = !PS.ink; drawPage(); });
   let sx = null, sy = 0;
   const stage = $('#phvStage');
   stage.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; });
   stage.addEventListener('pointerup', (e) => {
-    if (sx === null) return; const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+    if (sx === null || zoomHeld()) { sx = null; return; } const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
     if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { go(dx < 0 ? 1 : -1); return; }
     if (Math.abs(dx) < 10 && Math.abs(dy) < 10) { const r = stage.getBoundingClientRect(); go(e.clientX > r.left + r.width * 0.4 ? 1 : -1); }
   });
-  document.addEventListener('keydown', (e) => { if (viewer.hidden) return; if (e.key === 'ArrowRight') go(1); if (e.key === 'ArrowLeft') go(-1); if (e.key === 'Escape') $('#phvClose').click(); });
+  document.addEventListener('keydown', (e) => {
+    if (viewer.hidden) return;
+    // (a page-turning pedal sends these keys)
+    const fwd = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(e.key), back = ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key);
+    if (PP.open) { if (fwd) { e.preventDefault(); ppStep(1); } else if (back) { e.preventDefault(); ppStep(-1); } else if (e.key === 'Escape') ppClose(); return; }
+    if (fwd) { e.preventDefault(); go(1); } if (back) { e.preventDefault(); go(-1); } if (e.key === 'Escape') $('#phvClose').click();
+  });
+
+  // ---------- zoom: pinch the page, drag it around; back to the whole page on turning ----------
+  const PZ = { s: 1, x: 0, y: 0, pts: new Map(), used: false, lastTap: 0 };
+  const box = $('#phvPageBox');
+  stage.classList.add('zoomable');
+  const pzApply = () => { box.style.transform = PZ.s > 1.001 ? `translate(${PZ.x}px, ${PZ.y}px) scale(${PZ.s})` : ''; };
+  const pzReset = () => { PZ.s = 1; PZ.x = 0; PZ.y = 0; pzApply(); };
+  const pzClamp = () => {
+    const r = box.getBoundingClientRect(), w = r.width / PZ.s, h = r.height / PZ.s, sr = stage.getBoundingClientRect();
+    // (the page never leaves the screen)
+    PZ.x = Math.min(sr.width * 0.4, Math.max(-(w * PZ.s - sr.width * 0.6), PZ.x));
+    PZ.y = Math.min(sr.height * 0.4, Math.max(-(h * PZ.s - sr.height * 0.6), PZ.y));
+    if (PZ.s <= 1.001) { PZ.x = 0; PZ.y = 0; }
+  };
+  // a point on the screen as a point of the page (before the zoom)
+  let base = null;
+  const zoomAt = (fx, fy, s1) => {
+    if (!base) { const t = box.style.transform; box.style.transform = ''; const r = box.getBoundingClientRect(); base = { x: r.left, y: r.top }; box.style.transform = t; }
+    const lx = (fx - base.x - PZ.x) / PZ.s, ly = (fy - base.y - PZ.y) / PZ.s;
+    PZ.s = Math.max(1, Math.min(4, s1));
+    PZ.x = fx - base.x - lx * PZ.s; PZ.y = fy - base.y - ly * PZ.s;
+    pzClamp(); pzApply();
+  };
+  let pinch = null, pan = null;
+  stage.addEventListener('pointerdown', (e) => {
+    PZ.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (PZ.pts.size === 1) { PZ.used = false; base = null; pan = { x: e.clientX, y: e.clientY, px: PZ.x, py: PZ.y }; }
+    if (PZ.pts.size === 2) {
+      const [a, b] = [...PZ.pts.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: PZ.s }; PZ.used = true; pan = null;
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!PZ.pts.has(e.pointerId)) return;
+    PZ.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && PZ.pts.size >= 2) {
+      const [a, b] = [...PZ.pts.values()];
+      zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d);
+    } else if (pan && PZ.s > 1.001) {
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (Math.abs(dx) + Math.abs(dy) > 6) PZ.used = true;
+      PZ.x = pan.px + dx; PZ.y = pan.py + dy; pzClamp(); pzApply();
+    }
+  });
+  const pzUp = (e) => {
+    PZ.pts.delete(e.pointerId);
+    if (PZ.pts.size < 2) pinch = null;
+    if (PZ.pts.size === 0) {
+      if (PZ.s < 1.05) pzReset();
+      // (the gesture is over: the next one starts afresh; a tap still turns the page as before)
+      setTimeout(() => { if (PZ.pts.size === 0) PZ.used = false; }, 0);
+    }
+  };
+  stage.addEventListener('pointerup', pzUp); stage.addEventListener('pointercancel', pzUp);
+  // (zoomed in, a drag moves the page and a tap does not turn it)
+  zoomHeld = () => PZ.used || PZ.s > 1.05;
+  pzResetHook = pzReset;
+
+  // ---------- Play: the music two lines at a time, as big as the iPhone held sideways allows ----------
+  // Each page's lines of music are found once (in a thread of their own) and kept; a tap, a wink or
+  // the pedal moves on by one line, so the line being played comes up to the top, across pages.
+  const PP = { open: false, p: 0, k: 0, lines: new Map(), imgs: new Map(), finding: new Map(), quietT: 0 };
+  let LW2 = null, lwSeq2 = 0; const lwWait2 = new Map();
+  const linesInThread = (bmp) => new Promise((res) => {
+    try {
+      if (!LW2) {
+        LW2 = new Worker(new URL('./picker-worker.js', import.meta.url), { type: 'module' });
+        LW2.onmessage = (e) => { const d = e.data || {}; const w = lwWait2.get(d.id); if (!w) return; lwWait2.delete(d.id); clearTimeout(w.t); w.res(d.error ? null : d.lines || []); };
+        LW2.onerror = () => { for (const w of lwWait2.values()) { clearTimeout(w.t); w.res(null); } lwWait2.clear(); try { LW2.terminate(); } catch {} LW2 = null; };
+      }
+      const id = ++lwSeq2;
+      const t = setTimeout(() => { lwWait2.delete(id); try { LW2.terminate(); } catch {} LW2 = null; res(null); }, 15000);
+      lwWait2.set(id, { res, t });
+      LW2.postMessage({ id, page: bmp }, [bmp]);
+    } catch { res(null); }
+  });
+  const halves = [{ y0: 0, y1: 0.5, x0: 0, x1: 1 }, { y0: 0.5, y1: 1, x0: 0, x1: 1 }];
+  async function linesOfPage(copy, i) {
+    if (PP.lines.has(i)) return PP.lines.get(i);
+    if (PP.finding.has(i)) return PP.finding.get(i);
+    const job = (async () => {
+      const lk = copy.id + ':lines:' + copy.stamp + ':' + i;
+      const kept = await db.get('files', lk).catch(() => null);
+      if (kept && kept.lines) return kept.lines;
+      const p = await pageOf(copy, i); if (!p || !p.img) return halves;
+      let lines = null;
+      try { lines = await linesInThread(await createImageBitmap(p.img)); } catch {}
+      if (lines === null) {
+        // (no thread for it: read here, from a smaller picture)
+        try {
+          const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]);
+          const bmp = await createImageBitmap(p.img); const k = Math.min(1, 1100 / bmp.width);
+          const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+          c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); if (bmp.close) bmp.close();
+          lines = linesOf(await analyse(c)); c.width = c.height = 0;
+        } catch { lines = []; }
+      }
+      // (a page with no lines found, a title page: shown in two halves)
+      if (!lines || !lines.length) lines = halves;
+      await db.put('files', { id: lk, kind: 'ipadlines', lines }).catch(() => {});
+      return lines;
+    })();
+    PP.finding.set(i, job);
+    const lines = await job; PP.finding.delete(i); PP.lines.set(i, lines);
+    return lines;
+  }
+  async function pageImages(copy, i) {
+    if (PP.imgs.has(i)) return PP.imgs.get(i);
+    const p = await pageOf(copy, i); if (!p || !p.img) return null;
+    const img = await createImageBitmap(p.img).catch(() => null);
+    const ink = p.ink && PS.ink ? await createImageBitmap(p.ink).catch(() => null) : null;
+    const v = img ? { img, ink } : null;
+    PP.imgs.set(i, v);
+    // (only the pages around are kept)
+    for (const k of [...PP.imgs.keys()]) if (Math.abs(k - PP.p) > 2) { const o = PP.imgs.get(k); PP.imgs.delete(k); try { o && o.img.close(); o && o.ink && o.ink.close(); } catch {} }
+    return v;
+  }
+  // the line after (p, k), across pages, or null at the end
+  async function after(copy, p, k, d) {
+    let L = await linesOfPage(copy, p);
+    let q = k + d;
+    while (q < 0 || q >= L.length) {
+      p += q < 0 ? -1 : 1;
+      if (p < 0 || p >= countOf(copy)) return null;
+      L = await linesOfPage(copy, p);
+      q = q < 0 ? L.length - 1 : 0;
+    }
+    return { p, k: q };
+  }
+  async function drawLine(cv, at) {
+    const g = cv.getContext('2d');
+    const W = Math.round(cv.clientWidth * Math.min(3, devicePixelRatio || 1)), H = Math.round(cv.clientHeight * Math.min(3, devicePixelRatio || 1));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    const v = PS.view; if (!at || !v) return;
+    const L = (await linesOfPage(v.copy, at.p))[at.k], pi = await pageImages(v.copy, at.p);
+    if (!L || !pi) return;
+    const iw = pi.img.width, ih = pi.img.height;
+    const sx = L.x0 * iw, sy = L.y0 * ih, sw = Math.max(1, (L.x1 - L.x0) * iw), sh = Math.max(1, (L.y1 - L.y0) * ih);
+    const k = Math.min(W / sw, H / sh), dw = sw * k, dh = sh * k, dx = (W - dw) / 2, dy = (H - dh) / 2;
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(pi.img, sx, sy, sw, sh, dx, dy, dw, dh);
+    if (pi.ink) g.drawImage(pi.ink, sx / iw * pi.ink.width, sy / ih * pi.ink.height, sw / iw * pi.ink.width, sh / ih * pi.ink.height, dx, dy, dw, dh);
+  }
+  let drawTok = 0;
+  async function ppDraw() {
+    const v = PS.view; if (!v || !PP.open) return;
+    const tok = ++drawTok;
+    const busyT = setTimeout(() => { if (tok === drawTok) $('#phpBusy').hidden = false; }, 250);
+    const a = { p: PP.p, k: PP.k };
+    const b = await after(v.copy, a.p, a.k, 1);
+    if (tok !== drawTok) return;
+    await drawLine($('#phpA'), a); await drawLine($('#phpB'), b);
+    clearTimeout(busyT); $('#phpBusy').hidden = true;
+    $('#phpWhere').textContent = `Page ${a.p + 1} of ${countOf(v.copy)}`;
+    v.i = a.p;
+    // the next pages' lines found ahead, quietly
+    for (const q of [a.p + 1, a.p + 2]) if (q < countOf(v.copy)) linesOfPage(v.copy, q).catch(() => {});
+  }
+  async function ppStep(d) {
+    const v = PS.view; if (!v || !PP.open) return;
+    const n = await after(v.copy, PP.p, PP.k, d);
+    if (!n) return;
+    PP.p = n.p; PP.k = n.k; ppDraw(); ppQuiet();
+  }
+  const ppQuiet = () => { const el = $('#phPlay'); el.classList.remove('quiet'); clearTimeout(PP.quietT); PP.quietT = setTimeout(() => el.classList.add('quiet'), 2500); };
+  const orient = (lock) => { try { window.webkit.messageHandlers.standOrientation.postMessage({ lock }); } catch {} };
+  async function ppOpen() {
+    const v = PS.view; if (!v) return;
+    PP.open = true; PP.p = v.i; PP.k = 0;
+    $('#phPlay').hidden = false; orient('landscape'); ppQuiet();
+    window.__phonePlay = { active: true, wink: (eye) => ppStep(eye === 'right' ? 1 : -1) };
+    if (window.__sendFace) window.__sendFace();
+    ppDraw();
+  }
+  function ppClose() {
+    PP.open = false; $('#phPlay').hidden = true; orient('auto');
+    window.__phonePlay = null; if (window.__sendFace) window.__sendFace();
+    for (const o of PP.imgs.values()) { try { o && o.img.close(); o && o.ink && o.ink.close(); } catch {} } PP.imgs.clear();
+    drawPage();
+  }
+  $('#phvPlay').addEventListener('click', ppOpen);
+  $('#phpClose').addEventListener('click', (e) => { e.stopPropagation(); ppClose(); });
+  {
+    const pl = $('#phPlay'); let tx = null, ty = 0;
+    pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-bar button')) return; tx = e.clientX; ty = e.clientY; });
+    pl.addEventListener('pointerup', (e) => {
+      if (tx === null) return; const dx = e.clientX - tx, dy = e.clientY - ty; tx = null;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { ppStep(dx < 0 ? 1 : -1); return; }
+      if (Math.abs(dy) > 40) { ppStep(dy < 0 ? 1 : -1); return; }
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) ppStep(e.clientX > innerWidth * 0.3 ? 1 : -1);
+    });
+    addEventListener('resize', () => { if (PP.open) ppDraw(); });
+  }
 
   // the list comes by itself whenever the iPad is found
   if (connected) connected(() => refresh(true));

@@ -1774,3 +1774,25 @@ body:not(.phone) .phs-bar { display: none; }
 
 .cp-voices button { white-space: nowrap; font-size: 13px; padding-left: 2px; padding-right: 2px; }
 .tp-key select, .tp-key .cp-select { width: 100%; }
+
+/* iPhone: zoom into a page, and Play (two lines of music at a time, big, sideways) */
+.phv-stage.zoomable { touch-action: none; overflow: hidden; }
+.phv-page { transform-origin: 0 0; }
+.phv-play svg { width: 14px; height: 14px; }
+.php { position: fixed; inset: 0; z-index: 75; background: #fff; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
+.php[hidden] { display: none; }
+.php-lines { flex: 1; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 0; padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px)); }
+.php-lines canvas { width: 100%; height: 100%; display: block; min-height: 0; }
+.php-lines canvas + canvas { border-top: 1px solid rgba(0,0,0,.08); }
+.php-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 4px max(10px, env(safe-area-inset-left, 0px)) calc(env(safe-area-inset-bottom, 0px) + 4px); background: linear-gradient(to top, rgba(255,255,255,.95), rgba(255,255,255,0)); font-size: 12px; color: #6b7080; transition: opacity .4s; }
+.php.quiet .php-bar { opacity: 0; }
+.php-hint { margin-left: auto; }
+.php-turn { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; background: #fff; color: #1f2a4d; padding: 24px; }
+.php-turn svg { width: 64px; height: 64px; color: var(--accent, #22388f); }
+.php-turn b { font-size: 18px; }
+.php-turn span { font-size: 14px; color: #6b7080; }
+@media (orientation: portrait) { .php-turn { display: flex; } }
+.php-busy { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 999px; background: rgba(20,24,40,.85); color: #fff; font-size: 14px; }
+.php-busy[hidden] { display: none; }
+.php-busy i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: php-spin 0.9s linear infinite; }
+@keyframes php-spin { to { transform: rotate(360deg); } }
