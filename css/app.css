@@ -1781,12 +1781,15 @@ body:not(.phone) .phs-bar { display: none; }
 .phv-play svg { width: 14px; height: 14px; }
 .php { position: fixed; inset: 0; z-index: 75; background: #fff; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
 .php[hidden] { display: none; }
-.php-lines { flex: 1; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 0; padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 50px) max(8px, env(safe-area-inset-left, 0px)); }
-.php-lines canvas { width: 100%; height: 100%; display: block; min-height: 0; }
-.php-lines canvas + canvas { border-top: 1px solid rgba(0,0,0,.08); }
+.php-lines { flex: 1; min-height: 0; display: block; padding: max(6px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 50px) max(8px, env(safe-area-inset-left, 0px)); }
+.php-lines canvas { width: 100%; height: 100%; display: block; }
+.php-n { position: absolute; z-index: 3; bottom: calc(env(safe-area-inset-bottom, 0px) + 7px); right: max(10px, env(safe-area-inset-right, 0px)); display: flex; padding: 3px; gap: 2px; border-radius: 999px; background: rgba(28, 32, 48, .78); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 2px 10px rgba(0,0,0,.18); transition: opacity .4s; }
+.php-n button { min-width: 34px; height: 30px; border: 0; border-radius: 999px; background: transparent; color: rgba(255,255,255,.75); font: 600 14px/1 var(--font, -apple-system, system-ui, sans-serif); cursor: pointer; }
+.php-n button.on { background: #fff; color: #1c2030; }
+.php.quiet .php-n { opacity: 0; pointer-events: none; }
 .php-bar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(env(safe-area-inset-bottom, 0px) + 50px); display: flex; align-items: center; gap: 10px; padding: 0 max(14px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) calc(max(10px, env(safe-area-inset-left, 0px)) + 104px); background: linear-gradient(to top, rgba(255,255,255,.95), rgba(255,255,255,0)); font-size: 12px; color: #6b7080; transition: opacity .4s; }
 .php.quiet .php-bar { opacity: 0; }
-.php-hint { margin-left: auto; }
+.php-hint { margin-left: auto; margin-right: 92px; }
 .php-turn { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; background: #fff; color: #1f2a4d; padding: 24px; }
 .php-turn svg { width: 64px; height: 64px; color: var(--accent, #22388f); }
 .php-turn b { font-size: 18px; }
@@ -1804,3 +1807,18 @@ body:not(.phone) .phs-bar { display: none; }
 .php-bar { pointer-events: none; }
 .php.quiet .php-bar .php-hint { opacity: 0; transition: opacity .4s; }
 .php.quiet .php-bar { opacity: 1; }
+
+/* The writing tools step aside a moment after writing stops; a small pen brings them back */
+.inkbar.away { opacity: 0; pointer-events: none; transform: translate(-50%, -14px); transition: opacity .35s ease, transform .35s ease; }
+.ink-tab { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 72px); left: 50%; transform: translateX(-50%); z-index: 11; width: 46px; height: 30px; border-radius: 15px; border: 1px solid var(--line); background: var(--surface); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); color: var(--accent-text, var(--accent)); display: grid; place-items: center; animation: ink-tab-in .3s ease; }
+.ink-tab[hidden] { display: none; }
+.ink-tab svg { width: 18px; height: 18px; }
+.chrome-off .ink-tab { opacity: 0; pointer-events: none; }
+@keyframes ink-tab-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translateX(-50%); } }
+
+#stage { transition: transform .25s ease; }
+.lay-pals { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; }
+.lay-pals::-webkit-scrollbar { display: none; }
+.lay-pals button { flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
+.lay-pals button.on { box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 4px var(--accent); }
+.lay-pal-name { font: 600 12px var(--font); color: var(--muted); margin: 2px 2px 10px; }

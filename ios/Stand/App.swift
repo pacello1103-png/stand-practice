@@ -48,8 +48,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         standPreferBuiltInMicrophone()
         // Bluetooth headphones or a speaker can take over the microphone when they connect;
         // put the iPad microphone back every time the audio route changes.
-        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { _ in
-            standPreferBuiltInMicrophone()
+        // The web view sets the kind of sound itself (playback, or play-and-record while the
+        // microphone listens), and each change, like each Bluetooth device that comes or goes,
+        // undoes the choices made here: they are made again after every change of route.
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { note in
+            let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+            if AVAudioSession.RouteChangeReason(rawValue: raw) == .override { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { standApplyRoute() }
         }
     }
 
@@ -757,8 +762,36 @@ func standPreferBuiltInMicrophone() {
           let builtIn = inputs.first(where: { $0.portType == .builtInMic }) else { return }
     try? session.setPreferredInput(builtIn)
 }
+var standSpeakerWanted = false
 func standSetSpeakerOverride(_ on: Bool) {
-    try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
+    standSpeakerWanted = on
+    standApplyRoute()
+}
+// The iPad's (or iPhone's) microphone; the sound to Bluetooth when it is there, unless the
+// speaker is asked for. While the microphone listens, the kind of sound keeps Bluetooth and the
+// speaker allowed (the web view's own play-and-record would send it to the earpiece or drop it).
+func standApplyRoute() {
+    let session = AVAudioSession.sharedInstance()
+    if session.category == .playAndRecord {
+        let want: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers]
+        if !session.categoryOptions.contains(.defaultToSpeaker) || !session.categoryOptions.contains(.allowBluetoothA2DP) {
+            try? session.setCategory(.playAndRecord, mode: session.mode, options: want)
+        }
+    }
+    standPreferBuiltInMicrophone()
+    if standSpeakerWanted {
+        let onSpeaker = session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker }
+        if !onSpeaker {
+            if session.category == .playAndRecord { try? session.overrideOutputAudioPort(.speaker) }
+            else {
+                // (the speaker can only be chosen in play-and-record: the kind of sound is made so)
+                try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .mixWithOthers])
+                try? session.overrideOutputAudioPort(.speaker)
+            }
+        }
+    } else {
+        try? session.overrideOutputAudioPort(.none)
+    }
 }
 
 // MARK: - Video recording
@@ -795,7 +828,7 @@ final class NativeVideo: NSObject, AVCaptureFileOutputRecordingDelegate {
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default,
                                                          options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
-        standPreferBuiltInMicrophone()
+        standApplyRoute()
         session.beginConfiguration()
         session.automaticallyConfiguresApplicationAudioSession = false   // keep the app's audio (metronome) playing
         if #available(iOS 16.0, *), session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }

@@ -129,6 +129,7 @@ function binarize(norm, w, h, smooth) {
   let total = 0; for (const q of hist) total += q;
   let ink = 0, acc = 0; const want = total * 0.008; while (ink < 255 && acc + hist[ink] < want) acc += hist[ink++];
   let th = Math.max(95, Math.min(215, otsu(v)));
+  if (lightBin) th = Math.round(th + (250 - th) * 0.55);
   const th2 = Math.max(80, Math.min(th, Math.round((ink + 245) / 2)));
   // a grey halo round the ink (a dark scan, a copy of a copy): most of the grey stands apart from
   // the dark ink, and with the threshold halfway to the paper the strokes swell into each other
@@ -2345,6 +2346,17 @@ function readHeader(s, comps, ctx, prev, heads) {
 // opts.notesOnly: only the notes and bars (turning pages by listening): smaller, and none of the
 // signs around the notes, which take much memory
 export async function analyse(canvas, dbg, sub = false, opts = {}) {
+  const A = await analyseOnce(canvas, dbg, sub, opts);
+  // staff lines printed in grey (some editions and notation programs): with the usual threshold
+  // they fall away with the paper and no staff is found; looked at again with a lighter one
+  if (!A.staves.length && !lightBin && (globalThis.__greyLines ?? 1) && canvas.width * canvas.height > 40000) {
+    lightBin = 1;
+    try { const A2 = await analyseOnce(canvas, dbg, sub, opts); if (A2.staves.length) return A2; } finally { lightBin = 0; }
+  }
+  return A;
+}
+let lightBin = 0;
+async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
   const empty = { staves: [], systems: [], w: canvas.width, h: canvas.height, scale: 1, angle: 0, sp: 0 };
   if (!canvas.width || !canvas.height) return empty;
   // a first look, smaller, to measure the staff space

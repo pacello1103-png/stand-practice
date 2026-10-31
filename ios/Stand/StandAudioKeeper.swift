@@ -29,7 +29,7 @@ final class StandAudioKeeper: NSObject {
         try? session.setCategory(.playAndRecord, mode: .default,
                                  options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay, .mixWithOthers])
         try? session.setActive(true)
-        standPreferBuiltInMicrophone()
+        standApplyRoute()
     }
 
     private func tellPage(_ reason: String) {

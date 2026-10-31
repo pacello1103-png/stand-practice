@@ -544,7 +544,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     return lines;
   }
   const dataBlob = async (u) => (u ? (await fetch(u)).blob() : null);
-  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play10-' + i;   // (kept with the version's pages, gone with them)
+  const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play11-' + i;   // (kept with the version's pages, gone with them)
   // the lines of page i: [{ img, ink, w, h }] (pictures as they are kept)
   async function playLines(copy, i) {
     if (PP.pages.has(i)) return PP.pages.get(i);
@@ -557,7 +557,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
         const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i }, 30000);
         if (d && Array.isArray(d.lines)) {
           const lines = [];
-          for (const L of d.lines) lines.push({ w: L.w, h: L.h, img: await dataBlob(L.img), ink: await dataBlob(L.ink) });
+          for (const L of d.lines) lines.push({ w: L.w, h: L.h, sx: L.sx, pw: L.pw, st: L.st, sb: L.sb, img: await dataBlob(L.img), ink: await dataBlob(L.ink) });
           if (lines.length) { await db.put('files', { id: playKey(copy, i), kind: 'ipadplay', lines }).catch(() => {}); return lines; }
         }
       } catch {}
@@ -579,7 +579,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
         const img = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
         let ink = null;
         if (inkB) { c.getContext('2d').clearRect(0, 0, c.width, c.height); c.getContext('2d').drawImage(inkB, sx / bmp.width * inkB.width, sy / bmp.height * inkB.height, sw / bmp.width * inkB.width, sh / bmp.height * inkB.height, 0, 0, c.width, c.height); ink = await new Promise((r) => c.toBlob(r, 'image/png')); }
-        out.push({ w: c.width, h: c.height, img, ink }); c.width = c.height = 0;
+        out.push({ w: c.width, h: c.height, sx, pw: bmp.width, ...(L.top !== undefined ? { st: L.top * bmp.height - sy, sb: L.bot * bmp.height - sy } : {}), img, ink }); c.width = c.height = 0;
       }
       pc.width = pc.height = 0;
       try { bmp.close(); inkB && inkB.close(); } catch {}
@@ -609,16 +609,38 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     while (PP.bmp.size > 16) { const k0 = PP.bmp.keys().next().value; const o = PP.bmp.get(k0); PP.bmp.delete(k0); try { o && o.close(); } catch {} }
     return v;
   }
-  async function drawLine(cv, at) {
+  // how many lines at once: two or three (kept)
+  const ppN = () => { try { return localStorage.getItem('standPlayN') === '3' ? 3 : 2; } catch { return 2; } };
+  const lineOf = (at) => (at ? (PP.pages.get(at.p) || [])[at.k] : null);
+  // All the lines on the screen at one size (the size the widest takes across), each in its own
+  // place, its staves in the middle of it; what reaches beyond its place is not drawn there.
+  async function drawLines(cv, ats) {
     const dpr = Math.min(3, devicePixelRatio || 1), W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
-    const img = at ? await bitmapOf(at, 'img') : null, ink = at && PS.ink ? await bitmapOf(at, 'ink') : null;
+    const imgs = await Promise.all(ats.map((at) => (at ? bitmapOf(at, 'img') : null)));
+    const inks = await Promise.all(ats.map((at) => (at && PS.ink ? bitmapOf(at, 'ink') : null)));
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
     const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
-    if (!img) return;
-    const pad = 0.04, k = Math.min(W * (1 - pad) / img.width, H * (1 - pad) / img.height), dw = img.width * k, dh = img.height * k, dx = (W - dw) / 2, dy = (H - dh) / 2;
+    const Ls = ats.map(lineOf), n = ats.length, Hs = H / n;
+    // (across: the lines' place on their pages, as parts of the page)
+    const fr = Ls.map((L, q) => (L && imgs[q] ? { a: (L.sx ?? 0) / (L.pw || L.w), b: ((L.sx ?? 0) + L.w) / (L.pw || L.w) } : null));
+    const known = fr.filter(Boolean); if (!known.length) return;
+    const minX = Math.min(...known.map((f) => f.a)), maxX = Math.max(...known.map((f) => f.b));
+    let kPage = (W * 0.97) / Math.max(1e-6, maxX - minX);
+    // (and small enough for each line's staves, with room above and below, to fit its place)
+    Ls.forEach((L, q) => { if (!L || !imgs[q]) return; const pw = L.pw || L.w; const staffH = L.st !== undefined && L.sb !== undefined ? L.sb - L.st : L.h * 0.45; const need = (staffH / pw) * kPage; if (need > Hs * 0.78) kPage *= (Hs * 0.78) / need; });
+    const x0 = (W - (maxX - minX) * kPage) / 2;
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(img, dx, dy, dw, dh);
-    if (ink) g.drawImage(ink, dx, dy, dw, dh);
+    Ls.forEach((L, q) => {
+      const img = imgs[q]; if (!L || !img) return;
+      const pw = L.pw || L.w, k = kPage / pw;
+      const dw = L.w * k, dh = L.h * k, dx = x0 + (fr[q].a - minX) * kPage;
+      const mid = L.st !== undefined && L.sb !== undefined ? (L.st + L.sb) / 2 : L.h / 2;
+      const top = q * Hs, dy = top + Hs / 2 - mid * k;
+      g.save(); g.beginPath(); g.rect(0, top, W, Hs); g.clip();
+      g.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
+      if (inks[q]) g.drawImage(inks[q], dx, dy, dw, dh);
+      g.restore();
+    });
   }
   let drawTok = 0;
   async function ppDraw() {
@@ -628,19 +650,20 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     let a = { p: PP.p, k: PP.k };
     // (a page with no music at all: on to the first that has)
     if (!(await playLines(v.copy, a.p)).length) { const n = await after(v.copy, a.p, 0, 0); if (n) { a = n; PP.p = n.p; PP.k = n.k; } }
-    const b = await after(v.copy, a.p, a.k, 1);
+    const ats = [a]; for (let q = 1; q < ppN(); q++) ats.push(ats[q - 1] ? await after(v.copy, ats[q - 1].p, ats[q - 1].k, 1) : null);
     if (tok !== drawTok) return;
-    await Promise.all([drawLine($('#phpA'), a), drawLine($('#phpB'), b)]);
+    await drawLines($('#phpC'), ats);
     if (tok !== drawTok) return;
     clearTimeout(busyT); $('#phpBusy').hidden = true;
     $('#phpWhere').textContent = `Page ${a.p + 1} of ${countOf(v.copy)}`;
+    for (const b of document.querySelectorAll('#phpN button')) b.classList.toggle('on', +b.dataset.n === ppN());
     v.i = a.p;
     // the pages ahead made ready meanwhile, one after the other
     (async () => { for (const q of [a.p + 1, a.p + 2]) { if (!PP.open || q >= countOf(v.copy)) break; await playLines(v.copy, q).catch(() => {}); } })();
   }
   async function ppStep(d) {
     const v = PS.view; if (!v || !PP.open) return;
-    const n = await after(v.copy, PP.p, PP.k, d * 2);
+    const n = await after(v.copy, PP.p, PP.k, d * ppN());
     if (!n) return;
     PP.p = n.p; PP.k = n.k; ppDraw(); ppQuiet();
   }
@@ -663,9 +686,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   }
   $('#phvPlay').addEventListener('click', ppOpen);
   $('#phpClose').addEventListener('click', (e) => { e.stopPropagation(); ppClose(); });
+  for (const b of document.querySelectorAll('#phpN button')) b.addEventListener('click', (e) => { e.stopPropagation(); try { localStorage.setItem('standPlayN', b.dataset.n); } catch {} ppDraw(); ppQuiet(); });
   {
     const pl = $('#phPlay'); let tx = null, ty = 0;
-    pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-close')) { tx = null; return; } tx = e.clientX; ty = e.clientY; });
+    pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-close, .php-n')) { tx = null; return; } tx = e.clientX; ty = e.clientY; });
     pl.addEventListener('pointerup', (e) => {
       if (tx === null) return; const dx = e.clientX - tx, dy = e.clientY - ty; tx = null;
       if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { ppStep(dx < 0 ? 1 : -1); return; }

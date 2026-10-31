@@ -294,6 +294,7 @@
   </header>
   <button class="perform-exit" id="performExit" hidden aria-label="Leave performance mode"><svg><use href="#i-perform"/></svg><span>Performing</span></button>
   <div class="follow-badge" id="followBadge" hidden><svg><use href="#i-ear"/></svg><span id="followText">Listening</span><span class="beta-tag">Beta</span></div>
+  <button class="ink-tab" id="inkTab" hidden aria-label="Show the writing tools"><svg><use href="#i-pen"/></svg></button>
   <div class="inkbar" id="inkbar" hidden>
     <button class="ink-tool on" data-tool="pen" aria-label="Pen (tap again for pens, sizes and colours)"><svg><use href="#i-pen"/></svg><span class="pen-dot" id="penDot"></span></button>
     <button class="ink-tool" data-tool="hl" aria-label="Highlighter"><svg><use href="#i-hl"/></svg><span class="hl-dot" id="hlDot"></span></button>
@@ -1112,10 +1113,11 @@
   <div class="phv-bar"><button class="icon-btn" id="phvClose" aria-label="Back to my scores"><svg><use href="#i-back"/></svg></button><div class="phv-t"><b id="phvTitle"></b><small id="phvPage"></small></div><button class="phv-ink on" id="phvInk"><svg><use href="#i-pen"/></svg><span>Markings on</span></button><button class="phv-ink phv-play" id="phvPlay" aria-label="Play: two lines at a time, big"><svg><use href="#i-play"/></svg><span>Play</span></button></div>
   <div class="phv-stage" id="phvStage"><div class="phv-page" id="phvPageBox"><img id="phvImg" alt=""><img id="phvInkImg" alt="" hidden></div></div>
   <div class="php" id="phPlay" hidden>
-    <div class="php-lines" id="phpLines"><canvas id="phpA"></canvas><canvas id="phpB"></canvas></div>
-    <div class="php-turn" id="phpTurn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2.5" transform="rotate(90 12 12)"/><path d="M4 7a8 8 0 0 1 6-4M20 17a8 8 0 0 1-6 4"/></svg><b>Turn your iPhone sideways</b><span>Two lines at a time, as big as they go</span></div>
+    <div class="php-lines" id="phpLines"><canvas id="phpC"></canvas></div>
+    <div class="php-turn" id="phpTurn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2.5" transform="rotate(90 12 12)"/><path d="M4 7a8 8 0 0 1 6-4M20 17a8 8 0 0 1-6 4"/></svg><b>Turn your iPhone sideways</b><span>Two or three lines at a time, as big as they go</span></div>
+    <div class="php-n" id="phpN" role="group" aria-label="Lines on the screen"><button data-n="2">2</button><button data-n="3">3</button></div>
     <button class="php-close" id="phpClose" aria-label="Close Play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg><span>Close</span></button>
-    <div class="php-bar"><span id="phpWhere"></span><span class="php-hint" id="phpHint">Tap, wink or the pedal: the next two lines</span></div>
+    <div class="php-bar"><span id="phpWhere"></span><span class="php-hint" id="phpHint">Tap, wink or the pedal: the next lines</span></div>
     <div class="php-busy" id="phpBusy" hidden><i></i><span>Finding the lines…</span></div>
   </div>
 </div>

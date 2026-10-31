@@ -55,7 +55,7 @@ export function cleanLines(lines) {
     // first line of a page (a title, a composer) and below the last (a footnote), tighter still)
     const up = i === 0 ? 3.0 : 4.2, down = i === kept.length - 1 ? 2.8 : 3.6;
     const y0 = L.top !== undefined ? Math.max(L.y0, L.top - s * up) : L.y0, y1 = L.bot !== undefined ? Math.min(L.y1, L.bot + s * down) : L.y1;
-    return { x0: Math.max(0, L.x0 - 0.008), x1: Math.min(1, L.x1 + 0.008), y0: Math.max(0, y0), y1: Math.min(1, y1) };
+    return { x0: Math.max(0, L.x0 - 0.008), x1: Math.min(1, L.x1 + 0.008), y0: Math.max(0, y0), y1: Math.min(1, y1), ...(L.top !== undefined ? { top: L.top, bot: L.bot, sp: s } : {}) };
   });
 }
 
@@ -63,18 +63,22 @@ export function cleanLines(lines) {
 // or a note that the edge would cut through (a tempo above, a high note of the next line below) is
 // either taken in whole or left out whole. g: the page's 2d context.
 export function cleanEdges(g, W, H, lines) {
-  const inkRow = (y, x0, w) => { if (y < 0 || y >= H) return false; const d = g.getImageData(x0, y, w, 1).data; for (let q = 0; q < d.length; q += 4) if (d[q] + d[q + 1] + d[q + 2] < 330) return true; return false; };
+  // (ink: anything clearly darker than the paper, the grey staff lines of some editions too)
+  const inkRow = (y, x0, w) => { if (y < 0 || y >= H) return false; const d = g.getImageData(x0, y, w, 1).data; for (let q = 0; q < d.length; q += 4) if (d[q] + d[q + 1] + d[q + 2] < 480) return true; return false; };
   const edges = lines.map((L) => ({ sx: Math.max(0, Math.round(L.x0 * W)), sw: Math.max(1, Math.min(W, Math.round(L.x1 * W)) - Math.max(0, Math.round(L.x0 * W))), a: Math.round(L.y0 * H), b: Math.min(H - 1, Math.round(L.y1 * H)) }));
+  // (an edge moved inwards never comes into the staff itself: a line is never cut through)
+  const staffTop = (k) => { const L = lines[k]; return L.top !== undefined ? Math.round((L.top - (L.sp || 0) * 1.2) * H) : H; };
+  const staffBot = (k) => { const L = lines[k]; return L.bot !== undefined ? Math.round((L.bot + (L.sp || 0) * 1.2) * H) : 0; };
   edges.forEach((E, k) => {
     const reach = Math.round(H * 0.035);
     const upLimit = k > 0 ? edges[k - 1].b : 0, downLimit = k < edges.length - 1 ? edges[k + 1].a : H - 1;
     if (inkRow(E.a, E.sx, E.sw)) {
       let y = E.a; while (y > Math.max(upLimit, E.a - reach) && inkRow(y, E.sx, E.sw)) y--;
-      if (!inkRow(y, E.sx, E.sw)) E.a = y; else { y = E.a; const stop = E.a + Math.round((E.b - E.a) * 0.3); while (y < stop && inkRow(y, E.sx, E.sw)) y++; if (!inkRow(y, E.sx, E.sw)) E.a = y; }
+      if (!inkRow(y, E.sx, E.sw)) E.a = y; else { y = E.a; const stop = Math.min(E.a + Math.round((E.b - E.a) * 0.3), staffTop(k)); while (y < stop && inkRow(y, E.sx, E.sw)) y++; if (!inkRow(y, E.sx, E.sw)) E.a = y; }
     }
     if (inkRow(E.b, E.sx, E.sw)) {
       let y = E.b; while (y < Math.min(downLimit, E.b + reach) && inkRow(y, E.sx, E.sw)) y++;
-      if (!inkRow(y, E.sx, E.sw)) E.b = y; else { y = E.b; const stop = E.b - Math.round((E.b - E.a) * 0.3); while (y > stop && inkRow(y, E.sx, E.sw)) y--; if (!inkRow(y, E.sx, E.sw)) E.b = y; }
+      if (!inkRow(y, E.sx, E.sw)) E.b = y; else { y = E.b; const stop = Math.max(E.b - Math.round((E.b - E.a) * 0.3), staffBot(k)); while (y > stop && inkRow(y, E.sx, E.sw)) y--; if (!inkRow(y, E.sx, E.sw)) E.b = y; }
     }
   });
   return edges;

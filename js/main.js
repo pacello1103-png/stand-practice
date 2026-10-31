@@ -67,6 +67,8 @@ const S = {
   metro: null, drone: null, scale: null, hometab: 'mine',
 };
 async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
+  // (Stand's own choices for the pages, not those of the score last open)
+  if (S.defView) Object.assign(S, S.defView);
   // (layers are no longer offered: whatever was hidden in one shows again)
   if (S.hidLy && S.hidLy.length) { S.hidLy = []; saveSettings(); }
   setHiddenLayers([]); applyOrientation(); }
@@ -75,6 +77,17 @@ function applyOrientation() {
   try { if (NATIVE && NATIVE.standOrientation) NATIVE.standOrientation.postMessage({ lock: S.landscapeLock ? 'landscape' : 'auto' }); } catch { /* not on the iPad */ }
 }
 let saveT; function saveSettings() { clearTimeout(saveT); saveT = setTimeout(() => setSetting('settings', S), 300); }
+// How the pages sit on the screen is each score's own (one score sideways stays sideways): kept
+// with the score; a score never set takes the choices Stand had before (S.defView).
+const VIEW_KEYS = ['twoUp', 'onePage', 'turnScore', 'halfTurn', 'paper', 'landscapeLock'];
+const pickView = (o) => Object.fromEntries(VIEW_KEYS.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+function applyScoreView(score) {
+  if (!S.defView) { S.defView = pickView(S); saveSettings(); }
+  Object.assign(S, S.defView, (score && score.view) || {});
+  applyOrientation();
+}
+function keepScoreView() { if (!V.score) return; V.score.view = pickView(S); db.put('scores', V.score).catch(() => {}); }
+function leaveScoreView() { if (S.defView) { Object.assign(S, S.defView); applyOrientation(); } }
 
 // =====================================================================
 // Panels
@@ -1127,6 +1140,7 @@ async function openScore(id, opts = {}) {
   if (base.sizes && !base.paper) { const k = sizesKey(file); if (!score.sizes || score.sizes.k !== k) score.sizes = { k, v: (base.rawSizes || base.sizes).map((x) => [Math.round(x[0] * 100) / 100, Math.round(x[1] * 100) / 100]) }; }
   if (V.base) try { V.base.destroy(); } catch {}
   V.score = score; V.file = file; V.base = base; V.doc = mapDoc(base, score.pageMap, score.cuts, score.glue);
+  applyScoreView(score);
   LY.active = ''; setActiveLayer(''); syncLayerUi(); closeAllNotes();
   $('#previewBar').hidden = !score.preview;
   follow.reset();
@@ -1188,6 +1202,7 @@ async function closeScore() {
   step(() => { for (const p of V.cache.values()) p.then(freeCanvas, () => {}); });
   step(() => { if (V.base) V.base.destroy(); });
   V.base = null; V.doc = null; V.score = null; V.cache.clear(); READY.clear(); INCACHE.clear(); stage.textContent = '';
+  step(() => leaveScoreView());
   step(() => { wakeLock && wakeLock.release(); });
   wakeLock = null;
   refreshLibrary();
@@ -2143,7 +2158,7 @@ function setInking(on) {
   if (on && V.half) { V.half = false; layout(); }
   V.inking = on;
   if (!on) { finishText(); flushWord(); finishTextBox(); }
-  $('#inkbar').hidden = !on; $('#inkBtn').classList.toggle('on', on);
+  $('#inkbar').hidden = !on; $('#inkBtn').classList.toggle('on', on); inkBarBack();
   stage.classList.toggle('inking', on);
   closeInkPops(); clearSelection();
   if (on) {
@@ -2153,6 +2168,23 @@ function setInking(on) {
     inkHint(INK.finger ? 'Your finger writes. Two fingers zoom and move; swipe with two fingers to turn.' : 'The Pencil writes. Your finger turns pages, pinches to zoom and moves the page.');
   } else { $('#inkHint').hidden = true; clearLive(); }
 }
+// The writing tools step aside 3½ s after a stroke ends (they stay while a panel of theirs is
+// open, or a text box is being written): a small pen at their place brings them back.
+let inkAwayT = 0;
+function inkBarBack() { clearTimeout(inkAwayT); $('#inkbar').classList.remove('away'); $('#inkTab').hidden = true; }
+function inkBarAwaySoon() {
+  clearTimeout(inkAwayT);
+  if (!V.inking || S.inkBarStays) return;
+  inkAwayT = setTimeout(() => {
+    if (!V.inking || $('#inkbar').hidden) return;
+    const busy = Object.keys(POP_OPENERS).some((id) => { const p = $(id); return p && !p.hidden; }) || !$('#tbBar').hidden || $('#inkbar').classList.contains('under');
+    if (busy) { inkBarAwaySoon(); return; }
+    $('#inkbar').classList.add('away'); $('#inkTab').hidden = false;
+  }, 3500);
+}
+$('#inkTab').addEventListener('click', (e) => { e.stopPropagation(); inkBarBack(); });
+$('#inkbar').addEventListener('pointerdown', () => clearTimeout(inkAwayT));
+document.addEventListener('pointerup', (e) => { if (V.inking && e.target && e.target.closest && e.target.closest('#stage')) inkBarAwaySoon(); }, true);
 // A tap anywhere outside an open colour/eraser/tool panel closes it (buttons keep their own toggling).
 const POP_OPENERS = {
   '#inkPop': '#inkColorBtn, .slot, .ink-tool[data-tool="pen"], .ink-tool[data-tool="hl"], #inkSizes',
@@ -3571,6 +3603,54 @@ const LAYOUTS = [
 ];
 function tb(style, x, y, txt, extra = {}) { return measureTextBox({ ...tbFromStyle(style, x, y, txt), ...extra, x, y }); }
 const LAYOUT_CATS = [['concert', 'Concerts'], ['career', 'Career'], ['practice', 'Practice'], ['social', 'For sharing']];
+// Every layout in other colours: the same design, its paper, ink and accent moved together to another
+// family (or turned to dark paper). nh/ns: the hue and strength the neutral colours (paper, ink,
+// rules) take; ah/as: the hue and strength of the accents; inv: light ink on dark paper.
+const LAY_PALS = [
+  { k: 'cream', label: 'Cream & gold', sw: ['#fbf8f2', '#8a6a3a'] },
+  { k: 'ivory', label: 'Ivory & black', nh: 40, ns: 0.05, ah: 30, as: 0.06, sw: ['#faf9f6', '#1d1d1f'] },
+  { k: 'night', label: 'Night', inv: 1, nh: 225, ns: 0.2, ah: 40, as: 0.55, sw: ['#151a26', '#c9a96a'] },
+  { k: 'noir', label: 'Black & white', inv: 1, nh: 0, ns: 0, ah: 0, as: 0, sw: ['#111111', '#f2f2f2'] },
+  { k: 'sage', label: 'Sage', nh: 95, ns: 0.16, ah: 140, as: 0.35, sw: ['#f3f5ee', '#4f6b4a'] },
+  { k: 'forest', label: 'Forest', inv: 1, nh: 150, ns: 0.22, ah: 85, as: 0.4, sw: ['#14211b', '#b9c98a'] },
+  { k: 'rose', label: 'Rose', nh: 350, ns: 0.3, ah: 345, as: 0.45, sw: ['#fbf3f3', '#9b3b4f'] },
+  { k: 'wine', label: 'Wine', inv: 1, nh: 345, ns: 0.3, ah: 35, as: 0.6, sw: ['#241018', '#d8b47a'] },
+  { k: 'ocean', label: 'Ocean', nh: 205, ns: 0.25, ah: 200, as: 0.55, sw: ['#f1f6fa', '#1f5f8b'] },
+  { k: 'terracotta', label: 'Terracotta', nh: 28, ns: 0.35, ah: 14, as: 0.55, sw: ['#fbf1e8', '#b5532f'] },
+  { k: 'lavender', label: 'Lavender', nh: 262, ns: 0.2, ah: 272, as: 0.38, sw: ['#f5f3fa', '#5d4a8c'] },
+  { k: 'mustard', label: 'Mustard', nh: 45, ns: 0.35, ah: 42, as: 0.75, sw: ['#fbf6e6', '#b8860b'] },
+];
+let layPal = (() => { try { return localStorage.getItem('standLayPal') || 'cream'; } catch { return 'cream'; } })();
+const hexRgb = (h) => { const v = h.length === 4 ? h.slice(1).split('').map((q) => q + q).join('') : h.slice(1, 7); return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16) / 255); };
+function rgbHsl([r, g, b]) { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; if (mx === mn) return [0, 0, l]; const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); let h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return [h * 60, s, l]; }
+function hslHex(h, s, l) { const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return '#' + [f(0), f(8), f(4)].map((x) => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, '0')).join(''); }
+function palColour(c, P) {
+  if (typeof c !== 'string') return c;
+  let rgb, a = null;
+  if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(c)) rgb = hexRgb(c);
+  else { const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\)$/i.exec(c); if (!m) return c; rgb = [m[1] / 255, m[2] / 255, m[3] / 255]; a = m[4] !== undefined ? +m[4] : null; }
+  let [h, s, l] = rgbHsl(rgb);
+  const neutral = s < 0.22 || l > 0.9 || l < 0.12 || (l > 0.74 && s < 0.5);
+  if (P.inv && !P.keepDark) l = 1 - l * 0.94;
+  if (neutral) { h = P.nh; s = P.ns * (l > 0.85 || l < 0.15 ? 0.6 : 1); }
+  else { h = P.ah; s = Math.min(1, P.as * (0.6 + s * 0.6)); if (P.inv && !P.keepDark && l < 0.45) l = 0.62; }
+  const hex = hslHex(h, s, l);
+  if (a === null) return hex;
+  const [r, g, b] = hexRgb(hex).map((x) => Math.round(x * 255)); return `rgba(${r},${g},${b},${a})`;
+}
+const PAL_KEYS = ['f', 'c', 'c2', 'lc', 'bg', 'g2', 'sc', 'oc', 'hc'];
+function inPalette(items, k = layPal) {
+  const P0 = LAY_PALS.find((q) => q.k === k); if (!P0 || k === 'cream') return items;
+  // (a layout made on dark paper stays dark: only its colours move; a light one turns dark for
+  // the dark families)
+  const bg = items.find((x) => x.t === 'bg'), paper = bg && typeof bg.c === 'string' && /^#/.test(bg.c) ? rgbHsl(hexRgb(bg.c))[2] : 1;
+  // (and words over a photo filling the page stay light)
+  const fullPhoto = items.some((x) => x.t === 'img' && x.w >= 0.95 && x.h >= 0.95);
+  const P = { ...P0, keepDark: paper < 0.4 || fullPhoto };
+  const out = items.map((it) => { const o = { ...it }; for (const key of PAL_KEYS) if (typeof o[key] === 'string') o[key] = palColour(o[key], P); return o; });
+  if (!bg && P.inv) out.unshift({ t: 'bg', c: palColour('#ffffff', P), c2: '', pat: '', a: 1 });
+  return out;
+}
 let layCat = 'concert';
 (function buildLayouts() {
   const g = $('#insLayouts');
@@ -3582,11 +3662,21 @@ let layCat = 'concert';
     cats.append(b);
   }
   g.before(cats);
+  // the colours for all of them
+  const pals = el('div', 'lay-pals');
+  for (const P of LAY_PALS) {
+    const b = el('button', P.k === layPal ? 'on' : ''); b.title = P.label; b.setAttribute('aria-label', P.label);
+    b.style.background = `linear-gradient(135deg, ${P.sw[0]} 0 55%, ${P.sw[1]} 55% 100%)`;
+    b.addEventListener('click', () => { layPal = P.k; try { localStorage.setItem('standLayPal', P.k); } catch {} $$('.lay-pals button').forEach((x) => x.classList.toggle('on', x === b)); $('#layPalName').textContent = P.label; drawLayoutThumbs(); });
+    pals.append(b);
+  }
+  const pn = el('div', 'lay-pal-name'); pn.id = 'layPalName'; pn.textContent = (LAY_PALS.find((q) => q.k === layPal) || LAY_PALS[0]).label;
+  g.before(pals, pn);
   for (const L of LAYOUTS) {
     const b = el('button', 'ins-layout' + (L.land ? ' land' : '')); const c = el('canvas'); c.width = L.land ? 283 : 200; c.height = L.land ? 200 : 283; b.append(c, el('span', '', L.label));
     b.dataset.cat = L.cat || 'practice'; b.hidden = b.dataset.cat !== layCat;
     b.addEventListener('click', async () => {
-      const items = L.make();
+      const items = inPalette(L.make());
       const bg = items.filter((x) => x.t === 'bg'), rest = items.filter((x) => x.t !== 'bg');
       closeInkPops(); clearSelection();
       // in a notebook: a new page of its own (sideways when the layout is); elsewhere, on the page
@@ -3603,10 +3693,10 @@ let layCat = 'concert';
     g.append(b);
   }
 })();
-globalThis.__layouts = LAYOUTS;
+globalThis.__layouts = LAYOUTS; globalThis.__inPalette = inPalette;
 async function drawLayoutThumbs() {
   await loadMusicFont();
-  $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of LAYOUTS[i].make()) {
+  $$('#insLayouts canvas').forEach((c, i) => { const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); for (const it0 of inPalette(LAYOUTS[i].make())) {
     // empty photo places show as a soft picture in the little previews
     const it = it0.t === 'img' && !it0.id && it0.mask !== 'bloom' && it0.mask !== 'word' ? { t: 'shape', k: it0.mask || (it0.rr ? 'round' : 'rect'), x: it0.x, y: it0.y, w: it0.w, h: it0.h, rot: it0.rot, f: '#d9c7b4', g: 1, g2: '#8fa7bd', a: 1 } : it0;
     drawItem(g, it, c.width, c.height, false);
@@ -3703,8 +3793,28 @@ function startTextBox(entry, p, hitIdx, fresh, sample) {
   if (sample) ta.select();
   $('#tbBar').hidden = false; $('#inkbar').classList.add('under');
 }
-function placeTextBox() {
+// The keyboard over the lower part of the screen (the iPad sideways, above all): the page is lifted
+// while words are typed, so the box being written stays above the keyboard; it comes down after.
+let kbLift = 0;
+function keepAboveKeyboard() {
+  const vv = window.visualViewport, t = tbEdit;
+  if (!vv || !t) { if (kbLift) { kbLift = 0; stage.style.transform = ''; } return; }
+  const bottom = vv.offsetTop + vv.height - 16, top = vv.offsetTop + 70;
+  const r = t.ta.getBoundingClientRect();
+  let lift = kbLift;
+  if (r.bottom > bottom) lift += r.bottom - bottom;
+  else if (r.top < top && kbLift) lift = Math.max(0, kbLift - (top - r.top));
+  // (no keyboard: nothing lifted)
+  if (vv.height > window.innerHeight * 0.92) lift = 0;
+  lift = Math.max(0, Math.min(lift, window.innerHeight * 0.7));
+  if (Math.abs(lift - kbLift) < 1) return;
+  kbLift = lift; stage.style.transform = lift ? `translateY(${-lift}px)` : '';
+  placeTextBox(true);
+}
+if (window.visualViewport) { visualViewport.addEventListener('resize', () => setTimeout(keepAboveKeyboard, 60)); visualViewport.addEventListener('scroll', () => keepAboveKeyboard()); }
+function placeTextBox(fromLift) {
   const t = tbEdit; if (!t) return;
+  if (!fromLift) setTimeout(keepAboveKeyboard, 0);
   const r = t.entry.inner.getBoundingClientRect(), PS = pageSize(r), it = t.item;
   const at = screenOf(it.x, it.y, r), px = it.fs * PS[0];
   const pad = it.bg ? px * (it.pad ? 0.8 : 0.45) : 0;
@@ -3720,6 +3830,7 @@ function placeTextBox() {
 }
 function finishTextBox() {
   const t = tbEdit; if (!t) return; tbEdit = null;
+  if (kbLift) { kbLift = 0; stage.style.transform = ''; }
   const txt = t.ta.value.replace(/\s+$/, ''); t.ta.remove();
   if (!(Sel.entry && selTb())) { $('#tbBar').hidden = true; $('#inkbar').classList.remove('under'); closeTextPop(); }
   const L = t.entry.layer;
@@ -5119,15 +5230,15 @@ function syncViewSeg() { const m = viewMode(); $$('#viewSeg button').forEach((b)
 $$('#viewSeg button').forEach((b) => b.addEventListener('click', () => {
   const m = b.dataset.view;
   S.turnScore = m === 'turn'; S.onePage = m === 'one'; S.twoUp = m === 'auto';
-  saveSettings(); syncViewSeg(); clearCache(); layout();
+  keepScoreView(); syncViewSeg(); clearCache(); layout();
 }));
-$('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; saveSettings(); clearCache(); layout(); });
-$('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; saveSettings(); clearCache(); layout(); });
-$('#landscapeLock').addEventListener('change', (e) => { S.landscapeLock = e.target.checked; saveSettings(); applyOrientation(); });
-$('#turnScore').addEventListener('change', (e) => { S.turnScore = e.target.checked; saveSettings(); clearCache(); layout(); });
-$('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; saveSettings(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
+$('#twoUp').addEventListener('change', (e) => { S.twoUp = e.target.checked; keepScoreView(); clearCache(); layout(); });
+$('#onePage').addEventListener('change', (e) => { S.onePage = e.target.checked; keepScoreView(); clearCache(); layout(); });
+$('#landscapeLock').addEventListener('change', (e) => { S.landscapeLock = e.target.checked; keepScoreView(); applyOrientation(); });
+$('#turnScore').addEventListener('change', (e) => { S.turnScore = e.target.checked; keepScoreView(); clearCache(); layout(); });
+$('#halfTurn').addEventListener('change', (e) => { S.halfTurn = e.target.checked; keepScoreView(); if (!S.halfTurn && V.half) { V.half = false; layout(); } });
 $$('#paperSeg button').forEach((b) => b.addEventListener('click', () => {
-  S.paper = b.dataset.paper; saveSettings(); $('#score').dataset.paper = S.paper;
+  S.paper = b.dataset.paper; keepScoreView(); $('#score').dataset.paper = S.paper;
   setPaperColor(PAPER_COLOR[S.paper] || '#fff'); for (const p of V.pages) p.layer.redraw();
   $$('#paperSeg button').forEach((x) => x.classList.toggle('on', x === b));
 }));
@@ -5313,33 +5424,35 @@ function linesForPhone(id, i) {
     const lk = id + ':' + phoneStamp(id) + ':' + i;
     let lines = PLINES.get(lk);
     if (!lines) {
-      const kept = await db.get('files', 'plines3:' + lk).catch(() => null);
+      const kept = await db.get('files', 'plines4:' + lk).catch(() => null);
       if (kept && kept.lines) lines = kept.lines;
     }
+    // the page drawn once: big enough for the widest line to be about 2000 px across (2400 wide when
+    // the lines are not known yet); the lines are found on a smaller copy of the same drawing
+    const wl0 = lines && lines.length ? Math.max(...lines.map((L) => L.x1 - L.x0)) : 0;
+    const W = wl0 ? Math.min(2600, Math.round(2000 / wl0)) : 2400, H = Math.round((W * ph) / pw);
+    const c = document.createElement('canvas');
+    try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; throw new Error('draw'); }
+    if (looksBlank(c) || looksBlack(c)) { c.width = c.height = 0; throw new Error('busy'); }
     if (!lines) {
-      const W0 = 1700, c0 = document.createElement('canvas');
-      try { await doc.render(i, c0, W0, Math.round((W0 * ph) / pw)); } catch { c0.width = c0.height = 0; throw new Error('draw'); }
+      const W0 = 1700, c0 = document.createElement('canvas'); c0.width = W0; c0.height = Math.round((W0 * ph) / pw);
+      const g0 = c0.getContext('2d'); g0.imageSmoothingQuality = 'high'; g0.drawImage(c, 0, 0, c0.width, c0.height);
       let found = PL_BROKEN ? null : await plFind(c0);
       // (no thread for it here: read on the stand itself, a page at a time, as Capture does)
       if (found === null) { PL_BROKEN = true; try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0)); } catch { found = []; } }
       c0.width = c0.height = 0;
       lines = cleanLines(found);
-      PLINES.set(lk, lines); db.put('files', { id: 'plines3:' + lk, kind: 'plines', lines }).catch(() => {});
+      PLINES.set(lk, lines); db.put('files', { id: 'plines4:' + lk, kind: 'plines', lines }).catch(() => {});
     }
-    if (!lines.length) return { v: 1, id, i, lines: [] };
-    // the page drawn once, big enough for the widest line to be 2000 px across (never more than 3000 wide)
-    const wl = Math.max(...lines.map((L) => L.x1 - L.x0));
-    const W = Math.min(2600, Math.round(2000 / wl)), H = Math.round((W * ph) / pw);
-    const c = document.createElement('canvas');
-    try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; throw new Error('draw'); }
-    if (looksBlank(c) || looksBlack(c)) { c.width = c.height = 0; throw new Error('busy'); }
+    if (!lines.length) { c.width = c.height = 0; return { v: 1, id, i, lines: [] }; }
     const ik = doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i);
     const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
     let k2 = null;
     if (items.length) { await preloadAssets(items); await preloadMasks(items); k2 = document.createElement('canvas'); k2.width = W; k2.height = H; const g = k2.getContext('2d'); for (const it of items) drawItem(g, it, W, H, false); }
     const out = [];
     const edges = cleanEdges(c.getContext('2d', { willReadFrequently: true }), W, H, lines);
-    for (const E of edges) {
+    for (let li = 0; li < edges.length; li++) {
+      const E = edges[li], Ln = lines[li];
       const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
       const lc = document.createElement('canvas'); lc.width = sw; lc.height = sh;
       const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -5355,11 +5468,13 @@ function linesForPhone(id, i) {
       let ink = null;
       if (k2) { const kc = document.createElement('canvas'); kc.width = sw; kc.height = sh; kc.getContext('2d').drawImage(k2, sx, sy, sw, sh, 0, 0, sw, sh); ink = await canvasData(kc, 'image/png'); kc.width = kc.height = 0; }
       lc.width = lc.height = 0;
-      out.push({ w: sw, h: sh, img, ink });
+      // (where the line stands on the page and where its staves are in it: the iPhone sets every
+      // line at one size, its staves in the middle of their place)
+      out.push({ w: sw, h: sh, img, ink, sx, pw: W, ...(Ln.top !== undefined ? { st: Ln.top * H - sy, sb: Ln.bot * H - sy } : {}) });
     }
     c.width = c.height = 0; if (k2) { k2.width = k2.height = 0; }
     P.t = Date.now();
-    return { v: 1, id, i, lines: out };
+    return { v: 2, id, i, lines: out };
   });
 }
 const BLANK_ONCE = new Set();

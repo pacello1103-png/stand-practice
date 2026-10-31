@@ -123,16 +123,21 @@ function wedgeAt(ctx, hd, below, sp, w, h) {
   // (a frame around it: the wedge stands clear, no other ink running into its ends)
   const touchOf = (x0, y0, wd, ht) => { let t = 0; for (let y = y0 - 1; y <= y0 + ht; y++) for (const x of [x0 - m, x0 + wd + m - 1]) { const i = y * w + x; if (B[i] && !masked(i)) t++; } return t; };
   let best = null, loose = null;
+  const strict = !globalThis.__accProbe;
   for (const k of [1.1, 1.25, 1.4, 1.55]) for (const tk of [0.14, 0.2, 0.26]) {
     const wd = Math.round(sp * k), ht = Math.max(5, Math.round(wd * 0.58)), th = Math.max(2, sp * tk);
     const T2 = wedgeTpl(wd, ht, th);
     for (let y0 = yA; y0 + ht <= yB; y0++) for (let x0 = Math.round(hd.cx - wd / 2 - sp * 0.3); x0 <= Math.round(hd.cx - wd / 2 + sp * 0.3); x0++) {
       if (x0 < m + 1 || y0 < 2 || x0 + wd + m >= w - 1 || y0 + ht >= h - 2) continue;
       let ni = 0, hi = 0, nb = 0, hb = 0;
-      for (const [x, y] of T2.ink) { const i = (y0 + y) * w + x0 + x; if (masked(i)) continue; ni++; if (B[i]) hi++; }
-      if (ni < T2.ink.length * 0.45 || hi < ni * 0.6) continue;
-      for (const [x, y] of T2.bg) { const i = (y0 + y) * w + x0 + x; if (masked(i)) continue; nb++; if (B[i]) hb++; }
-      if (!nb) continue;
+      // (given up as soon as it cannot be a wedge: too many of its pixels paper, too much ink round it;
+      // the answer is the same, found sooner)
+      const missMax = (strict ? 0.15 : 0.4) * T2.ink.length, bgMax = 0.1 * T2.bg.length;
+      let miss = 0, out = false;
+      for (const [x, y] of T2.ink) { const i = (y0 + y) * w + x0 + x; if (masked(i)) continue; ni++; if (B[i]) hi++; else if (++miss > missMax) { out = true; break; } }
+      if (out || ni < T2.ink.length * 0.45 || hi < ni * 0.6) continue;
+      for (const [x, y] of T2.bg) { const i = (y0 + y) * w + x0 + x; if (masked(i)) continue; nb++; if (B[i] && ++hb > bgMax && strict) { out = true; break; } }
+      if (out || !nb) continue;
       const ink = hi / ni, bg = hb / nb, sc = ink - bg * 2;
       if (!loose || sc > loose.sc) loose = { sc: +sc.toFixed(2), ink: +ink.toFixed(2), bg: +bg.toFixed(2), k, tk };
       if (ink < 0.85 || bg > 0.1 || (best && sc <= best.sc)) continue;
@@ -988,6 +993,8 @@ function readWords(read, ctx, comps, taken, hairpins) {
     if ((globalThis.__digitOffSlur ?? 1) && ctx.D) for (const g of ctx.rawC) {
       if (g.w < sp * 2.2 || g.h > sp * 6 || g.h < sp * 0.6) continue;
       if (g.y1 > s.top + sp * 0.5 && g.y0 < s.bottom - sp * 0.5) continue;
+      // (a shape far above or below this staff gives it nothing: what it holds is left out below)
+      if (g.y1 < s.top - sp * 7.5 || g.y0 > s.bottom + sp * 7.5) continue;
       const seen = new Set(), bits = [];
       for (let y = g.y0; y <= g.y1; y++) for (let x = g.x0; x <= g.x1; x++) {
         const k0 = y * w + x; if (seen.has(k0) || !ctx.D[k0] || ctx.labC[k0] !== g.id) continue;

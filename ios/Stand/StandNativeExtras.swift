@@ -20,6 +20,9 @@ final class StandNativeExtras: NSObject {
     static let shared = StandNativeExtras()
 
     private weak var webView: WKWebView?
+    private var inbox: [String] = []
+    private var delivering = false
+    private var framePending = false
     private let serviceType = "stand-link"          // must match NSBonjourServices
     private let token = UUID().uuidString           // decides which side invites (only one does)
     private var peerID: MCPeerID?
@@ -266,10 +269,30 @@ extension StandNativeExtras: MCSessionDelegate {
         guard let kind = data.first else { return }
         if kind == UInt8(ascii: "J") {
             guard let str = String(data: data.dropFirst(), encoding: .utf8) else { return }
-            js("window.standPeerMessage && window.standPeerMessage(\(jsValue(str)))")
+            DispatchQueue.main.async { self.deliver(str) }
         } else if kind == UInt8(ascii: "F") {
-            let b64 = data.dropFirst().base64EncodedString()
-            js("window.standPeerFrame && window.standPeerFrame('\(b64)')")
+            // (a picture still on its way to the page: this one is let go, never piled up)
+            DispatchQueue.main.async {
+                guard !self.framePending, let wv = self.webView else { return }
+                self.framePending = true
+                wv.callAsyncJavaScript("window.standPeerFrame && window.standPeerFrame(b)", arguments: ["b": data.dropFirst().base64EncodedString()], in: nil, in: .page) { [weak self] _ in self?.framePending = false }
+            }
+        }
+    }
+    // Messages to the page one after the other, each handed over as it is (a page of a score is a few
+    // megabytes: written into a script, escaped, several at once, they took the memory of the iPad
+    // or iPhone and the app was closed by iOS).
+    private func deliver(_ str: String) {
+        inbox.append(str)
+        pumpInbox()
+    }
+    private func pumpInbox() {
+        guard !delivering, !inbox.isEmpty, let wv = webView else { return }
+        delivering = true
+        let str = inbox.removeFirst()
+        wv.callAsyncJavaScript("window.standPeerMessage && window.standPeerMessage(m)", arguments: ["m": str], in: nil, in: .page) { [weak self] _ in
+            self?.delivering = false
+            self?.pumpInbox()
         }
     }
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
