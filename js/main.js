@@ -72,7 +72,7 @@ async function loadSettings() { const saved = await getSetting('settings', {}); 
   // one when upright. Before, the way the first score happened to be shown when this came in was
   // taken for all the others, so one set sideways made every score sideways. Once, put right;
   // the scores you set yourself keep theirs.)
-  if (!S.viewFix) { S.viewFix = 1; S.defView = { ...(S.defView || {}), twoUp: true, onePage: false, turnScore: false, halfTurn: false, landscapeLock: false }; saveSettings(); }
+  if (!S.viewFix) { S.viewFix = 1; S.defView = { ...pickView(S), ...(S.defView || {}), twoUp: true, onePage: false, turnScore: false, halfTurn: false, landscapeLock: false }; saveSettings(); }
   if (S.defView) Object.assign(S, S.defView);
   // (eyes now read the right way round by themselves: a swap turned on to correct them goes off, once)
   if (!S.winkFix) { S.winkFix = 1; if (S.winkSwap) S.winkSwap = false; saveSettings(); }
@@ -87,13 +87,15 @@ let saveT; function saveSettings() { clearTimeout(saveT); saveT = setTimeout(() 
 // How the pages sit on the screen is each score's own (one score sideways stays sideways): kept
 // with the score; a score never set takes the choices Stand had before (S.defView).
 const VIEW_KEYS = ['twoUp', 'onePage', 'turnScore', 'halfTurn', 'paper', 'landscapeLock'];
+const BASE_VIEW = { twoUp: true, onePage: false, turnScore: false, halfTurn: false, paper: 'white', landscapeLock: false };
 const pickView = (o) => Object.fromEntries(VIEW_KEYS.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 // (kept apart from the score's own record, in Stand's settings: other parts of Stand write the
 // score's record from older copies of it, and the choice must never go back to an old one)
 function applyScoreView(score) {
   if (!S.defView) { S.defView = pickView(S); saveSettings(); }
   const mine = score && ((S.scoreViews && S.scoreViews[score.id]) || score.view);
-  Object.assign(S, S.defView, mine || {});
+  // (every choice set, so nothing of the score open before stays: its paper, its sideways)
+  Object.assign(S, BASE_VIEW, S.defView, mine || {});
   applyOrientation();
 }
 function keepScoreView() {

@@ -172,28 +172,26 @@ final class StandNativeExtras: NSObject {
         advertiser?.stopAdvertisingPeer(); advertiser = nil
         browser?.stopBrowsingForPeers(); browser = nil
         session?.disconnect(); session = nil
-        invited.removeAll()
+        invited.removeAll(); seen.removeAll()
         reportPeers()
     }
 
-    // Looking again makes the other device show up again (after a drop, or coming back to the app).
-    // Stopping and starting the looking quickly, over and over, made iOS close the app (a crash
-    // inside its own network code, a moment after a stop: the iPhone reports showed it every time
-    // the looking rested). So it is done at most once a minute, with a pause between the two.
+    // After a drop the two find each other again WITHOUT stopping the looking: every stop and start of
+    // the looking was followed, now and then, by iOS closing the app (a crash inside its own network
+    // code a moment later; the logs showed it right after "looking again", each time). The looking
+    // simply goes on; the devices it still sees are asked again, after a pause.
+    private var seen: [MCPeerID: [String: String]] = [:]
     private var lastRestart = Date.distantPast
     private func restartDiscovery() {
         DispatchQueue.main.async {
             self.invited = self.invited.filter { Date().timeIntervalSince($0.value) < 20 }
-            guard Date().timeIntervalSince(self.lastRestart) > 60 else { return }
+            guard Date().timeIntervalSince(self.lastRestart) > 10 else { return }
             self.lastRestart = Date()
-            StandLog.write("link: looking again")
-            self.browser?.stopBrowsingForPeers()
-            self.advertiser?.stopAdvertisingPeer()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                guard self.session != nil, UIApplication.shared.applicationState == .active else { return }
-                self.advertiser?.startAdvertisingPeer()
-                self.browser?.startBrowsingForPeers()
-                self.searching = true
+            guard !self.seen.isEmpty else { return }   // (none in sight: found again by itself when it comes)
+            StandLog.write("link: asking again")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard let br = self.browser, let s = self.session, s.connectedPeers.isEmpty, UIApplication.shared.applicationState == .active else { return }
+                for (peer, info) in self.seen { self.invited.removeValue(forKey: peer); self.found(br, peer, info) }
             }
         }
     }
@@ -213,6 +211,7 @@ final class StandNativeExtras: NSObject {
     @objc private func appBackground() {
         advertiser?.stopAdvertisingPeer()
         browser?.stopBrowsingForPeers()
+        seen.removeAll()   // (found again when the looking starts again)
     }
     @objc private func appActive() {
         guard session != nil else { return }
@@ -344,7 +343,7 @@ extension StandNativeExtras: MCNearbyServiceAdvertiserDelegate {
 
 extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
-        DispatchQueue.main.async { self.found(browser, peerID, info) }
+        DispatchQueue.main.async { if info?["app"] == "stand" { self.seen[peerID] = info ?? [:] }; self.found(browser, peerID, info) }
     }
     private func found(_ browser: MCNearbyServiceBrowser, _ peerID: MCPeerID, _ info: [String: String]?) {
         guard info?["app"] == "stand", let s = session, browser === self.browser else { return }
@@ -370,7 +369,7 @@ extension StandNativeExtras: MCNearbyServiceBrowserDelegate {
         }
     }
     func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
-        DispatchQueue.main.async { self.invited.removeValue(forKey: peerID) }
+        DispatchQueue.main.async { self.invited.removeValue(forKey: peerID); self.seen.removeValue(forKey: peerID) }
     }
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         js("window.standPeerError && window.standPeerError(\(jsValue(error.localizedDescription)))")
