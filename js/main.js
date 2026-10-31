@@ -2356,7 +2356,7 @@ $$('.ink-tool[data-tool]').forEach((b) => b.addEventListener('click', () => {
   if (t === 'tape') { if (wasSame || !INK.tapeSeen) { $('#tapePop').hidden = false; syncTapePop(); INK.tapeSeen = true; } inkHint('Drag to lay a strip of tape.', 2200); }
   if ((t === 'pen' || t === 'hl') && wasSame && !popWasOpen) { INK.tool = t; syncInkBar(); $('#inkPop').hidden = false; fillInkPop(); return; }
   if (t === 'stamp') { $('#stampPop').hidden = wasSame && !$('#stampPop').hidden; $$('#stampGrid button').forEach((x) => x.classList.toggle('on', x.dataset.k === INK.stamp)); loadMusicFont(); }
-  if (t === 'print') { $('#erasePop').hidden = wasSame; syncErasePop(); }   // stays open until you pick another tool, so the size bar can be used
+  if (t === 'print') { $('#erasePop').hidden = false; syncErasePop(); }   // every tap shows both kinds (Smart and Brush); a tap on the page closes it
   if (t === 'note') { if (INK.tool !== 'note') INK.beforeNote = INK.tool; INK.tool = t; syncInkBar(); inkHint('Tap the page where the note goes. Closed, it is a small tab that hides nothing; tap it to open it.', 3400); return; }
   if (t === 'select') inkHint(NBK() ? 'Tap a photo, text or line to select it, or draw a loop around several.' : 'Draw a loop around markings to select them.');
   if (t === 'text') inkHint('Tap where the words go, then type or write in the box with the Pencil. Tap a word to change it.', 3800);
@@ -2368,7 +2368,7 @@ $$('.ink-tool[data-tool]').forEach((b) => b.addEventListener('click', () => {
 function syncErasePop() { $('#esSize').value = INK.white.size; $('#esSizeVal').textContent = INK.white.size; $('#esSizeRow').hidden = false; $$('#eraseMode button').forEach((x) => x.classList.toggle('on', x.dataset.mode === INK.erase)); $('#eraseHint').textContent = INK.erase === 'smart' ? 'Scribble over a printed fingering, dynamic, word or slur. Stand removes exactly that shape. Anything joined to the staff stays.' : 'Paint over any part of the printed page to cover it with paper colour.'; }
 let erasePopT;
 $('#esSize').addEventListener('input', (e) => { INK.white.size = +e.target.value; $('#esSizeVal').textContent = e.target.value; persistInk(); });
-$$('#eraseMode button').forEach((b) => b.addEventListener('click', () => { INK.erase = b.dataset.mode; syncErasePop(); persistInk(); }));
+$$('#eraseMode button').forEach((b) => b.addEventListener('click', () => { INK.erase = b.dataset.mode; syncErasePop(); persistInk(); clearTimeout(erasePopT); if (INK.erase === 'smart') erasePopT = setTimeout(() => { $('#erasePop').hidden = true; }, 350); inkHint(INK.erase === 'smart' ? 'Smart: scribble over a slur, a fingering or a word.' : 'Brush: paint over anything to cover it.', 1800); }));
 $('#fingerBtn').addEventListener('click', () => { INK.finger = !INK.finger; syncInkBar(); persistInk(); inkHint(INK.finger ? 'Finger writing on. Two fingers zoom; swipe with two fingers to turn.' : 'Finger writing off. The Pencil writes, your finger turns pages.'); });
 $('#inkBtn').addEventListener('click', () => setInking(!V.inking));
 // Hide the markings to see the clean score (the markings stay where they are)

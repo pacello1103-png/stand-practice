@@ -176,42 +176,31 @@ final class StandNativeExtras: NSObject {
         reportPeers()
     }
 
-    // looking again makes the other device show up again (after a drop, or coming back to the app)
+    // Looking again makes the other device show up again (after a drop, or coming back to the app).
+    // Stopping and starting the looking quickly, over and over, made iOS close the app (a crash
+    // inside its own network code, a moment after a stop: the iPhone reports showed it every time
+    // the looking rested). So it is done at most once a minute, with a pause between the two.
+    private var lastRestart = Date.distantPast
     private func restartDiscovery() {
         DispatchQueue.main.async {
             self.invited = self.invited.filter { Date().timeIntervalSince($0.value) < 20 }
+            guard Date().timeIntervalSince(self.lastRestart) > 60 else { return }
+            self.lastRestart = Date()
+            StandLog.write("link: looking again")
             self.browser?.stopBrowsingForPeers()
             self.advertiser?.stopAdvertisingPeer()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                guard self.session != nil, UIApplication.shared.applicationState == .active else { return }
                 self.advertiser?.startAdvertisingPeer()
                 self.browser?.startBrowsingForPeers()
                 self.searching = true
-                self.scheduleRest(after: 120)
             }
         }
     }
-    // Looking for the other device keeps the Wi-Fi radio busy all the time, which costs battery on
-    // both. So it looks for two minutes (after opening Stand, coming back to it, or losing the
-    // other), then rests, looking again for 20 s every 3 minutes; once linked it stops looking
-    // (the link itself stays).
+    // (the looking now goes on while Stand is open; it stops only when Stand goes to the background)
     private var searching = false
     private var restTimer: Timer?
-    private func scheduleRest(after secs: TimeInterval) {
-        restTimer?.invalidate()
-        restTimer = Timer.scheduledTimer(withTimeInterval: secs, repeats: false) { [weak self] _ in self?.rest() }
-    }
-    private func rest() {
-        guard let s = session else { return }
-        browser?.stopBrowsingForPeers(); advertiser?.stopAdvertisingPeer(); searching = false
-        // (linked: nothing more to look for; not linked: a short look again in a while)
-        if s.connectedPeers.isEmpty {
-            restTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: false) { [weak self] _ in
-                guard let self = self, self.session != nil, UIApplication.shared.applicationState == .active, (self.session?.connectedPeers.isEmpty ?? true) else { if let me = self, me.session != nil { me.scheduleRest(after: 180) }; return }
-                self.advertiser?.startAdvertisingPeer(); self.browser?.startBrowsingForPeers(); self.searching = true
-                self.scheduleRest(after: 20)
-            }
-        }
-    }
+    private func scheduleRest(after secs: TimeInterval) { }
 
     private func reportPeers() {
         if !Thread.isMainThread { DispatchQueue.main.async { self.reportPeers() }; return }
@@ -227,7 +216,11 @@ final class StandNativeExtras: NSObject {
     }
     @objc private func appActive() {
         guard session != nil else { return }
-        restartDiscovery()
+        // (back from the background, where the looking was stopped: started again, after a pause)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard self.session != nil, UIApplication.shared.applicationState == .active else { return }
+            self.advertiser?.startAdvertisingPeer(); self.browser?.startBrowsingForPeers(); self.searching = true
+        }
     }
 }
 

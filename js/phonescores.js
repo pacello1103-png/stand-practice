@@ -506,7 +506,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   // the next two, across the pages. Each line comes from the iPad drawn on its own, sharp, from the
   // score itself, and is kept here: the next time it opens at once. Away from the iPad, the lines
   // are cut from the pages already here.
-  const PP = { open: false, p: 0, k: 0, pages: new Map(), loading: new Map(), bmp: new Map(), quietT: 0, lines: new Map() };
+  const PP = { open: false, p: 0, k: 0, quietT: 0, st: null };
   const halves = [{ y0: 0, y1: 0.5, x0: 0, x1: 1 }, { y0: 0.5, y1: 1, x0: 0, x1: 1 }];
   let LW2 = null, lwSeq2 = 0; const lwWait2 = new Map();
   const linesInThread = (bmp) => new Promise((res) => {
@@ -524,7 +524,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   });
   // (away from the iPad: the lines found here, on the page picture)
   async function linesOfPage(copy, i) {
-    if (PP.lines.has(i)) return PP.lines.get(i);
+    const S = PP.st; if (S && S.lines.has(i)) return S.lines.get(i);
     const p = await pageOf(copy, i); if (!p || !p.img) return [];
     let found = null;
     if (!PP.threadBroken) { try { found = await linesInThread(await createImageBitmap(p.img)); } catch {} }
@@ -540,31 +540,44 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     }
     // (a page with no music on it, a title page, is passed over)
     const lines = cleanLines(found || []);
-    PP.lines.set(i, lines);
+    if (S && PP.st === S) S.lines.set(i, lines);
     return lines;
   }
   const dataBlob = async (u) => (u ? (await fetch(u)).blob() : null);
   const playKey = (copy, i) => copy.id + ':s' + copy.stamp + ':play11-' + i;   // (kept with the version's pages, gone with them)
-  // the lines of page i: [{ img, ink, w, h }] (pictures as they are kept)
+  // Everything Play knows of one score, in one place: when another score is opened, a line still on
+  // its way for the one before can never land in it.
+  const newState = (copy) => ({ key: copy.id + ':' + copy.stamp, copy, pages: new Map(), loading: new Map(), bmp: new Map(), lines: new Map() });
+  PP.st = null;
+  // the lines of page i: [{ img, ink, w, h, sx, pw, st, sb }], [] for a page with no music, null
+  // when it could not be had just now (the iPad busy, the page not here yet: asked again later)
   async function playLines(copy, i) {
-    if (PP.pages.has(i)) return PP.pages.get(i);
-    if (PP.loading.has(i)) return PP.loading.get(i);
+    const S = PP.st; if (!S || S.copy !== copy) return null;
+    if (S.pages.has(i)) return S.pages.get(i);
+    if (S.loading.has(i)) return S.loading.get(i);
     const job = (async () => {
       const kept = await db.get('files', playKey(copy, i)).catch(() => null);
-      if (kept && kept.lines) return kept.lines;
-      // from the iPad, sharp
-      try {
-        const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i }, 30000);
-        if (d && Array.isArray(d.lines)) {
-          const lines = [];
-          for (const L of d.lines) lines.push({ w: L.w, h: L.h, sx: L.sx, pw: L.pw, st: L.st, sb: L.sb, img: await dataBlob(L.img), ink: await dataBlob(L.ink) });
-          if (lines.length) { await db.put('files', { id: playKey(copy, i), kind: 'ipadplay', lines }).catch(() => {}); return lines; }
-        }
-      } catch {}
-      // here, from the page picture (not kept: the iPad's are sharper)
-      const p = await pageOf(copy, i); if (!p || !p.img) return [];
+      if (kept && Array.isArray(kept.lines) && kept.kind !== 'localplay') return kept.lines;
+      // from the iPad, sharp (busy a moment: asked again); lines made here before are kept, and
+      // replaced by the iPad's when it is there
+      for (let tries = 0; tries < (kept ? 1 : 3); tries++) {
+        try {
+          const d = await askIpad({ what: 'lines', id: copy.id.slice(9), i }, kept ? 4000 : 30000);
+          if (d && Array.isArray(d.lines)) {
+            const lines = [];
+            for (const L of d.lines) lines.push({ w: L.w, h: L.h, sx: L.sx, pw: L.pw, st: L.st, sb: L.sb, img: await dataBlob(L.img), ink: await dataBlob(L.ink) });
+            await db.put('files', { id: playKey(copy, i), kind: 'ipadplay', lines }).catch(() => {});
+            return lines;
+          }
+        } catch (e) { if (kept || !/busy/.test(String(e && e.message))) break; }
+        if (PP.st !== S) return null;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (kept && Array.isArray(kept.lines)) return kept.lines;
+      // here, from the page picture (kept, so the next time it opens at once)
+      const p = await pageOf(copy, i).catch(() => null); if (!p || !p.img) return null;
       const Ls = await linesOfPage(copy, i);
-      const bmp = await createImageBitmap(p.img).catch(() => null); if (!bmp) return [];
+      const bmp = await createImageBitmap(p.img).catch(() => null); if (!bmp) return null;
       const inkB = p.ink ? await createImageBitmap(p.ink).catch(() => null) : null;
       const out = [];
       const pc = document.createElement('canvas'); pc.width = bmp.width; pc.height = bmp.height;
@@ -583,35 +596,91 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       }
       pc.width = pc.height = 0;
       try { bmp.close(); inkB && inkB.close(); } catch {}
+      await db.put('files', { id: playKey(copy, i), kind: 'localplay', lines: out }).catch(() => {});
       return out;
     })();
-    PP.loading.set(i, job);
-    const lines = await job.catch(() => []);
-    PP.loading.delete(i); PP.pages.set(i, lines);
+    S.loading.set(i, job);
+    const lines = await job.catch(() => null);
+    S.loading.delete(i);
+    if (PP.st === S && Array.isArray(lines)) S.pages.set(i, lines);
     return lines;
   }
-  // the line n lines after (p, k), across pages (pages without music are passed), or null
+  // (a page that could not be had: tried again a few times, then passed over for now)
+  async function linesSure(copy, i) {
+    for (let t = 0; t < 4; t++) { const L = await playLines(copy, i); if (Array.isArray(L)) return L; if (!PP.open) return []; await new Promise((r) => setTimeout(r, 1200)); }
+    return [];
+  }
+  // Only lines of the score's own music: a line far smaller than the others, or much shorter (the
+  // examples in a page of text, a footnote), is left out, once enough of the score is known.
+  function goodOf(S) {
+    let n0 = 0; for (const L of S.pages.values()) n0 += L.length;
+    const key = S.pages.size + ':' + n0;
+    if (S.goodKey !== key) { S.goodKey = key; S.good = goodMake(S); }
+    return S.good;
+  }
+  function goodMake(S) {
+    const hs = [], ws = [];
+    for (const L of S.pages.values()) for (const q of L) { const pw = q.pw || q.w; ws.push(q.w / pw); if (q.st !== undefined && q.sb !== undefined) hs.push((q.sb - q.st) / pw); }
+    if (ws.length < 5) return () => true;
+    const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+    const mw = med(ws), mh = hs.length >= 5 ? med(hs) : 0;
+    return (q) => { const pw = q.pw || q.w; if (q.w / pw < mw * 0.6) return false; if (mh && q.st !== undefined && q.sb !== undefined) { const h = (q.sb - q.st) / pw; if (h < mh * 0.72 || h > mh * 1.6) return false; } return true; };
+  }
+  // the line n good lines after (p, k), across pages, or null at either end
   async function after(copy, p, k, n) {
-    let L = await playLines(copy, p), q = k + n, guard = 0;
-    while ((q < 0 || q >= L.length) && guard++ < 400) {
-      if (q >= L.length) { q -= L.length; p++; if (p >= countOf(copy)) return null; L = await playLines(copy, p); }
-      else { p--; if (p < 0) return null; L = await playLines(copy, p); q += L.length; }
+    const S = PP.st; if (!S) return null;
+    const N = countOf(copy); let left = Math.abs(n); const dir = n >= 0 ? 1 : -1;
+    let L = await linesSure(copy, p), q = k;
+    for (let guard = 0; guard < 4000; guard++) {
+      if (left === 0) { if (q >= 0 && q < L.length && goodOf(S)(L[q])) return { p, k: q }; left = 1; }
+      q += dir;
+      while (q < 0 || q >= L.length) {
+        if (q >= L.length) { p++; if (p >= N) return null; L = await linesSure(copy, p); q = 0; }
+        else { p--; if (p < 0) return null; L = await linesSure(copy, p); q = L.length - 1; }
+        if (PP.st !== S) return null;
+      }
+      if (goodOf(S)(L[q])) left--;
     }
-    return q >= 0 && q < L.length ? { p, k: q } : null;
+    return null;
+  }
+  // where a line is in the whole score (counting good lines from the start), when every page before
+  // it is known; -1 otherwise
+  function indexOf(at) {
+    const S = PP.st; if (!S) return -1;
+    const good = goodOf(S); let n = 0;
+    for (let i = 0; i < at.p; i++) { const L = S.pages.get(i); if (!L) return -1; for (const q of L) if (good(q)) n++; }
+    const L = S.pages.get(at.p); if (!L) return -1;
+    for (let k = 0; k < at.k && k < L.length; k++) if (good(L[k])) n++;
+    return n;
+  }
+  function atIndex(g) {
+    const S = PP.st; if (!S) return null;
+    const good = goodOf(S); let n = 0;
+    for (let i = 0; i < countOf(S.copy); i++) { const L = S.pages.get(i); if (!L) return null; for (let k = 0; k < L.length; k++) if (good(L[k])) { if (n === g) return { p: i, k }; n++; } }
+    return null;
+  }
+  // the screens start at line 0, n, 2n… of the whole score (switching between two and three
+  // lines keeps the place and sets the screens out again from the start)
+  function snapped(at) {
+    const g = indexOf(at); if (g < 0) return at;
+    const n = ppN(), g2 = Math.floor(g / n) * n;
+    return atIndex(g2) || at;
   }
   async function bitmapOf(at, which) {
+    const S = PP.st; if (!S) return null;
     const key = at.p + ':' + at.k + ':' + which;
-    if (PP.bmp.has(key)) return PP.bmp.get(key);
-    const L = (PP.pages.get(at.p) || [])[at.k]; const b = L && L[which];
+    if (S.bmp.has(key)) return S.bmp.get(key);
+    const L = (S.pages.get(at.p) || [])[at.k]; const b = L && L[which];
     const v = b ? await createImageBitmap(b).catch(() => null) : null;
-    PP.bmp.set(key, v);
+    if (PP.st !== S) { try { v && v.close(); } catch {} return null; }
+    S.bmp.set(key, v);
     // (only the few lines around are kept)
-    while (PP.bmp.size > 16) { const k0 = PP.bmp.keys().next().value; const o = PP.bmp.get(k0); PP.bmp.delete(k0); try { o && o.close(); } catch {} }
+    while (S.bmp.size > 18) { const k0 = S.bmp.keys().next().value; const o = S.bmp.get(k0); S.bmp.delete(k0); try { o && o.close(); } catch {} }
     return v;
   }
   // how many lines at once: two or three (kept)
   const ppN = () => { try { return localStorage.getItem('standPlayN') === '3' ? 3 : 2; } catch { return 2; } };
-  const lineOf = (at) => (at ? (PP.pages.get(at.p) || [])[at.k] : null);
+  const lineOf = (at) => (at && PP.st ? (PP.st.pages.get(at.p) || [])[at.k] : null);
   // All the lines on the screen at one size (the size the widest takes across), each in its own
   // place, its staves in the middle of it; what reaches beyond its place is not drawn there.
   async function drawLines(cv, ats) {
@@ -644,44 +713,64 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   }
   let drawTok = 0;
   async function ppDraw() {
-    const v = PS.view; if (!v || !PP.open) return;
-    const tok = ++drawTok;
+    const v = PS.view; if (!v || !PP.open || !PP.st) return;
+    const S = PP.st, tok = ++drawTok;
     const busyT = setTimeout(() => { if (tok === drawTok) $('#phpBusy').hidden = false; }, 200);
     let a = { p: PP.p, k: PP.k };
-    // (a page with no music at all: on to the first that has)
-    if (!(await playLines(v.copy, a.p)).length) { const n = await after(v.copy, a.p, 0, 0); if (n) { a = n; PP.p = n.p; PP.k = n.k; } }
+    // (enough of the score known first to tell its music from the examples in a page of text: the
+    // pages after this one, until there are several lines)
+    for (let q = a.p, known = 0; q < countOf(v.copy) && q < a.p + 4; q++) {
+      known = 0; for (const L of S.pages.values()) known += L.length;
+      if (known >= 8 && S.pages.size >= 2) break;
+      await linesSure(v.copy, q);
+      if (tok !== drawTok || PP.st !== S) return;
+    }
+    // (on a line of the score's music: the first one from here on)
+    const L0 = await linesSure(v.copy, a.p);
+    if (!(a.k < L0.length && goodOf(S)(L0[a.k]))) { const n = await after(v.copy, a.p, a.k, 0); if (n) a = n; }
+    a = snapped(a); PP.p = a.p; PP.k = a.k;
     const ats = [a]; for (let q = 1; q < ppN(); q++) ats.push(ats[q - 1] ? await after(v.copy, ats[q - 1].p, ats[q - 1].k, 1) : null);
-    if (tok !== drawTok) return;
+    if (tok !== drawTok || PP.st !== S) return;
     await drawLines($('#phpC'), ats);
-    if (tok !== drawTok) return;
+    if (tok !== drawTok || PP.st !== S) return;
     clearTimeout(busyT); $('#phpBusy').hidden = true;
     $('#phpWhere').textContent = `Page ${a.p + 1} of ${countOf(v.copy)}`;
     for (const b of document.querySelectorAll('#phpN button')) b.classList.toggle('on', +b.dataset.n === ppN());
     v.i = a.p;
-    // the pages ahead made ready meanwhile, one after the other
-    (async () => { for (const q of [a.p + 1, a.p + 2]) { if (!PP.open || q >= countOf(v.copy)) break; await playLines(v.copy, q).catch(() => {}); } })();
+  }
+  // The whole score, page after page, made ready while Play is open (from the place it opened at,
+  // then from the start), so the screens can be set out and every line is ready to go on to.
+  async function readyAll(S) {
+    const N = countOf(S.copy), order = [];
+    for (let i = PP.p; i < N; i++) order.push(i);
+    for (let i = 0; i < PP.p; i++) order.push(i);
+    for (const i of order) { if (!PP.open || PP.st !== S) return; if (!S.pages.has(i)) await linesSure(S.copy, i).catch(() => {}); }
   }
   async function ppStep(d) {
-    const v = PS.view; if (!v || !PP.open) return;
+    const v = PS.view; if (!v || !PP.open || !PP.st) return;
     const n = await after(v.copy, PP.p, PP.k, d * ppN());
     if (!n) return;
     PP.p = n.p; PP.k = n.k; ppDraw(); ppQuiet();
   }
   const ppQuiet = () => { const el = $('#phPlay'); el.classList.remove('quiet'); clearTimeout(PP.quietT); PP.quietT = setTimeout(() => el.classList.add('quiet'), 2500); };
   const orient = (lock) => { try { window.webkit.messageHandlers.standOrientation.postMessage({ lock }); } catch {} };
+  const dropState = () => { const S = PP.st; PP.st = null; if (S) for (const o of S.bmp.values()) { try { o && o.close(); } catch {} } };
   async function ppOpen() {
     const v = PS.view; if (!v) return;
     PP.open = true; PP.p = v.i; PP.k = 0;
-    if (PP.copyId !== v.copy.id + v.copy.stamp) { PP.pages.clear(); PP.lines.clear(); for (const o of PP.bmp.values()) { try { o && o.close(); } catch {} } PP.bmp.clear(); PP.copyId = v.copy.id + v.copy.stamp; }
+    // (another score, or another version of it: nothing of the one before is kept)
+    if (!PP.st || PP.st.key !== v.copy.id + ':' + v.copy.stamp || PP.st.copy !== v.copy) { dropState(); PP.st = newState(v.copy); }
+    const g = $('#phpC').getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, $('#phpC').width, $('#phpC').height);
     $('#phPlay').hidden = false; orient('landscape'); ppQuiet();
     window.__phonePlay = { active: true, wink: (eye) => ppStep(eye === 'right' ? 1 : -1) };
     if (window.__sendFace) window.__sendFace();
-    ppDraw();
+    await ppDraw();
+    readyAll(PP.st);
   }
   function ppClose() {
     PP.open = false; $('#phPlay').hidden = true; orient('auto');
     window.__phonePlay = null; if (window.__sendFace) window.__sendFace();
-    for (const o of PP.bmp.values()) { try { o && o.close(); } catch {} } PP.bmp.clear();
+    if (PP.st) { for (const o of PP.st.bmp.values()) { try { o && o.close(); } catch {} } PP.st.bmp.clear(); }
     drawPage();
   }
   $('#phvPlay').addEventListener('click', ppOpen);
