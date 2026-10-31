@@ -2421,6 +2421,36 @@ async function analyseOnce(canvas, dbg, sub = false, opts = {}) {
     if (add.length) staves = [...staves, ...add].sort((a, b2) => a.top - b2.top);
   }
   if (!staves.length) return { ...empty, angle };
+  // Only where the staves are, and which go together (the iPhone's Play cutting a page into its
+  // lines): no notes read, many times quicker. The staves and systems are those of the full reading.
+  if (opts.stavesOnly) {
+    const sysOf = [];
+    staves.forEach((s, i) => {
+      const prev = sysOf.length ? sysOf[sysOf.length - 1] : null;
+      const last = prev ? staves[prev[prev.length - 1]] : null;
+      let joined = false;
+      if (last && s.top - last.bottom < s.sp * 14) {
+        for (const x0 of [s.x0 + 1, s.x0 + s.sp * 0.2]) {
+          const x = Math.round(x0); let n = 0, tot = 0;
+          for (let y = Math.round(last.bottom); y <= Math.round(s.top); y++) { tot++; n += B[y * w + x] || B[y * w + x + 1] || B[y * w + x - 1] ? 1 : 0; }
+          if (tot && n / tot > 0.9) { joined = true; break; }
+        }
+      }
+      if (joined) prev.push(i); else sysOf.push([i]);
+    });
+    const back = (x, y) => {
+      let X = x, Y = y;
+      if (rotated) { const a = (angle * Math.PI) / 180, cx = w / 2, cy = h / 2; const dx = x - cx, dy = y - cy; X = cx + dx * Math.cos(a) - dy * Math.sin(a); Y = cy + dx * Math.sin(a) + dy * Math.cos(a); }
+      return [X / f, Y / f];
+    };
+    const outS = staves.map((s) => {
+      const xm = (s.x0 + s.x1) / 2;
+      const [ax0] = back(s.x0, yAt(s, 8, s.x0)), [ax1] = back(s.x1, yAt(s, 8, s.x1));
+      const [, bottom] = back(xm, yAt(s, 0, xm)), [, topM] = back(xm, yAt(s, 8, xm));
+      return { sp: s.sp / f, top: topM, bottom, x0: ax0, x1: ax1, lines: [8, 6, 4, 2, 0].map((q) => back(xm, yAt(s, q, xm))[1]), thick: T / f, heads: [], rests: [], bars: [], signs: [], slurs: [], hairpins: [], ottavas: [], texts: [], startX: back(s.x0, s.top)[0] };
+    });
+    return { staves: outS, systems: sysOf, w: canvas.width, h: canvas.height, scale: 1, angle, sp: outS[0].sp };
+  }
   // the staves' own measure is finer than the first guess
   const sp = sp0;
   const C = removeLines(B, w, h, staves, T);

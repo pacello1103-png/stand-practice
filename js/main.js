@@ -32,7 +32,7 @@ import { initCompose, openComposition } from './compose/editor.js';
 import { pickRegion } from './picker.js';
 import { recognise, recogniseBest } from './omr.js';
 import { initStudio, openStudio } from './studio.js';
-import { CameraHost, CameraPhone, directWatch, nlog } from './link.js';
+import { CameraHost, CameraPhone, directWatch, nlog, directSendFile } from './link.js';
 import { PageFollower } from './follow.js';
 import { Gaze, WinkDetector, WinkLevels, fitCalibration } from './gaze.js';
 import { KeyFollower } from './keyfollow.js';
@@ -297,10 +297,17 @@ const thumbURLs = new Map();
 // background, the practice time) keeps that choice: before, such a copy, taken before the move,
 // was saved after it and put the score back where it had been.
 const FOLDER_SET = new Map();
+// (the same for a title or composer you change: an older copy of the score saved after it never
+// brings the old name back)
+const NAME_SET = new Map();
 {
   const put0 = db.put.bind(db);
   db.put = (store, value) => {
     if (store === 'scores' && value && FOLDER_SET.has(value.id)) { const f = FOLDER_SET.get(value.id); if (f) value.folder = f; else delete value.folder; }
+    if (store === 'scores' && value && NAME_SET.has(value.id)) {
+      const n = NAME_SET.get(value.id);
+      if (value.title !== n.title || (value.composer || '') !== n.composer) { try { nlog('name kept: an older copy of a score was being saved'); } catch {} value.title = n.title; value.composer = n.composer; }
+    }
     return put0(store, value);
   };
 }
@@ -693,8 +700,10 @@ $$('#sortSeg button').forEach((b) => b.addEventListener('click', () => {
   $$('#sortSeg button').forEach((x) => x.classList.toggle('on', x === b)); renderGrid();
 }));
 
+// (IMSLP's numbers in a file's name, "IMSLP12345-PMLP678-…", are no part of its title)
+const noImslpNo = (t) => { let a = t, b; do { b = a; a = a.replace(/(^|[\s_-])(IMSLP|PMLP|SIBLEY)\d+(?=[\s_.-]|$)[-_]?/gi, '$1').replace(/^[\s_-]+/, ''); } while (a !== b); return a; };
 function niceTitle(name) {
-  return String(name || '').replace(/\.(pdf|jpe?g|png|heic|heif|webp|tiff?)$/i, '').replace(/^(IMSLP|PMLP)\d+-/i, '').replace(/[_]+/g, ' ').replace(/%20/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
+  return noImslpNo(String(name || '').replace(/\.(pdf|jpe?g|png|heic|heif|webp|tiff?)$/i, '')).replace(/[_]+/g, ' ').replace(/%20/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
 }
 // A file name like "Bach - Cello Suite No.1" or "Cello_Suite_No.1_(Bach,_Johann_Sebastian)": the
 // composer part comes out, the rest is the title.
@@ -5278,19 +5287,24 @@ function fillScoreSettings() {
   });
   $('#delScoreConfirm').hidden = true;
 }
-function saveScoreMeta() {
+function saveScoreMeta(typing) {
   if (!V.score) return;
   const t = $('#metaTitle').value.trim(); if (t) V.score.title = t;
   V.score.composer = $('#metaComposer').value.trim();
+  NAME_SET.set(V.score.id, { title: V.score.title, composer: V.score.composer });
+  // (the library's own list too, at once)
+  { const l = scores.find((x) => x.id === V.score.id); if (l && l !== V.score) { l.title = V.score.title; l.composer = V.score.composer; } }
   $('#scoreTitle').textContent = V.score.title;
   db.put('scores', V.score);
   // a notebook carries its title on the cover and the first page
-  if (V.file && V.file.kind === 'paper' && V.file.title !== V.score.title) {
+  if (typing !== true && V.file && V.file.kind === 'paper' && V.file.title !== V.score.title) {
     V.file.title = V.score.title; db.put('files', V.file);
     openDocument(V.file).then((d) => { V.base = d; return reopenDoc(); }).catch(() => {});
   }
 }
 $('#metaTitle').addEventListener('change', saveScoreMeta);
+// (kept while you type too: on the iPad the field is not always told it was left)
+{ let t = 0; for (const id of ['#metaTitle', '#metaComposer']) $(id).addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { if (openPanel === 'settings') saveScoreMeta(true); }, 700); }); }
 $('#metaComposer').addEventListener('change', saveScoreMeta);
 // one choice for how pages sit on the screen
 const VIEW_HINT = { auto: 'Two pages side by side when the iPad is sideways, one when upright.', one: 'Always one page, as big as possible.', turn: 'The page turned sideways to fill the screen while the iPad is upright.' };
@@ -5419,6 +5433,8 @@ const phoneAnswers = new Map();
 // (the same question come twice at once, nearby and over the internet: answered by the same work)
 const phoneLive = new Map();
 function answerPhone(q) {
+  if (q && q.what === 'src') return srcForPhone(q.id);
+  if (q && q.what === 'ink') return inkForPhone(q.id, q.i, q.w);
   if (q && (q.what === 'page' || q.what === 'scoreinfo' || q.what === 'lines')) {
     const k = q.what + ':' + q.id + ':' + (q.i ?? '');
     if (phoneLive.has(k)) return phoneLive.get(k);
@@ -5463,7 +5479,52 @@ function phoneJob(fn) { const job = PH.busy.then(fn); PH.busy = job.catch(() => 
 function infoForPhone(id) {
   return phoneJob(async () => {
     const P = await phoneDoc(id);
-    return { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
+    const out = { v: 2, id, n: Math.min(P.doc.pages, 2000), stamp: phoneStamp(id) };
+    // The score's own PDF, offered whole: sent in one go over the direct link, the iPhone draws its
+    // pages (and finds its lines for Play) itself, many times quicker than page by page from here.
+    // (a PDF with nothing added from other files; the markings come apart, a clear layer a page)
+    try {
+      const sc = P.sc, file = await db.get('files', sc.fileId);
+      const size = file && file.data ? (file.data.byteLength ?? file.data.size ?? 0) : 0;
+      if (file && file.kind === 'pdf' && size > 0 && !(sc.more && sc.more.length) && P.doc.pages <= 600) {
+        const ink = [];
+        for (let i = 0; i < P.doc.pages; i++) {
+          const ik = P.doc.composite && P.doc.composite(i) ? `${P.doc.orig(i)}+${P.doc.gluedFrom(i)}` : P.doc.orig(i);
+          const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
+          if (items.length) ink.push(i);
+        }
+        out.src = { kind: 'pdf', size, ink, struct: { pageMap: sc.pageMap || null, cuts: sc.cuts || null, glue: sc.glue || null, rot: sc.rot && Object.keys(sc.rot).length ? sc.rot : null, sizes: sc.sizes || null } };
+      }
+    } catch (e) { console.warn('src for phone', e); }
+    return out;
+  });
+}
+// the score's own file, sent whole to the iPhone (answered when it has arrived there)
+async function srcForPhone(id) {
+  if (!(window.standCaps && window.standCaps.peer)) throw new Error('nolink');
+  const sc0 = scores.find((x) => x.id === id); if (!sc0) throw new Error('none');
+  const file = await db.get('files', sc0.fileId); if (!file || file.kind !== 'pdf' || !file.data) throw new Error('none');
+  const blob = file.data instanceof Blob ? file.data : new Blob([file.data], { type: 'application/pdf' });
+  nlog('iPad: sending a score to the iPhone as a file (' + Math.round(blob.size / 1024) + ' KB)');
+  const t0 = Date.now();
+  await directSendFile(blob, { kind: 'scoresrc', sid: id, stamp: phoneStamp(id) });   // (sid: the app sets "id" to the transfer's own)
+  nlog('iPad: the file arrived (' + ((Date.now() - t0) / 1000).toFixed(1) + ' s)');
+  return { v: 1, id, ok: true, size: blob.size };
+}
+// the markings of one page, a clear picture as wide as asked (for Play, sharp)
+function inkForPhone(id, i, w) {
+  return phoneJob(async () => {
+    const P = await phoneDoc(id), doc = P.doc;
+    if (!(i >= 0 && i < doc.pages)) throw new Error('none');
+    const [pw, ph] = doc.sizes[i], W = Math.max(600, Math.min(2400, +w || 1170)), H = Math.round((W * ph) / pw);
+    const ik = doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i);
+    const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
+    if (!items.length) return { v: 1, id, i, ink: null };
+    await preloadAssets(items); await preloadMasks(items);
+    const k = document.createElement('canvas'); k.width = W; k.height = H; const g = k.getContext('2d');
+    for (const it of items) drawItem(g, it, W, H, false);
+    const ink = await canvasData(k, 'image/png'); k.width = k.height = 0;
+    return { v: 1, id, i, w: W, h: H, ink };
   });
 }
 // The iPhone's Play: the lines of music of a page (staves only, no titles or text), each drawn on
@@ -5480,7 +5541,7 @@ function plFind(canvas) {
         PLW.onerror = () => { for (const w of plWait.values()) { clearTimeout(w.t); w.res(null); } plWait.clear(); try { PLW.terminate(); } catch {} PLW = null; };
       }
       const id = ++plSeq; const t = setTimeout(() => { plWait.delete(id); try { PLW.terminate(); } catch {} PLW = null; res(null); }, 20000);
-      plWait.set(id, { res, t }); PLW.postMessage({ id, page: bmp }, [bmp]);
+      plWait.set(id, { res, t }); PLW.postMessage({ id, page: bmp, light: true }, [bmp]);
     } catch { res(null); }
   }), () => null);
 }
@@ -5508,7 +5569,7 @@ function linesForPhone(id, i) {
       const g0 = c0.getContext('2d'); g0.imageSmoothingQuality = 'high'; g0.drawImage(c, 0, 0, c0.width, c0.height);
       let found = PL_BROKEN ? null : await plFind(c0);
       // (no thread for it here: read on the stand itself, a page at a time, as Capture does)
-      if (found === null) { PL_BROKEN = true; try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0)); } catch { found = []; } }
+      if (found === null) { PL_BROKEN = true; try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0, false, false, { stavesOnly: true })); } catch { found = []; } }
       c0.width = c0.height = 0;
       lines = cleanLines(found);
       PLINES.set(lk, lines); db.put('files', { id: 'plines4:' + lk, kind: 'plines', lines }).catch(() => {});

@@ -8,8 +8,8 @@
 // Pages come as pictures, the markings as a clear layer on top: shown or hidden with one switch.
 // Nothing can be changed here.
 import { db, getSetting, setSetting } from './db.js';
-import { nlog } from './link.js';
-import { looksBlank } from './score.js';
+import { nlog, directOnFile } from './link.js';
+import { looksBlank, openDocument, mapDoc } from './score.js';
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 
 const $ = (s) => document.querySelector(s);
@@ -131,6 +131,13 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     halt();
     if (!info || !(info.n > 0)) throw new Error('no');
     const stamp = info.stamp ?? s.stamp;
+    // the score's own file, in one go (the iPad offers it): its pages are drawn here
+    if (info.src && info.src.kind === 'pdf' && fileLinkOk()) {
+      try { return await fetchSrc(s, info, stamp, onPage, halt); } catch (e) {
+        if (e === CANCEL) throw e;
+        nlog('iPhone: the file did not come (' + String((e && e.message) || e).slice(0, 60) + '), page by page instead');
+      }
+    }
     // (the next page is asked for while this one comes and is kept: the iPad draws it meanwhile, so
     // the pages come one after another with no waiting in between; never more than two at once)
     const have = [];
@@ -153,7 +160,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       await new Promise((r) => setTimeout(r, 40));
     }
     halt();
-    const copy = { id: copyId(s.id), kind: 'ipadcopy', stamp, title: s.title, n: info.n, at: Date.now() };
+    const copy = { id: copyId(s.id), kind: 'ipadcopy', stamp, title: s.title, n: info.n, at: Date.now(), ...(info.src ? {} : { noSrc: true }) };
     await db.put('files', copy);
     // (the score being read here goes on in its new version, whose pages are all here now)
     if (PS.view && PS.view.copy && PS.view.copy.id === copy.id) { PS.view.copy = copy; PS.view.i = Math.min(PS.view.i, copy.n - 1); }
@@ -162,20 +169,216 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     for (const k of (await db.keys('files').catch(() => [])).map(String)) if (k.startsWith(copyId(s.id) + ':') && !k.startsWith(mine)) await db.del('files', k).catch(() => {});
     return copy;
   }
+  // ---------- the score as its own file ----------
+  // (the iPad's PDF, kept here with the order of its pages, cuts and turns, and the markings of the
+  // pages that have some as clear pictures; the pages are drawn here, once, and kept)
+  const fileLinkOk = () => !!(window.standCaps && window.standCaps.peer && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standPeer);
+  const verKey = (id, stamp) => copyId(id) + ':s' + stamp + ':';
+  const srcKey = (id, stamp) => verKey(id, stamp) + 'src';
+  const inkKey = (id, stamp, i) => verKey(id, stamp) + 'ink' + i;
+  function waitFile(id, stamp, ms) {
+    let off = null, timer = 0;
+    const p = new Promise((res, rej) => {
+      off = directOnFile((meta, path, err) => {
+        if (meta.kind !== 'scoresrc' || meta.sid !== id || String(meta.stamp) !== String(stamp)) return;
+        if (err || !path) { rej(new Error(err || 'failed')); return; }
+        res(path);
+      });
+      timer = setTimeout(() => rej(new Error('timeout')), ms);
+    });
+    p.finally(() => { clearTimeout(timer); if (off) off(); }).catch(() => {});
+    return p;
+  }
+  async function fetchSrc(s, info, stamp, onPage, halt) {
+    const t0 = Date.now();
+    let have = await db.get('files', srcKey(s.id, stamp)).catch(() => null);
+    if (!(have && have.data && (have.data.byteLength || have.data.size))) {
+      if (onPage) onPage(0, info.n);
+      const arrived = waitFile(s.id, stamp, 180000);
+      await askIpad({ what: 'src', id: s.id }, 180000);
+      const path = await arrived;
+      halt();
+      const buf = await (await fetch(path)).arrayBuffer();
+      try { window.webkit.messageHandlers.standDone.postMessage({ path }); } catch {}
+      if (!buf.byteLength || (info.src.size && buf.byteLength !== info.src.size)) throw new Error('size');
+      // (it must open: a file that does not is never kept)
+      const test = await openDocument({ id: verKey(s.id, stamp) + 'src', kind: 'pdf', data: buf }, null);
+      try { test.destroy(); } catch {}
+      await db.put('files', { id: srcKey(s.id, stamp), kind: 'pdf', data: buf });
+      have = true;
+    }
+    halt();
+    // the markings, page by page (only the pages that have some)
+    const inkP = info.src.ink || [];
+    for (let k = 0; k < inkP.length; k++) {
+      const i = inkP[k];
+      if (await db.get('files', inkKey(s.id, stamp, i)).catch(() => null)) continue;
+      const d = await askIpad({ what: 'ink', id: s.id, i, w: 2400 }, 30000);
+      halt();
+      await db.put('files', { id: inkKey(s.id, stamp, i), kind: 'ipadink', ink: d && d.ink ? await toBlob(d.ink) : null });
+      if (onPage) onPage(Math.round(((k + 1) / inkP.length) * info.n), info.n);
+    }
+    halt();
+    const copy = { id: copyId(s.id), kind: 'ipadcopy', mode: 'pdf', stamp, title: s.title, n: info.n, struct: info.src.struct || {}, ink: inkP, at: Date.now() };
+    await db.put('files', copy);
+    nlog('iPhone: a score came as a file (' + info.n + ' pages, ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s)');
+    if (PS.view && PS.view.copy && PS.view.copy.id === copy.id) { PS.view.copy = copy; PS.view.i = Math.min(PS.view.i, copy.n - 1); }
+    const mine = verKey(s.id, stamp);
+    for (const k of (await db.keys('files').catch(() => [])).map(String)) if (k.startsWith(copyId(s.id) + ':') && !k.startsWith(mine)) await db.del('files', k).catch(() => {});
+    if (onPage) onPage(info.n, info.n);
+    prepareSoon(copy);
+    return copy;
+  }
+  // The PDF open here (one score at a time; closed when not used for a while)
+  const PDOC = { key: null, p: null, t: 0, timer: 0 };
+  function pdfClose() { const p = PDOC.p; clearInterval(PDOC.timer); PDOC.key = null; PDOC.p = null; if (p) p.then((d) => { try { d.base.destroy(); } catch {} }, () => {}); }
+  function pdfDoc(copy) {
+    const key = copy.id + ':' + copy.stamp;
+    PDOC.t = Date.now();
+    if (PDOC.key === key && PDOC.p) return PDOC.p;
+    pdfClose();
+    PDOC.key = key;
+    const p = PDOC.p = (async () => {
+      const src = await db.get('files', srcKey(copy.id.slice(9), copy.stamp));
+      if (!src || !src.data) throw new Error('nosrc');
+      const st = copy.struct || {};
+      const data = src.data instanceof Blob ? await src.data.arrayBuffer() : src.data;
+      const base = await openDocument({ id: verKey(copy.id.slice(9), copy.stamp) + 'src', kind: 'pdf', data, ...(st.rot ? { rot: st.rot } : {}) }, st.sizes || null);
+      return { base, doc: mapDoc(base, st.pageMap || null, st.cuts || null, st.glue || null) };
+    })();
+    p.catch(() => { if (PDOC.p === p) { PDOC.key = null; PDOC.p = null; } });
+    PDOC.timer = setInterval(() => { if (Date.now() - PDOC.t > 40000 && !JQ.running) pdfClose(); }, 10000);
+    return p;
+  }
+  // All drawing from the PDF one job at a time (memory), the ones for what is on show first:
+  // priority 0 Play now, 1 the page being read, 2 ahead of Play, 5 made ready in the background.
+  const JQ = { list: [], running: false };
+  function job(pri, key, fn) {
+    const had = JQ.list.find((j) => j.key === key);
+    if (had) { had.pri = Math.min(had.pri, pri); return had.p; }
+    let res, rej; const p = new Promise((a, b) => { res = a; rej = b; });
+    JQ.list.push({ pri, key, fn, res, rej, p, at: JQ.seq = (JQ.seq || 0) + 1 });
+    if (!JQ.running) runJobs();
+    return p;
+  }
+  async function runJobs() {
+    JQ.running = true;
+    while (JQ.list.length) {
+      JQ.list.sort((a, b) => a.pri - b.pri || a.at - b.at);
+      const j = JQ.list.shift();
+      try { j.res(await j.fn()); } catch (e) { j.rej(e); }
+      PDOC.t = Date.now();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    JQ.running = false;
+  }
+  const canvasBlob = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+  // a page of a PDF copy, drawn here at the iPhone's size and kept (the next time it opens at once)
+  function pdfPage(copy, i, pri = 1) {
+    const id = copy.id.slice(9);
+    return job(pri, 'pg:' + copy.id + ':' + copy.stamp + ':' + i, async () => {
+      const kept = await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null);
+      if (kept && kept.img) return kept;
+      const { doc } = await pdfDoc(copy);
+      if (!(i >= 0 && i < doc.pages)) return null;
+      const [pw, ph] = doc.sizes[i], W = 1242, H = Math.round((W * ph) / pw);
+      const c = document.createElement('canvas');
+      try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return null; }
+      const img = await canvasBlob(c, 'image/jpeg', 0.86); c.width = c.height = 0;
+      if (!img) return null;
+      const ik = (copy.ink || []).includes(i) ? await db.get('files', inkKey(id, copy.stamp, i)).catch(() => null) : null;
+      const rec = { id: pageKey(id, i, copy.stamp), kind: 'ipadpage', stamp: copy.stamp, w: W, h: H, img, ink: (ik && ik.ink) || null };
+      await db.put('files', rec).catch(() => {});
+      return rec;
+    });
+  }
+  // Play's lines of a page of a PDF copy: the page drawn big (sharp on the iPhone held sideways),
+  // its lines found on a smaller copy, each cut out as the iPad does it; kept.
+  function pdfPlay(copy, i, pri = 2) {
+    const id = copy.id.slice(9);
+    return job(pri, 'pl:' + copy.id + ':' + copy.stamp + ':' + i, async () => {
+      const kept = await db.get('files', playKey(copy, i)).catch(() => null);
+      if (kept && kept.kind === 'pdfplay' && Array.isArray(kept.lines)) return kept.lines;
+      const T0 = performance.now();
+      const { doc } = await pdfDoc(copy);
+      if (!(i >= 0 && i < doc.pages)) return [];
+      const [pw, ph] = doc.sizes[i], W = 2400, H = Math.round((W * ph) / pw);
+      const c = document.createElement('canvas');
+      try { await doc.render(i, c, W, H); } catch { c.width = c.height = 0; return null; }
+      const T1 = performance.now();
+      const W0 = 1700, c0 = document.createElement('canvas'); c0.width = W0; c0.height = Math.round((W0 * ph) / pw);
+      const g0 = c0.getContext('2d'); g0.imageSmoothingQuality = 'high'; g0.drawImage(c, 0, 0, c0.width, c0.height);
+      let found = null;
+      if (!PP.threadBroken) { try { found = await linesInThread(await createImageBitmap(c0)); } catch {} }
+      if (found === null) {
+        PP.threadBroken = true;
+        try { const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]); found = linesOf(await analyse(c0, false, false, { stavesOnly: true })); } catch { found = []; }
+      }
+      c0.width = c0.height = 0;
+      const T2 = performance.now();
+      const Ls = cleanLines(found || []);
+      const ikRec = (copy.ink || []).includes(i) ? await db.get('files', inkKey(id, copy.stamp, i)).catch(() => null) : null;
+      const inkB = ikRec && ikRec.ink ? await createImageBitmap(ikRec.ink).catch(() => null) : null;
+      const out = [];
+      const pg = c.getContext('2d', { willReadFrequently: true });
+      const edges = Ls.length ? cleanEdges(pg, W, H, Ls) : [];
+      for (let li = 0; li < Ls.length; li++) {
+        const L = Ls[li], E = edges[li];
+        const sx = E.sx, sy = E.a, sw = E.sw, sh = Math.max(1, E.b - E.a);
+        const lc = document.createElement('canvas'); lc.width = Math.round(sw); lc.height = Math.round(sh);
+        const lg = lc.getContext('2d', { alpha: false, willReadFrequently: true }); lg.drawImage(c, sx, sy, sw, sh, 0, 0, lc.width, lc.height);
+        try { eraseCrossings(lg, lc.width, lc.height, pg, sx, sy, H); } catch {}
+        // (a scan's grey paper made white, its ink kept)
+        try {
+          const id2 = lg.getImageData(0, 0, lc.width, lc.height), d = id2.data, hist = new Uint32Array(256);
+          for (let q = 0; q < d.length; q += 16) hist[(d[q] * 0.3 + d[q + 1] * 0.59 + d[q + 2] * 0.11) | 0]++;
+          let tot = 0; for (const x of hist) tot += x; let acc = 0, paper = 255; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > tot * 0.4) { paper = v; break; } }
+          if (paper < 252 && paper > 120) { const k = 255 / paper; for (let q = 0; q < d.length; q += 4) { d[q] = Math.min(255, d[q] * k); d[q + 1] = Math.min(255, d[q + 1] * k); d[q + 2] = Math.min(255, d[q + 2] * k); } lg.putImageData(id2, 0, 0); }
+        } catch {}
+        const img = await canvasBlob(lc, 'image/jpeg', 0.84);
+        let ink = null;
+        if (inkB) { const kc = document.createElement('canvas'); kc.width = lc.width; kc.height = lc.height; kc.getContext('2d').drawImage(inkB, (sx / W) * inkB.width, (sy / H) * inkB.height, (sw / W) * inkB.width, (sh / H) * inkB.height, 0, 0, kc.width, kc.height); ink = await canvasBlob(kc, 'image/png'); kc.width = kc.height = 0; }
+        lc.width = lc.height = 0;
+        out.push({ w: Math.round(sw), h: Math.round(sh), sx, pw: W, ...(L.top !== undefined ? { st: L.top * H - sy, sb: L.bot * H - sy } : {}), img, ink });
+      }
+      c.width = c.height = 0;
+      try { inkB && inkB.close(); } catch {}
+      await db.put('files', { id: playKey(copy, i), kind: 'pdfplay', lines: out }).catch(() => {});
+      (window.__ppT = window.__ppT || []).push([i, Math.round(T1 - T0), Math.round(T2 - T1), Math.round(performance.now() - T2)]);
+      return out;
+    });
+  }
+  // a score that came as a file: every page and its lines made ready in the background, so the
+  // score opens and Play goes on at once (the first pages first)
+  const PREP = new Set();
+  function prepareSoon(copy) {
+    const k = copy.id + ':' + copy.stamp; if (PREP.has(k)) return; PREP.add(k);
+    (async () => {
+      for (let i = 0; i < copy.n; i++) { await pdfPage(copy, i, 5).catch(() => {}); await pdfPlay(copy, i, 5).catch(() => {}); }
+      nlog('iPhone: a score is ready to play (' + copy.n + ' pages)');
+    })().finally(() => PREP.delete(k));
+  }
   // every score not yet on the iPhone (or changed on the iPad since), one after another
   async function syncAll() {
     if (PS.sync) { PS.again = true; return; }
     if (!PS.list) return;
     PS.again = false;
     const have = await haveCopies();
-    const want = PS.list.filter((s) => !PS.removed.has(s.id) && have.get(s.id) !== s.stamp);
+    // (a score kept here as page pictures, from before: fetched again once as its own file, when the
+    // iPad offers it, so Play is quick on it too; one the iPad cannot send that way stays as it is)
+    const upgrade = new Set();
+    if (fileLinkOk()) for (const k of (await db.keys('files').catch(() => [])).map(String).filter((k) => /^ipadcopy:[^:]+$/.test(k))) {
+      const f = await db.get('files', k).catch(() => null);
+      if (f && f.mode !== 'pdf' && !f.noSrc) upgrade.add(k.slice(9));
+    }
+    const want = PS.list.filter((s) => !PS.removed.has(s.id) && (have.get(s.id) !== s.stamp || upgrade.has(s.id)));
     if (!want.length) return;
     PS.sync = { n: want.length, done: 0, failed: 0 }; sub(); nlog('iPhone: fetching ' + want.length + ' score(s) from the iPad');
     // (leaving the app for a moment does not stop it: iOS gives the newer apps some time)
     try { window.__nativeBusy && window.__nativeBusy(true, 'download'); } catch {}
     for (const s of want) {
       if (PS.removed.has(s.id)) { PS.sync.done++; continue; }
-      try { await fetchScore(s, (k, n) => { PS.sync.page = `${s.title} · page ${k} of ${n}`; sub(); }); } catch (e) {
+      try { await fetchScore(s, (k, n) => { PS.sync.page = k ? `${s.title} · page ${k} of ${n}` : s.title; sub(); }); } catch (e) {
         if (e === CANCEL) { PS.sync.done++; continue; }
         if (/QuotaExceeded|quota/i.test(String((e && (e.name + ' ' + e.message)) || ''))) { PS.sync.full = true; break; }
         // (the iPad is short of memory: stop here and come back in a few minutes, never insist)
@@ -360,7 +563,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (!copy || copy.stamp !== s.stamp) {
       const old = copy;
       $('#phsLoading').hidden = false; $('#phsLoadingText').textContent = copy ? 'Getting the latest from your iPad…' : 'Getting it from your iPad…';
-      try { copy = await fetchScore(s, (k, n) => { if (!me.stop) $('#phsLoadingText').textContent = `Getting page ${k} of ${n}…`; }, () => me.stop); } catch (e) {
+      try { copy = await fetchScore(s, (k, n) => { if (!me.stop) $('#phsLoadingText').textContent = k ? `Getting page ${k} of ${n}…` : 'Getting it from your iPad…'; }, () => me.stop); } catch (e) {
         copy = old;
         if (e === CANCEL || me.stop) { if (opening === me) { opening = null; $('#phsLoading').hidden = true; } if (!copy || me.stop) return; }
         if (!copy) {
@@ -382,12 +585,14 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   function showScore(s, copy) {
     PS.view = { s, copy, i: 0 };
     viewer.hidden = false; $('#phvTitle').textContent = s.title; if (window.__sendFace) window.__sendFace();
+    if (copy && copy.mode === 'pdf') prepareSoon(copy);
     $('#phvInk').hidden = false;
     drawPage();
   }
   const countOf = (copy) => copy.n || (copy.pages ? copy.pages.length : 0);
   const pageOf = async (copy, i) => {
     if (copy.pages) return copy.pages[i];
+    if (copy.mode === 'pdf') return pdfPage(copy, i, PP.open ? 2 : 1).catch(() => null);
     const id = copy.id.slice(9);
     return (await db.get('files', pageKey(id, i, copy.stamp)).catch(() => null)) || db.get('files', oldPageKey(id, i)).catch(() => null);
   };
@@ -407,6 +612,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       img.onload = null;
       if (PS.view !== v || v.i !== i0 || !looksBlank(img)) return;
       const id = v.copy.id.slice(9);
+      // (drawn here from the PDF: drawn again the next time, nothing to ask the iPad for)
+      if (v.copy.mode === 'pdf') { await db.del('files', pageKey(id, i0, v.copy.stamp)).catch(() => {}); return; }
       // (asked again once already: the page really is empty)
       const once = (() => { try { return JSON.parse(localStorage.getItem('standBlankOnce') || '[]'); } catch { return []; } })();
       const bk = id + ':' + i0; if (once.includes(bk)) return;
@@ -519,7 +726,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
       const id = ++lwSeq2;
       const t = setTimeout(() => { lwWait2.delete(id); try { LW2.terminate(); } catch {} LW2 = null; res(null); }, 15000);
       lwWait2.set(id, { res, t });
-      LW2.postMessage({ id, page: bmp }, [bmp]);
+      LW2.postMessage({ id, page: bmp, light: true }, [bmp]);
     } catch { res(null); }
   });
   // (away from the iPad: the lines found here, on the page picture)
@@ -535,7 +742,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
         const [{ analyse }, { linesOf }] = await Promise.all([import('./omr.js'), import('./picker-lines.js')]);
         const bmp = await createImageBitmap(p.img); const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
         c.getContext('2d').drawImage(bmp, 0, 0); try { bmp.close(); } catch {}
-        found = linesOf(await analyse(c)); c.width = c.height = 0;
+        found = linesOf(await analyse(c, false, false, { stavesOnly: true })); c.width = c.height = 0;
       } catch { found = []; }
     }
     // (a page with no music on it, a title page, is passed over)
@@ -556,6 +763,8 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (S.pages.has(i)) return S.pages.get(i);
     if (S.loading.has(i)) return S.loading.get(i);
     const job = (async () => {
+      // (a score that came as a file: its lines are made here, from the PDF, sharp; no iPad needed)
+      if (copy.mode === 'pdf') return pdfPlay(copy, i, PP.open && Math.abs(i - PP.p) <= 1 ? 0 : 2);
       const kept = await db.get('files', playKey(copy, i)).catch(() => null);
       if (kept && Array.isArray(kept.lines) && kept.kind !== 'localplay') return kept.lines;
       // from the iPad, sharp (busy a moment: asked again); lines made here before are kept, and
@@ -683,10 +892,12 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   const lineOf = (at) => (at && PP.st ? (PP.st.pages.get(at.p) || [])[at.k] : null);
   // All the lines on the screen at one size (the size the widest takes across), each in its own
   // place, its staves in the middle of it; what reaches beyond its place is not drawn there.
-  async function drawLines(cv, ats) {
+  async function drawLines(cv, ats, still = () => true) {
     const dpr = Math.min(3, devicePixelRatio || 1), W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
     const imgs = await Promise.all(ats.map((at) => (at ? bitmapOf(at, 'img') : null)));
     const inks = await Promise.all(ats.map((at) => (at && PS.ink ? bitmapOf(at, 'ink') : null)));
+    // (a newer screen asked for meanwhile: this one is never drawn over it)
+    if (!still()) return;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
     const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
     const Ls = ats.map(lineOf), n = ats.length, Hs = H / n;
@@ -728,13 +939,17 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     // (on a line of the score's music: the first one from here on)
     const L0 = await linesSure(v.copy, a.p);
     if (!(a.k < L0.length && goodOf(S)(L0[a.k]))) { const n = await after(v.copy, a.p, a.k, 0); if (n) a = n; }
-    a = snapped(a); PP.p = a.p; PP.k = a.k;
+    // (the screens set out from the start of the score only when Play opens or 2/3 is changed: after
+    // that each screen follows the one before, so a line never stays behind or comes twice)
+    if (PP.snap) { a = snapped(a); PP.snap = false; }
+    PP.p = a.p; PP.k = a.k;
     const ats = [a]; for (let q = 1; q < ppN(); q++) ats.push(ats[q - 1] ? await after(v.copy, ats[q - 1].p, ats[q - 1].k, 1) : null);
     if (tok !== drawTok || PP.st !== S) return;
-    await drawLines($('#phpC'), ats);
+    await drawLines($('#phpC'), ats, () => tok === drawTok && PP.st === S);
     if (tok !== drawTok || PP.st !== S) return;
     clearTimeout(busyT); $('#phpBusy').hidden = true;
     $('#phpWhere').textContent = `Page ${a.p + 1} of ${countOf(v.copy)}`;
+    window.__ppShown = ats.map((x) => (x ? x.p + ':' + x.k : null));   // (for the tests: what is on the screen)
     for (const b of document.querySelectorAll('#phpN button')) b.classList.toggle('on', +b.dataset.n === ppN());
     v.i = a.p;
   }
@@ -746,10 +961,17 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     for (let i = 0; i < PP.p; i++) order.push(i);
     for (const i of order) { if (!PP.open || PP.st !== S) return; if (!S.pages.has(i)) await linesSure(S.copy, i).catch(() => {}); }
   }
-  async function ppStep(d) {
+  // (taps one after another, each from where the last one went: never two from the same place)
+  function ppStep(d) {
+    if ((PP.waiting || 0) >= 3) return PP.chain;
+    PP.waiting = (PP.waiting || 0) + 1;
+    PP.chain = (PP.chain || Promise.resolve()).then(() => ppStep1(d)).catch(() => {}).finally(() => { PP.waiting--; });
+    return PP.chain;
+  }
+  async function ppStep1(d) {
     const v = PS.view; if (!v || !PP.open || !PP.st) return;
     const n = await after(v.copy, PP.p, PP.k, d * ppN());
-    if (!n) return;
+    if (!n || !PP.open) return;
     PP.p = n.p; PP.k = n.k; ppDraw(); ppQuiet();
   }
   const ppQuiet = () => { const el = $('#phPlay'); el.classList.remove('quiet'); clearTimeout(PP.quietT); PP.quietT = setTimeout(() => el.classList.add('quiet'), 2500); };
@@ -757,7 +979,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   const dropState = () => { const S = PP.st; PP.st = null; if (S) for (const o of S.bmp.values()) { try { o && o.close(); } catch {} } };
   async function ppOpen() {
     const v = PS.view; if (!v) return;
-    PP.open = true; PP.p = v.i; PP.k = 0;
+    PP.open = true; PP.p = v.i; PP.k = 0; PP.snap = true;
     // (another score, or another version of it: nothing of the one before is kept)
     if (!PP.st || PP.st.key !== v.copy.id + ':' + v.copy.stamp || PP.st.copy !== v.copy) { dropState(); PP.st = newState(v.copy); }
     const g = $('#phpC').getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, $('#phpC').width, $('#phpC').height);
@@ -775,7 +997,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   }
   $('#phvPlay').addEventListener('click', ppOpen);
   $('#phpClose').addEventListener('click', (e) => { e.stopPropagation(); ppClose(); });
-  for (const b of document.querySelectorAll('#phpN button')) b.addEventListener('click', (e) => { e.stopPropagation(); try { localStorage.setItem('standPlayN', b.dataset.n); } catch {} ppDraw(); ppQuiet(); });
+  for (const b of document.querySelectorAll('#phpN button')) b.addEventListener('click', (e) => { e.stopPropagation(); try { localStorage.setItem('standPlayN', b.dataset.n); } catch {} PP.snap = true; ppDraw(); ppQuiet(); });
   {
     const pl = $('#phPlay'); let tx = null, ty = 0;
     pl.addEventListener('pointerdown', (e) => { if (e.target.closest('.php-close, .php-n')) { tx = null; return; } tx = e.clientX; ty = e.clientY; });

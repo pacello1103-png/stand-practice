@@ -5,11 +5,12 @@
 self.document = { createElement: () => new OffscreenCanvas(1, 1) };
 let omr = null, lib = null;
 self.onmessage = async (e) => {
-  const { id, page } = e.data || {};
+  const { id, page, light } = e.data || {};
   try {
     omr = omr || await import('./omr.js');
     lib = lib || await import('./picker-lines.js');
-    const A = await omr.analyse(page);
+    // (light: only the staves and their systems, for Play; Capture reads everything)
+    const A = await omr.analyse(page, false, false, light ? { stavesOnly: true } : {});
     self.postMessage({ id, lines: lib.linesOf(A) });
   } catch (err) {
     self.postMessage({ id, error: String((err && err.message) || err) });
