@@ -391,7 +391,9 @@ const NOT_TITLE = /^(((solo\s+)?(violoncello|cello|violino|violin|viola|contraba
 const looksLikeName = (s) => /^(\p{Lu}[\p{L}'’.-]*\s+){0,3}\p{Lu}[\p{L}'’-]+$/u.test(s) && !/\d/.test(s) && s.length < 36;
 const GENERIC = /^(sonat[ae]n?|sonatin[ae]|suite|concert[oe]?|konzert|etude|étude|studie|study|caprice|capriccio|fantasi[ae]|fantaisie|nocturne|prelude|prélude|präludium|romance|romanze|serenade|sérénade|variations?|variationen|partita|trio|quartet|quartett|duo|rondo|scherzo|menuet|minuet|waltz|valse|walzer|march|marsch|marche|élégie|elegie|elegy|air|aria|lied|song|dance|danse|tanz)$/i;
 const tidy = (s) => s.replace(/\s+/g, ' ').replace(/^[\s.,:;-]+|[\s.,:;-]+$/g, '').trim();
-const titleCase = (s) => (s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()) : s);
+// (a line all in capitals in ordinary letters; catalogue letters and Roman numbers stay capitals: "SONATA IV, BWV 1017" → "Sonata IV, BWV 1017")
+const titleCase = (s) => (s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase())
+  .replace(/\b(Bwv|Hwv|Twv|Rv|Kv|Hob|Woo|Sz)\b/g, (w) => w.toUpperCase()).replace(/\b(I{2,3}|Iv|Vi{0,3}|Ix|Xi{0,3}|Xiv|Xv)\b\.?/g, (w) => w.toUpperCase()) : s);
 
 function findComposer(text, composers) {
   const f = ' ' + fold(text) + ' ';
@@ -405,12 +407,12 @@ function findComposer(text, composers) {
   return best;
 }
 
-export async function readScoreInfo(doc, fileName, composers) {
+export async function readScoreInfo(doc, fileName, composers, opts = {}) {
   const out = { title: '', composer: '' };
-  let lines = [];
+  let lines = [], meta = null;
   if (doc.pdf) {
     try {
-      const meta = await doc.pdf.getMetadata().catch(() => null);
+      meta = await doc.pdf.getMetadata().catch(() => null);
       const page = await doc.pdf.getPage(1);
       const vp = page.getViewport({ scale: 1 });
       const tc = await page.getTextContent();
@@ -429,6 +431,15 @@ export async function readScoreInfo(doc, fileName, composers) {
         for (const p of l.parts) { text += (text && p.x - lastX > p.size * 0.25 ? ' ' : '') + p.s; lastX = p.x + p.s.length * p.size * 0.5; }
         return { text: tidy(text), y: l.y, size: l.size, x: l.parts[0].x, right: l.parts[l.parts.length - 1].x, H: vp.height, W: vp.width };
       }).filter((l) => l.text.length > 1);
+    } catch (e) { console.warn('read info', e); lines = []; }
+  }
+  // A scan or photo (no text in the file): the top of the first page is read as a picture, the way
+  // the words of a printed page are read, and the same rules find the title and the composer.
+  if (!lines.filter((l) => l.y < l.H * 0.45 && /\p{L}{3}/u.test(l.text)).length && opts.ocr) {
+    try { lines = (await opts.ocr(doc)) || []; } catch (e) { console.warn('read info (picture)', e); lines = []; }
+  }
+  if (lines.length || meta) {
+    try {
       let topLines = lines.filter((l) => l.y < l.H * 0.42 && !JUNK.test(l.text) && !NOT_TITLE.test(l.text) && /\p{L}{2}/u.test(l.text) && l.text.length < 90);
       // a tempo mark is not the title, unless it is clearly the biggest words on the page ("Allegro appassionato")
       { const mx = Math.max(0, ...topLines.map((l) => l.size)); topLines = topLines.filter((l) => !TEMPO.test(l.text) || l.size >= mx * 0.98 && topLines.filter((o) => o.size >= mx * 0.8).length === 1); }
@@ -441,7 +452,9 @@ export async function readScoreInfo(doc, fileName, composers) {
         let big = bySize[0];
         const nc = nameOnly(big);
         if (nc) { out.composer = nc.n; topLines = topLines.filter((l) => l !== big); big = bySize.find((l) => topLines.includes(l) && !nameOnly(l)); }
-        if (big && (big.size >= median * 1.15 || topLines.length <= 3 || nc)) {
+        // (or, the biggest words being also the first on the page: a title set only a little bigger)
+        const first = big && topLines.every((l) => l.y >= big.y);
+        if (big && (big.size >= median * 1.15 || topLines.length <= 3 || nc || (first && big.size >= median * 1.0))) {
           out.title = titleCase(big.text);
           // "Sonata" alone: the line under it says which ("No. 2 in G minor, Op. 5")
           const nearBelow = (l) => l !== big && l.y > big.y && l.y - big.y < big.size * 3 && l.size >= big.size * 0.45 && l.text.length < 60 && !nameOnly(l);

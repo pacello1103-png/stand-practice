@@ -262,7 +262,7 @@ const TABS = { tabScore1: 'Full scores', tabScore2: 'Parts', tabScore3: 'Vocal s
 const workMem = new Map();
 export function workFiles(title) {
   if (!workMem.has(title)) {
-    const p = cached('work:' + title, 10 * DAY, async () => {
+    const p = cached('work2:' + title, 10 * DAY, async () => {   // (work2: with what the work is for)
       const d = await jsonp({ action: 'parse', page: title, prop: 'text', redirects: '1' }, 25000);
       if (!d.parse) throw new Error('missing');
       return { title: d.parse.title, ...parseWorkHtml(d.parse.text['*']) };
@@ -309,27 +309,74 @@ export function parseWorkHtml(html) {
       }
     }
   }
-  return { files };
+  // what the work is for ("cello, piano"), from the page's general information
+  let instr = '';
+  for (const th of doc.querySelectorAll('th')) if (/^\s*instrumentation\s*$/i.test(th.textContent) && !th.closest('.we')) { const td = th.parentElement && th.parentElement.querySelector('td'); if (td) { instr = td.textContent.replace(/\s+/g, ' ').trim(); break; } }
+  return { files, instr };
 }
 
-export function rankFiles(files, words) {
+export function rankFiles(files, words, ctx = '') {
   const forMe = (f) => {
     const hay = ' ' + fold([f.label, f.instrumentation, f.heading, f.arranger].join(' ')) + ' ';
     return words.some((w) => hay.includes(' ' + fold(w)) || (w.length > 5 && hay.includes(fold(w))));
   };
   const all = files.map((f) => ({ ...f, mine: words.length ? forMe(f) : false }));
   const byDl = (a, b) => b.downloads - a.downloads;
-  const mine = all.filter((f) => f.mine).sort(byDl);
+  // The piano accompaniment, for playing with a pianist: a piano part (or piano score) of the work,
+  // a concerto's piano reduction, or the score itself when the piece is for the instrument and piano
+  // (in a sonata the pianist plays from the full score).
+  const pf = pianoFor(all, words, ctx);
+  // (your own part first: its name says your instrument; the piano's score of an arrangement "for
+  // cello and piano" is the pianist's, not yours)
+  const named = (f) => (words.some((w) => (' ' + fold(f.label) + ' ').includes(' ' + fold(w)) || (w.length > 5 && fold(f.label).includes(fold(w)))) ? 1 : 0);
+  const pianoOnly = (f) => (PIANO.test(fold(f.label)) && !named(f) ? 1 : 0);
+  const mine = all.filter((f) => f.mine && !(pf && f.index === pf.f.index)).sort((a, b) => named(b) - named(a) || pianoOnly(a) - pianoOnly(b) || byDl(a, b));
   const score = all.filter((f) => f.group === 'Full scores').sort(byDl);
   const top = [...all].sort(byDl);
   const picks = [];
   if (mine[0]) picks.push({ why: 'mine', f: mine[0] });
   if (score[0] && !picks.some((p) => p.f.index === score[0].index)) picks.push({ why: 'score', f: score[0] });
   if (top[0] && !picks.some((p) => p.f.index === top[0].index)) picks.push({ why: 'top', f: top[0] });
+  if (pf) {
+    const same = picks.find((p) => p.f.index === pf.f.index);
+    if (same) { same.why = 'piano'; same.pianoKind = pf.kind; }
+    else picks.splice(picks[0] && picks[0].why === 'mine' ? 1 : 0, 0, { why: 'piano', pianoKind: pf.kind, f: pf.f });
+  }
   const groups = {};
   for (const f of all) (groups[f.group] = groups[f.group] || []).push(f);
   for (const g of Object.values(groups)) g.sort((a, b) => (b.mine - a.mine) || byDl(a, b));
   return { picks, groups, mostDownloaded: top[0] ? top[0].index : null };
+}
+
+const PIANO = /\b(piano|pianoforte|klavier|clavier|keyboard|cembalo|harpsichord)\b/;
+// (words: how the person's instrument is named, to know it is not the piano itself; ctx: what the
+// work is for, from its page and title, e.g. "cello, piano" or "Cello Concerto … cello, orchestra")
+export function pianoFor(all, words, ctx = '') {
+  const mineW = (words || []).map((w) => fold(w)).filter(Boolean);
+  if (mineW.some((w) => PIANO.test(w))) return null;   // a pianist: the score is already theirs
+  const c = fold(ctx), orch = /\b(orchestra|orchester|orchestre|orchestral|strings|band|ensemble)\b/.test(c);
+  const withPiano = PIANO.test(c) && !orch;
+  const txt = (f) => fold(f.label + ' ' + (f.heading || ''));
+  const lab = (f) => fold(f.label);
+  const byDl = (a, b) => b.downloads - a.downloads;
+  const isMine = (f) => mineW.some((w) => lab(f).includes(w)) && !/score|partitur|complete/.test(lab(f));
+  // a piano part or a piano score in the parts ("Piano", "Piano Score", "Klavierstimme"); not the
+  // piano of an orchestra
+  if (!orch) {
+    const parts = all.filter((f) => f.group === 'Parts' && PIANO.test(lab(f)) && !isMine(f)).sort(byDl);
+    if (parts[0]) return { f: parts[0], kind: 'part' };
+  }
+  // a piece for the instrument and piano: the pianist plays from the full score
+  if (withPiano) {
+    const full = all.filter((f) => f.group === 'Full scores' && !isMine(f)).sort(byDl);
+    if (full[0]) return { f: full[0], kind: 'score' };
+  }
+  // a piano reduction (a concerto's, or an arrangement for the instrument and piano): its piano score
+  const arr = all.filter((f) => f.group === 'Arrangements' && PIANO.test(txt(f)) && !isMine(f) && /score|reduction|klavierauszug|piano|complete|partitur/.test(lab(f)));
+  const forMine = (f) => (mineW.some((w) => fold((f.heading || '') + ' ' + (f.instrumentation || '')).includes(w)) ? 1 : 0);
+  arr.sort((a, b) => forMine(b) - forMine(a) || byDl(a, b));
+  if (arr[0]) return { f: arr[0], kind: 'reduction' };
+  return null;
 }
 
 export const fileUrl = (index) => 'https://imslp.org/wiki/Special:ImagefromIndex/' + index;

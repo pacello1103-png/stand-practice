@@ -985,9 +985,10 @@
         <h3>Practice plan</h3>
         <div class="plan-nav"><button class="icon-btn small" id="plPrev" aria-label="The week before"><svg><use href="#i-back"/></svg></button><span class="num" id="plWeek">This week</span><button class="icon-btn small" id="plNext" aria-label="The week after"><svg class="flipx"><use href="#i-back"/></svg></button></div>
       </div>
-      <p class="hint" id="plHint">Tap or drag over the half hours you want to practise. The plan carries on into the next weeks.</p>
+      <p class="hint" id="plHint">Tap a half hour to plan it.</p>
       <div class="plan-scroll" id="plScroll"><div class="plan-grid" id="planGrid" role="grid" aria-label="Practice plan for the week"></div></div>
-      <div class="plan-legend"><span><i class="plan"></i>Planned</span><span><i class="done"></i>Practised</span><span><i class="missed"></i>Missed</span><span id="plSum" class="num"></span></div>
+      <div class="plan-legend"><span><i class="plan"></i>Planned</span><span><i class="done"></i>Practised</span><span><i class="missed"></i>Missed</span><span id="plSum" class="num"></span><button class="btn small ghost" id="plClear" hidden>Clear week</button></div>
+      <div class="plan-remind"><label class="check-row"><span><b>Same plan every week</b><small>Off: each week is planned on its own</small></span><label class="switch"><input type="checkbox" id="planRepeat"><span></span></label></label></div>
       <div class="plan-remind">
         <label class="check-row"><span><b>Remind me</b><small id="plRemindNote">A notification when a planned practice begins</small></span><label class="switch"><input type="checkbox" id="planRemind"><span></span></label></label>
         <button class="btn small ghost" id="planTest">Send a test reminder</button>

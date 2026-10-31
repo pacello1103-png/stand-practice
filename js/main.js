@@ -68,7 +68,14 @@ const S = {
 };
 async function loadSettings() { const saved = await getSetting('settings', {}); Object.assign(S, saved || {});
   // (Stand's own choices for the pages, not those of the score last open)
+  // (a score never set opens the standard way: two pages side by side when the iPad is sideways,
+  // one when upright. Before, the way the first score happened to be shown when this came in was
+  // taken for all the others, so one set sideways made every score sideways. Once, put right;
+  // the scores you set yourself keep theirs.)
+  if (!S.viewFix) { S.viewFix = 1; S.defView = { ...(S.defView || {}), twoUp: true, onePage: false, turnScore: false, halfTurn: false, landscapeLock: false }; saveSettings(); }
   if (S.defView) Object.assign(S, S.defView);
+  // (eyes now read the right way round by themselves: a swap turned on to correct them goes off, once)
+  if (!S.winkFix) { S.winkFix = 1; if (S.winkSwap) S.winkSwap = false; saveSettings(); }
   // (layers are no longer offered: whatever was hidden in one shows again)
   if (S.hidLy && S.hidLy.length) { S.hidLy = []; saveSettings(); }
   setHiddenLayers([]); applyOrientation(); }
@@ -81,12 +88,22 @@ let saveT; function saveSettings() { clearTimeout(saveT); saveT = setTimeout(() 
 // with the score; a score never set takes the choices Stand had before (S.defView).
 const VIEW_KEYS = ['twoUp', 'onePage', 'turnScore', 'halfTurn', 'paper', 'landscapeLock'];
 const pickView = (o) => Object.fromEntries(VIEW_KEYS.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+// (kept apart from the score's own record, in Stand's settings: other parts of Stand write the
+// score's record from older copies of it, and the choice must never go back to an old one)
 function applyScoreView(score) {
   if (!S.defView) { S.defView = pickView(S); saveSettings(); }
-  Object.assign(S, S.defView, (score && score.view) || {});
+  const mine = score && ((S.scoreViews && S.scoreViews[score.id]) || score.view);
+  Object.assign(S, S.defView, mine || {});
   applyOrientation();
 }
-function keepScoreView() { if (!V.score) return; V.score.view = pickView(S); db.put('scores', V.score).catch(() => {}); }
+function keepScoreView() {
+  if (!V.score) return;
+  const v = pickView(S);
+  S.scoreViews = { ...(S.scoreViews || {}), [V.score.id]: v };
+  // (the settings as Stand's own: what a score shows is its own, never Stand's for the others)
+  setSetting('settings', JSON.parse(JSON.stringify({ ...S, ...(S.defView || {}) })));
+  V.score.view = v; db.put('scores', V.score).catch(() => {});
+}
 function leaveScoreView() { if (S.defView) { Object.assign(S, S.defView); applyOrientation(); } }
 
 // =====================================================================
@@ -222,6 +239,9 @@ function showPanel(name, tab) {
 }
 function hidePanel() {
   if (!openPanel) return;
+  // (a field still being typed in gives its change first: a title typed, then the panel closed or
+  // the score left at once, is kept — hiding a field does not always tell it it was left)
+  try { const ae = document.activeElement; if (ae && ae.closest && ae.closest('#panel-' + openPanel) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) ae.blur(); } catch {}
   $('#panel-' + openPanel).hidden = true;
   $$('[data-panel].on').forEach((b) => b.classList.remove('on'));
   if (openPanel === 'settings') saveScoreMeta();
@@ -694,6 +714,46 @@ async function imslpMetaFor(name) {
   for (const p of Object.values(picks)) if (p.file && base.includes(p.file.replace(/\.pdf$/i, '').replace(/ /g, '_'))) return p;
   return null;
 }
+// The top of the first page of a scan or photo, read by the iPad's own text recognition: each line
+// with where it is and how tall (in the units of the page as drawn), for readScoreInfo.
+const TOPREAD = new Map();
+async function readTopOfPage(doc) {
+  const rec = NATIVE && NATIVE.standRecognize;
+  const fake = globalThis.__readTopTest;   // (tests: a stand-in for the iPad's reader)
+  if (!rec && !fake) return [];
+  const [pw, ph] = (doc.sizes && doc.sizes[0]) || [595, 842];
+  const W = 1500, H = Math.round((W * ph) / pw), top = Math.round(H * 0.45);
+  const c = document.createElement('canvas');
+  await doc.render(0, c, W, H);
+  const t = document.createElement('canvas'); t.width = W; t.height = top;
+  const g = t.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, top); g.drawImage(c, 0, 0);
+  c.width = c.height = 0;
+  // (only the words above the first staff: the reader makes "words" of the notes too. A staff line is
+  // a row dark across most of the page)
+  let staffAt = top;
+  { const d = g.getImageData(0, 0, W, top).data;
+    for (let y = 0; y < top; y++) { let k = 0; for (let x = 0; x < W; x += 3) { const i = (y * W + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 384) k++; } if (k > (W / 3) * 0.32) { staffAt = y; break; } } }
+  let got;
+  if (fake) got = await fake(t);
+  else {
+    const id = 'info:' + uid();
+    got = await new Promise((res) => {
+      const timer = setTimeout(() => { TOPREAD.delete(id); res([]); }, 9000);
+      TOPREAD.set(id, (lines) => { clearTimeout(timer); res(lines); });
+      rec.postMessage({ id, png: t.toDataURL('image/png').split(',')[1], words: [], lines: true });
+    });
+  }
+  t.width = t.height = 0;
+  // (words, not the shapes of notes: mostly letters and numbers, with a word of three letters or a
+  // number like "Op. 20")
+  const wordy = (x) => { const A = (x.match(/[\p{L}\d]/gu) || []).length, n = x.replace(/\s/g, '').length; return A / n >= 0.6 && (/\p{L}{3}/u.test(x) || /\b(op|no|nr|n°|bwv|kv?|hob|d)\.?\s*\d/i.test(x)); };
+  if (globalThis.__readTopDbg) globalThis.__readTopDbg.push({ staffAt, top, got });
+  return (got || []).filter((l) => l && l.s && wordy(String(l.s)) && (l.c ?? 1) >= 0.3 && (l.y + l.h) * top <= staffAt + 2).map((l) => ({
+    // (words sitting on the first staff are the movement or the tempo, and their box takes in some of
+    // the staff: never the biggest words of the page)
+    text: String(l.s).replace(/\s+/g, ' ').trim(), y: (l.y + l.h) * top, size: l.h * top * 0.85 * ((l.y + l.h) * top > staffAt - 0.6 * l.h * top ? 0.6 : 1), x: l.x * W, right: (l.x + l.w) * W, H, W,
+  }));
+}
 // Add a PDF to the library; title and composer come from IMSLP (when downloaded through Stand)
 // or are read from the first page.
 async function addPdf(data, name, meta) {
@@ -701,7 +761,7 @@ async function addPdf(data, name, meta) {
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
   meta = meta || await imslpMetaFor(name);
-  const info = await readScoreInfo(doc, name, await loadComposers());
+  const info = await readScoreInfo(doc, name, await loadComposers(), meta && meta.title ? {} : { ocr: readTopOfPage });
   const composer = (meta && meta.composer) || info.composer || '';
   const title = (meta && meta.title) || info.title || titleFromName(name, composer);
   const score = { id: uid(), fileId: file.id, title, composer, pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb, source: meta ? 'IMSLP' : '' , folder: FOLD.current || undefined };
@@ -713,7 +773,10 @@ async function addImages(blobs, name) {
   const file = { id: uid(), kind: 'images', data: blobs };
   const doc = await openDocument(file);
   const thumb = await makeThumb(doc);
-  const score = { id: uid(), fileId: file.id, title: niceTitle(name), composer: '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: FOLD.current || undefined };
+  // (the title and composer printed at the top of the first page, read as on a PDF; else the name)
+  let info = { title: '', composer: '' };
+  try { info = await readScoreInfo(doc, name, await loadComposers(), { ocr: readTopOfPage }); } catch (e) { console.warn(e); }
+  const score = { id: uid(), fileId: file.id, title: info.title || niceTitle(name), composer: info.composer || '', pages: doc.pages, added: Date.now(), opened: 0, lastPage: 0, seconds: 0, thumb , folder: FOLD.current || undefined };
   doc.destroy();
   await db.put('files', file); await db.put('scores', score);
   return score;
@@ -975,7 +1038,7 @@ function fileMeta(f) {
 const inApp = () => !!(NATIVE && NATIVE.standOpen);
 // Preview: the score comes in and opens, with Keep and Remove at the top; left without Keep, it goes.
 const PREVIEW = { at: 0, index: null };
-function previewLink(f, big) {
+function previewLink(f, big, piano) {
   const a = el('a', big ? 'btn' : 'icon-btn');
   a.href = fileUrl(f.index); a.target = '_blank'; a.rel = 'noopener';
   a.append(icon('i-eye'));
@@ -983,7 +1046,7 @@ function previewLink(f, big) {
   a.addEventListener('click', (e) => {
     if (!inApp()) return;   // in a browser the score page simply opens
     e.preventDefault();
-    const meta = metaFor(f);
+    const meta = metaFor(f, piano);
     rememberPick(f, meta);
     PREVIEW.at = Date.now(); PREVIEW.index = f.index;
     NATIVE.standOpen.postMessage({ url: fileUrl(f.index), title: meta.title, composer: meta.composer, index: f.index });
@@ -991,14 +1054,14 @@ function previewLink(f, big) {
   });
   return a;
 }
-function downloadLink(f, big) {
+function downloadLink(f, big, piano) {
   const a = el('a', big ? 'btn primary' : 'icon-btn');
   a.href = fileUrl(f.index); a.target = '_blank'; a.rel = 'noopener';
   a.append(icon('i-download'));
   if (big) a.append(el('span', '', inApp() ? 'Add to my stand' : 'Download'));
   else a.setAttribute('aria-label', 'Download ' + f.label);
   a.addEventListener('click', (e) => {
-    const meta = metaFor(f);
+    const meta = metaFor(f, piano);
     rememberPick(f, meta);
     if (inApp()) {
       e.preventDefault(); PREVIEW.at = 0;
@@ -1008,9 +1071,10 @@ function downloadLink(f, big) {
   });
   return a;
 }
-function metaFor(f) {
+function metaFor(f, piano) {
   const sp = splitTitle(currentWork.title);
-  const part = f.label && !/^complete score$/i.test(f.label) ? ' · ' + f.label : '';
+  // (the piano's copy says so in its name, beside your own part on the stand)
+  const part = piano && !/piano|klavier|pianoforte/i.test(f.label || '') ? ' · Piano accompaniment' : f.label && !/^complete score$/i.test(f.label) ? ' · ' + f.label : '';
   return { title: sp.work + part, composer: sp.composer, file: f.file };
 }
 async function rememberPick(f, meta) {
@@ -1038,7 +1102,7 @@ function renderBuy(box, q) {
 }
 function renderWork(data) {
   const inst = INSTRUMENTS[S.instrument];
-  const { picks, groups, mostDownloaded } = rankFiles(data.files, inst.words);
+  const { picks, groups, mostDownloaded } = rankFiles(data.files, inst.words, data.title + ' ' + (data.instr || ''));
   const st = $('#workStatus');
   if (!data.files.length) { st.hidden = false; st.textContent = 'There are no PDF scores for this piece. It may hold only recordings, or the work is still under copyright.'; return; }
   st.hidden = true;
@@ -1048,12 +1112,15 @@ function renderWork(data) {
   renderBuy($('#workBuy'), wq);
   const wl = $('#workListen'); wl.textContent = ''; wl.append(el('div', 'buy-title', 'Listen to a performance'));
   const sv = el('div', 'services'); renderServices(sv, wq, true); wl.append(sv);
-  const whyText = { mine: `Best for ${instName().toLowerCase()}`, score: 'Most downloaded full score', top: 'Most downloaded overall' };
+  const whyText = { mine: `Best for ${instName().toLowerCase()}`, score: 'Most downloaded full score', top: 'Most downloaded overall', piano: 'Piano accompaniment' };
+  // (what the pianist plays from: a part of its own, the full score of a piece for instrument and
+  // piano, or a piano reduction of a concerto)
+  const pianoNote = { part: 'The piano part', score: 'The pianist plays from the full score', reduction: 'Piano reduction' };
   picks.forEach((p, i) => {
-    const c = el('div', 'pick' + (i === 0 ? ' best' : ''));
-    const why = el('div', 'why'); why.append(icon('i-star'), document.createTextNode(whyText[p.why])); c.append(why);
-    c.append(el('div', 'pl', p.f.label), el('div', 'pm', fileMeta(p.f)));
-    const row = el('div', 'pick-btns'); row.append(previewLink(p.f, true), downloadLink(p.f, true)); c.append(row);
+    const c = el('div', 'pick' + (i === 0 ? ' best' : '') + (p.why === 'piano' ? ' piano' : ''));
+    const why = el('div', 'why'); why.append(icon(p.why === 'piano' ? 'i-music' : 'i-star'), document.createTextNode(whyText[p.why])); c.append(why);
+    c.append(el('div', 'pl', p.f.label), el('div', 'pm', (p.why === 'piano' && pianoNote[p.pianoKind] ? pianoNote[p.pianoKind] + ' · ' : '') + fileMeta(p.f)));
+    const row = el('div', 'pick-btns'); row.append(previewLink(p.f, true, p.why === 'piano'), downloadLink(p.f, true, p.why === 'piano')); c.append(row);
     pk.append(c);
   });
   const gbox = $('#workGroups'); gbox.textContent = '';
@@ -7858,17 +7925,21 @@ function renderTracker() {
 }
 
 // =====================================================================
-// Practice plan: the week in half hours. Tap (or drag over) the times you want to practise; they
-// turn green. Afterwards a planned half hour stays green when you practised in it, and turns red
-// when you did not. A plan carries on into the following weeks until you change it.
+// Practice plan: the week in half hours. Tap the times you want to practise (or, held a moment,
+// drag over several); they turn green. Afterwards a planned half hour stays green when you
+// practised in it, and turns red when you did not. Each week has its own plan; with "Same plan
+// every week" a week's plan carries on into the following weeks until you change it.
 // =====================================================================
-const PL = { week: null, paint: null, H0: 12, H1: 46 };   // the shown week (its Monday), rows 6:00–23:00
+const PL = { week: null, paint: null, H0: 12, H1: 46 };
+// (the hint for fingers on a touch screen; decided once, so the text never changes under a tap)
+try { PL.touchy = matchMedia('(any-pointer: coarse)').matches || navigator.maxTouchPoints > 0; } catch {}   // the shown week (its Monday), rows 6:00–23:00
 const mondayOf = (d) => { const m = new Date(d.getFullYear(), d.getMonth(), d.getDate()); m.setDate(m.getDate() - ((m.getDay() + 6) % 7)); return m; };
 const weekKeyOf = (d) => dayKey(mondayOf(d));
 // the plan of a week: its own, or the one it carries on from
 function planFor(wk) {
   const W = practice.plan.weeks;
   if (W[wk]) return W[wk];
+  if (!practice.plan.repeat) return [];
   const before = Object.keys(W).filter((k) => k < wk).sort().pop();
   return before ? W[before] : [];
 }
@@ -7887,7 +7958,7 @@ function renderPlan() {
   for (let d = 0; d < 7; d++) { const day = new Date(PL.week); day.setDate(day.getDate() + d); const x = slots[dayKey(day)] || {}; for (const [s, v] of Object.entries(x)) if (v >= 300) { h0 = Math.min(h0, +s); h1 = Math.max(h1, +s + 1); } }
   $('#plWeek').textContent = wk === curKey ? 'This week' : PL.week.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' – ' + new Date(PL.week.getTime() + 6 * 864e5).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   const past = wk < curKey;
-  $('#plHint').textContent = past ? 'An earlier week: green where you practised as planned, red where you did not.' : 'Tap or drag over the half hours you want to practise. The plan carries on into the next weeks.';
+  $('#plHint').textContent = past ? 'An earlier week: green where you practised as planned, red where you did not.' : (PL.touchy ? 'Tap a half hour to plan it. To mark several, hold one a moment, then slide.' : 'Click the half hours you want to practise, or drag over several.') + (practice.plan.repeat ? ' The plan carries on into the next weeks.' : '');
   grid.textContent = '';
   grid.style.gridTemplateRows = `auto repeat(${h1 - h0}, var(--plan-row))`;
   grid.append(el('span', 'pl-corner'));
@@ -7921,6 +7992,8 @@ function renderPlan() {
   }
   $('#plSum').textContent = planned ? `${kept} of ${planned} half hours` : '';
   $('#planRemind').checked = !!practice.plan.remind;
+  $('#planRepeat').checked = !!practice.plan.repeat;
+  $('#plClear').hidden = past || !plan.size;
   $('#planLead').value = String(practice.plan.lead || 0);
   $('#planLead').hidden = !practice.plan.remind;
   // the first time: show the morning-to-evening part around now (or the first plan)
@@ -7932,9 +8005,12 @@ function renderPlan() {
     requestAnimationFrame(() => { const sc = $('#plScroll'); const rh = parseFloat(getComputedStyle(grid).getPropertyValue('--plan-row')) || 20; sc.scrollTop = Math.max(0, (target - h0 - 2) * (rh + 2)); void row; });
   }
 }
-// tap or drag: the first cell decides whether the drag plans or clears
+// A tap plans (or clears) one half hour. Several at once: with a finger, hold a moment on the
+// first, then slide (a finger that moves at once scrolls the week, and plans nothing); with the
+// Pencil or a mouse, drag straight away. The first cell decides whether the drag plans or clears.
 {
   const grid = $('#planGrid');
+  const HOLD = 280, SLOP = 9;
   const cellAt = (e) => { const t = document.elementFromPoint(e.clientX, e.clientY); return t && t.classList && t.classList.contains('pl-cell') ? t : null; };
   const apply = (c) => {
     if (!c || !PL.paint || PL.paint.seen.has(c.dataset.id)) return;
@@ -7944,31 +8020,48 @@ function renderPlan() {
     if (PL.paint.add) set.add(c.dataset.id); else set.delete(c.dataset.id);
     c.classList.toggle('plan', PL.paint.add);
   };
+  const startPaint = () => {
+    const p = PL.press; if (!p) return;
+    PL.paint = { add: !p.set.has(p.c.dataset.id), set: p.set, seen: new Set(), wk: p.wk };
+    p.c.classList.add('pl-held');
+    try { navigator.vibrate && navigator.vibrate(8); } catch {}
+    apply(p.c);
+  };
+  const cancelPress = () => { if (PL.press) { clearTimeout(PL.press.timer); if (PL.press.c) PL.press.c.classList.remove('pl-held'); } PL.press = null; };
   grid.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
     const c = cellAt(e); if (!c) return;
     const wk = dayKey(PL.week), curKey = weekKeyOf(new Date());
     if (wk < curKey) { toast('This week is over. Plan this week or the next ones.', 2400); return; }
     if (c.dataset.over) { toast('That time has passed.', 1600); return; }
-    e.preventDefault();
+    cancelPress(); PL.paint = null;
     const set = new Set(planFor(wk));
-    PL.paint = { add: !set.has(c.dataset.id), set, seen: new Set(), wk, touch: e.pointerType === 'touch', x: e.clientX, y: e.clientY, locked: e.pointerType !== 'touch' };
-    try { grid.setPointerCapture(e.pointerId); } catch {}
-    apply(c);
+    PL.press = { c, wk, set, x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch', id: e.pointerId };
+    if (!PL.press.touch) { e.preventDefault(); try { grid.setPointerCapture(e.pointerId); } catch {} startPaint(); return; }
+    // (a finger: a tap, or a hold that starts painting; moving first is a scroll)
+    PL.press.timer = setTimeout(() => { if (PL.press && !PL.press.moved) { startPaint(); try { grid.setPointerCapture(PL.press.id); } catch {} } }, HOLD);
   });
   grid.addEventListener('pointermove', (e) => {
-    if (!PL.paint) return;
-    // a finger moving up or down at first scrolls the list instead of painting
-    if (!PL.paint.locked) {
-      const dx = Math.abs(e.clientX - PL.paint.x), dy = Math.abs(e.clientY - PL.paint.y);
-      if (dy > 10 && dy > dx * 1.4 && PL.paint.seen.size <= 1) { const c0 = [...PL.paint.seen][0]; if (c0) { const el0 = grid.querySelector(`[data-id="${c0}"]`); if (el0) el0.classList.toggle('plan', !PL.paint.add); PL.paint.set[PL.paint.add ? 'delete' : 'add'](c0); } PL.paint = null; return; }
-      if (dx > 8) PL.paint.locked = true;
+    const p = PL.press; if (!p) return;
+    if (!PL.paint) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP) { p.moved = true; clearTimeout(p.timer); }
+      return;
     }
     apply(cellAt(e));
   });
-  const end = () => {
-    if (!PL.paint) return;
-    const p = PL.paint; PL.paint = null;
-    practice.plan.weeks[p.wk] = [...p.set].sort();
+  // (while painting with a finger, the week does not scroll under it)
+  grid.addEventListener('touchmove', (e) => { if (PL.paint) e.preventDefault(); }, { passive: false });
+  const end = (e) => {
+    const p = PL.press; if (!p) return;
+    clearTimeout(p.timer);
+    if (!PL.paint) {
+      // a tap: that one half hour
+      if (e.type === 'pointerup' && !p.moved) { PL.paint = { add: !p.set.has(p.c.dataset.id), set: p.set, seen: new Set(), wk: p.wk }; apply(p.c); }
+      else { PL.press = null; return; }
+    }
+    p.c.classList.remove('pl-held');
+    const paint = PL.paint; PL.paint = null; PL.press = null;
+    practice.plan.weeks[paint.wk] = [...paint.set].sort();
     savePlan(); renderPlan();
     syncReminders();
   };
@@ -7976,6 +8069,15 @@ function renderPlan() {
   grid.style.touchAction = 'pan-y';
   $('#plPrev').addEventListener('click', () => { PL.week = new Date(PL.week.getTime() - 7 * 864e5); renderPlan(); });
   $('#plNext').addEventListener('click', () => { PL.week = new Date(PL.week.getTime() + 7 * 864e5); renderPlan(); });
+  $('#planRepeat').addEventListener('change', (e) => {
+    // (turned on: the week shown is the one that carries on; its plan is written as its own)
+    const wk = dayKey(PL.week || mondayOf(new Date()));
+    if (e.target.checked && !practice.plan.weeks[wk]) practice.plan.weeks[wk] = planFor(wk).slice();
+    practice.plan.repeat = e.target.checked;
+    // (turned off: every week shows only its own plan again)
+    savePlan(); renderPlan(); syncReminders();
+  });
+  $('#plClear').addEventListener('click', () => { const wk = dayKey(PL.week); if (wk < weekKeyOf(new Date())) return; const now = new Date(); const keep = planFor(wk).filter((id) => { const [d, sl] = id.split('-').map(Number); const day = new Date(PL.week); day.setDate(day.getDate() + d); return new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(sl / 2), sl % 2 ? 30 : 0).getTime() + 30 * 60000 <= now; }); practice.plan.weeks[wk] = keep; savePlan(); renderPlan(); syncReminders(); toast('This week’s plan is cleared.', 1600); });
 }
 // ---------- reminders (the Stand app on iPad and iPhone) ----------
 const NOTIFY = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.standNotify;
@@ -8171,6 +8273,11 @@ function winkFound(rawEye, src = 'ipad') {
 }
 window.standFaceEvent = (ev) => {
   if (!ev) return;
+  // (the camera faces you, so the face it sees is mirrored: what the iPad calls the left eye is your
+  // right one. Turned round here, once, for everything after: your right eye turns forward. "Swap
+  // left and right" still turns them round again for anyone who wants it the other way.)
+  if (ev.type === 'levels') ev = { ...ev, l: ev.r, r: ev.l };
+  else if (ev.type === 'wink' && (ev.eye === 'left' || ev.eye === 'right')) ev = { ...ev, eye: ev.eye === 'left' ? 'right' : 'left' };
   if (ev.type === 'levels') {
     const now = performance.now();
     wink.lv.push({ t: now, l: +ev.l || 0, r: +ev.r || 0 }); while (wink.lv.length && now - wink.lv[0].t > 1500) wink.lv.shift();
@@ -9360,6 +9467,8 @@ function decideWord(job) {
   wordRead(job, pick ? pick.text : '');
 }
 window.standRecognized = (msg) => {
+  // the top of a page read for its title (readTopOfPage)
+  if (String(msg.id).startsWith('info:')) { const f = TOPREAD.get(msg.id); TOPREAD.delete(msg.id); if (f) f(msg.lines || []); return; }
   // words read for the composer's capture go there
   if (String(msg.id).startsWith('cap:')) { if (window.__capTextDone) window.__capTextDone(msg.id, msg.text || ''); return; }
   const job = WORDS.get(msg.id); WORDS.delete(msg.id);

@@ -475,7 +475,14 @@ function drawSystem(ctx, lay, sys, hit, opts) {
       if (hs.dynLine > gap - 0.6) hs.dynLine = Math.max(3.0, low + 2.9);
       hs.dynMax = Math.max(hs.dynLine, gap - 1.2);
     }
-    for (const hm of hs.measures) for (const d of hm.dyns || []) {
+    // (on one line: one after another, never one into the next; and never past the end of the line,
+    // where they would run off into the margin: a dynamic and its words stay together)
+    const ds = hs.measures.flatMap((hm) => hm.dyns || []);
+    let prevEnd = -Infinity;
+    for (const d of ds) { if (d.x < prevEnd + 0.4) d.x = prevEnd + 0.4; prevEnd = d.x + (d.w || 0); }
+    let limit = x1 - 1.6;   // (clear of the barline at the end, a final or repeat one too)
+    for (let j = ds.length - 1; j >= 0; j--) { const d = ds[j]; const end = d.x + (d.w || 0); if (end > limit) d.x = limit - (d.w || 0); limit = d.x - (ds[j - 1] && ds[j - 1].id === d.id ? 0.6 : 0.4); }
+    for (const d of ds) {
       if (d.c) { ctx.save(); ctx.fillStyle = d.c; }
       if (d.txt) { CUR_MARK = d.id ? { id: d.id, kind: 'txt', name: d.txt } : null; text(ctx, d.txt, d.x, hs.y + 4 + hs.dynLine, 1.7, TEXT_FONT, d.it ? 'italic' : ''); CUR_MARK = null; if (d.c) ctx.restore(); continue; }
       CUR_MARK = d.id ? { id: d.id, kind: 'dyn', name: d.dyn } : null; glyph(ctx, DYN_LETTERS(d.dyn), d.x, hs.y + 4 + hs.dynLine); CUR_MARK = null;
@@ -1062,9 +1069,11 @@ function drawStaffBar(ctx, lay, sys, s, m, time, xs, mm, hm, hit, opts) {
     if (ev.art && ev.art.length && e.notes.length) { try { drawArts(ctx, e, s.y); } finally { CUR_MARK = null; } }
     if (ev.art && ev.art.includes('ferm') && ev.rest) glyph(ctx, GL.art.ferm[0], e.x, s.y - 1);
     // dynamics are drawn once the whole line is known, all on one level with the hairpins
-    if (ev.dyn) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3, dyn: ev.dyn, c: color(e), id: ev.id });
+    // (each as wide as it really is, so the words after a dynamic never run into it)
+    const dynW = ev.dyn ? gm(DYN_LETTERS(ev.dyn)).w : 0;
+    if (ev.dyn) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3, dyn: ev.dyn, c: color(e), id: ev.id, w: dynW });
     // words under the staff (dolce, cresc.), on the line of the dynamics, after one if there is one
-    if (ev.txt && ev.txtBelow) (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3 + (ev.dyn ? 0.9 + 1.1 * ev.dyn.length : 0), txt: ev.txt, it: ev.txtStyle !== 'tech' && ev.txtStyle !== 'plain', c: color(e), id: ev.id });
+    if (ev.txt && ev.txtBelow) { const it = ev.txtStyle !== 'tech' && ev.txtStyle !== 'plain'; (hm.dyns = hm.dyns || []).push({ x: e.x - 0.3 + (ev.dyn ? dynW + 0.6 : 0), txt: ev.txt, it, c: color(e), id: ev.id, w: textWidth(ctx, ev.txt, 1.7, TEXT_FONT, it ? 'italic' : '') }); }
     if (ev.fing && e.notes.length) {
       // fingering: small upright numbers over the note (several, one over the other, for a chord)
       const parts = String(ev.fing).split(/[\s,]+/).filter(Boolean);

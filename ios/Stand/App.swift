@@ -346,6 +346,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
             guard let b64 = body["png"] as? String, let data = Data(base64Encoded: b64), let image = UIImage(data: data)?.cgImage else {
                 send("standRecognized", ["id": id, "text": ""]); return
             }
+            if body["lines"] as? Bool == true {
+                // (the top of a page: each line with where it is and how tall, for the title and composer)
+                WordReader.readLines(image, words: words) { [weak self] lines in
+                    self?.send("standRecognized", ["id": id, "text": lines.compactMap { $0["s"] as? String }.joined(separator: " "), "lines": lines])
+                }
+                return
+            }
             WordReader.read(image, words: words) { [weak self] text in
                 self?.send("standRecognized", ["id": id, "text": text])
             }
@@ -453,6 +460,29 @@ enum WordReader {
                 try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             } catch {
                 DispatchQueue.main.async { done("") }
+            }
+        }
+    }
+    // Printed lines of text with their boxes, as parts of the picture (0…1, from the top left).
+    static func readLines(_ image: CGImage, words: [String], done: @escaping ([[String: Any]]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let request = VNRecognizeTextRequest { finished, _ in
+                var out: [[String: Any]] = []
+                for o in finished.results as? [VNRecognizedTextObservation] ?? [] {
+                    guard let c = o.topCandidates(1).first else { continue }
+                    let b = o.boundingBox
+                    out.append(["s": c.string, "x": Double(b.minX), "y": Double(1 - b.maxY), "w": Double(b.width), "h": Double(b.height), "c": Double(c.confidence)])
+                }
+                DispatchQueue.main.async { done(out) }
+            }
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            request.recognitionLanguages = ["en-US", "de-DE", "fr-FR", "it-IT", "es-ES", "pt-PT"]
+            request.customWords = words
+            do {
+                try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            } catch {
+                DispatchQueue.main.async { done([]) }
             }
         }
     }
