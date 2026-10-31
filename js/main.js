@@ -44,7 +44,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmtTime = (s, tenths) => { s = Math.max(0, s); const m = Math.floor(s / 60), r = s - m * 60; return m + ':' + (tenths ? r.toFixed(1).padStart(4, '0') : String(Math.floor(r)).padStart(2, '0')); };
 const fmtShort = (sec) => { const m = Math.round(sec / 60); return m < 60 ? m + ' min' : m < 600 ? Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') : Math.round(m / 60) + ' h'; };
-const fmtMinutes = (sec) => { const m = Math.round(sec / 60); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+const fmtMinutes = (sec) => { const m = Math.round(sec / 60); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : ''); };   // ("3 h", never "3 h 0 min")
 const dayKey = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -299,7 +299,7 @@ const thumbURLs = new Map();
 const FOLDER_SET = new Map();
 // (the same for a title or composer you change: an older copy of the score saved after it never
 // brings the old name back)
-const NAME_SET = new Map();
+const NAME_SET = new Map(), PAGES_SET = new Map();
 {
   const put0 = db.put.bind(db);
   db.put = (store, value) => {
@@ -307,6 +307,11 @@ const NAME_SET = new Map();
     if (store === 'scores' && value && NAME_SET.has(value.id)) {
       const n = NAME_SET.get(value.id);
       if (value.title !== n.title || (value.composer || '') !== n.composer) { try { nlog('name kept: an older copy of a score was being saved'); } catch {} value.title = n.title; value.composer = n.composer; }
+    }
+    // (and the pages: deleted, moved or put back, they stay so)
+    if (store === 'scores' && value && PAGES_SET.has(value.id)) {
+      const m = PAGES_SET.get(value.id);
+      if (JSON.stringify(value.pageMap || null) !== JSON.stringify(m)) { try { nlog('pages kept: an older copy of a score was being saved'); } catch {} if (m) value.pageMap = m.slice(); else delete value.pageMap; }
     }
     return put0(store, value);
   };
@@ -4863,7 +4868,7 @@ async function addPagesFromFiles(files) {
     const map = sc.pageMap ? sc.pageMap.slice() : [...Array(oldPages).keys()];
     const at = map.indexOf(afterOrig);
     map.splice(at < 0 ? map.length : at + 1, 0, ...added);
-    sc.pageMap = map;
+    sc.pageMap = map; if (PAGES_SET.has(sc.id)) PAGES_SET.set(sc.id, map.slice());
     markEdited(); phoneAnswers.clear();
     await reopenDoc();
     PG.thumbs.clear();
@@ -5069,6 +5074,9 @@ async function setPageMap(next) {
   const curOrig = cur[V.page];
   // the plain order (every page, in order) needs no map; any other order or set is kept
   V.score.pageMap = next.length === all && next.every((o, i) => o === i) ? null : next;
+  PAGES_SET.set(V.score.id, V.score.pageMap ? V.score.pageMap.slice() : null);
+  // (written at once: leaving the score straight after, or the app closed, keeps the change)
+  db.put('scores', V.score).catch(() => {});
   await reopenDoc();
   const k = next.indexOf(curOrig);
   V.page = clamp(k >= 0 ? k : V.page, 0, V.doc.pages - 1);
@@ -5475,7 +5483,18 @@ async function phoneDoc(id) {
 }
 function phoneDocClose() { clearInterval(PH.closeT); if (PH.base) try { PH.base.destroy(); } catch {} Object.assign(PH, { id: null, key: null, base: null, doc: null, sc: null, opening: null }); }
 // (all questions about a score in turn: one never closes the score another is drawing)
-function phoneJob(fn) { const job = PH.busy.then(fn); PH.busy = job.catch(() => {}); return job; }
+// (and each waits while you are using the iPad: a page turned, a stroke written, a page being drawn
+// for you come first; the iPhone's work goes on in the pauses, never in your way)
+let LAST_INPUT = 0;
+for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel']) addEventListener(ev, () => { LAST_INPUT = performance.now(); }, { capture: true, passive: true });
+async function phoneYield() {
+  for (let k = 0; k < 120; k++) {
+    const busy = performance.now() - LAST_INPUT < 1500 || RQ.q.some((j) => j.prio <= 1) || [...RQ.running].some((r) => r.prio <= 1);
+    if (!busy) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+function phoneJob(fn) { const job = PH.busy.then(phoneYield).then(fn); PH.busy = job.catch(() => {}); return job; }
 function infoForPhone(id) {
   return phoneJob(async () => {
     const P = await phoneDoc(id);
@@ -5516,7 +5535,7 @@ function inkForPhone(id, i, w) {
   return phoneJob(async () => {
     const P = await phoneDoc(id), doc = P.doc;
     if (!(i >= 0 && i < doc.pages)) throw new Error('none');
-    const [pw, ph] = doc.sizes[i], W = Math.max(600, Math.min(2400, +w || 1170)), H = Math.round((W * ph) / pw);
+    const [pw, ph] = doc.sizes[i], W = Math.max(600, Math.min(1600, +w || 1170)), H = Math.round((W * ph) / pw);   // (1600: sharp enough, half the work of 2400)
     const ik = doc.composite && doc.composite(i) ? `${doc.orig(i)}+${doc.gluedFrom(i)}` : doc.orig(i);
     const items = (await loadItems(id + ':' + ik).catch(() => [])).filter((x) => x.t !== 'passage' && x.t !== 'note' && !isHiddenItem(x));
     if (!items.length) return { v: 1, id, i, ink: null };
@@ -5721,13 +5740,15 @@ function renderIpadCard() {
   const st = $('#icStats'); st.textContent = ''; const ul = $('#icPieces'); ul.textContent = '';
   if (!d) return;
   let week = 0; for (const x of rangeDays(7)) week += log[dayKey(x)] || 0;
-  for (const [v, l] of [[fmtShort(log[dayKey()] || 0), 'today'], [fmtShort(week), 'last 7 days'], [String(streakOf(log)), 'day streak']]) { const x = el('div'); x.append(el('b', 'num', v), el('span', '', l)); st.append(x); }
+  const streak = streakOf(log);
+  for (const [v, l] of [[fmtShort(log[dayKey()] || 0), 'today'], [fmtShort(week), 'last 7 days'], [String(streak), streak === 1 ? 'day in a row' : 'days in a row']]) { const x = el('div'); x.append(el('b', 'num', v), el('span', '', l)); st.append(x); }
   // the pieces of the last 7 days, most played first
   const per = {}; for (const x of rangeDays(7)) { const dd = AP.log2[dayKey(x)]; if (dd) for (const [id, v] of Object.entries(dd.pieces)) per[id] = (per[id] || 0) + v; }
   let rows = Object.entries(per).map(([id, v]) => [titleOf(id), v]);
   if (!rows.length) rows = (d.pieces || []).map((x) => [x.title, x.seconds]);
   rows.sort((a, b) => b[1] - a[1]);
   const top = rows.length ? rows[0][1] : 1;
+  if (rows.length) ul.append(el('li', 'ic-label', 'Most practised · last 7 days'));
   for (const [t, v] of rows.slice(0, 4)) { const li = el('li'); const bar = el('i'); bar.style.setProperty('--w', Math.max(6, (v / top) * 100) + '%'); li.append(el('span', 't', t), el('span', 'm', fmtMinutes(v)), bar); ul.append(li); }
 }
 async function getIpadPractice(quiet, code) {
@@ -7923,7 +7944,7 @@ function renderTracker() {
   let week = 0; for (const d of rangeDays(7)) week += log[dayKey(d)] || 0;
   const total = Object.values(log).reduce((a, b) => a + b, 0);
   const stats = $('#goalStats'); stats.textContent = '';
-  for (const [v, l] of [[today + ' / ' + goal, 'min today'], [streakOf(log), 'day streak'], [fmtShort(week), 'this week'], [fmtShort(total), 'all time']]) {
+  for (const [v, l] of [[fmtShort(today * 60), 'today · goal ' + goal + ' min'], [streakOf(log), 'days in a row'], [fmtShort(week), 'this week'], [fmtShort(total), 'all time']]) {
     const x = el('div', 'stat'); x.append(el('b', '', String(v)), el('span', '', l)); stats.append(x);
   }
   $$('#trRange button').forEach((b) => b.classList.toggle('on', b.dataset.range === TR.range));
@@ -7980,8 +8001,9 @@ function renderTracker() {
   $('#trDayTitle').textContent = dk === dayKey() ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   $('#trDayMin').textContent = fmtMinutes(log[dk] || 0);
   const dl = $('#trDayList'); dl.textContent = '';
-  if (dd) for (const [id, v] of Object.entries(dd.pieces).sort((a, b) => b[1] - a[1])) dl.append(el('li', '', `${titleOf(id)} · ${fmtMinutes(v)}`));
-  if (dd && dd.tools > 30) dl.append(el('li', '', `Tools · ${fmtMinutes(dd.tools)}`));
+  const dayRow = (t, v) => { const li = el('li'); li.append(el('span', 'tr-name', t), el('span', 'num tr-time', fmtMinutes(v))); return li; };
+  if (dd) for (const [id, v] of Object.entries(dd.pieces).sort((a, b) => b[1] - a[1])) dl.append(dayRow(titleOf(id), v));
+  if (dd && dd.tools > 30) dl.append(dayRow('Tools', dd.tools));
   const note = $('#trNote'); if (document.activeElement !== note) note.value = (dd && dd.note) || '';
   note.placeholder = dk === dayKey() ? 'What did you work on today? What is next?' : 'Notes for this day';
   renderPlan();

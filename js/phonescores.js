@@ -8,7 +8,7 @@
 // Pages come as pictures, the markings as a clear layer on top: shown or hidden with one switch.
 // Nothing can be changed here.
 import { db, getSetting, setSetting } from './db.js';
-import { nlog, directOnFile } from './link.js';
+import { nlog, directOnFile, directPeers } from './link.js';
 import { looksBlank, openDocument, mapDoc } from './score.js';
 import { cleanLines, cleanEdges, eraseCrossings } from './picker-lines.js';
 
@@ -226,7 +226,6 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     const mine = verKey(s.id, stamp);
     for (const k of (await db.keys('files').catch(() => [])).map(String)) if (k.startsWith(copyId(s.id) + ':') && !k.startsWith(mine)) await db.del('files', k).catch(() => {});
     if (onPage) onPage(info.n, info.n);
-    prepareSoon(copy);
     return copy;
   }
   // The PDF open here (one score at a time; closed when not used for a while)
@@ -264,7 +263,9 @@ export function initPhoneScores({ askIpad, toast, connected }) {
   async function runJobs() {
     JQ.running = true;
     while (JQ.list.length) {
-      JQ.list.sort((a, b) => a.pri - b.pri || a.at - b.at);
+      // (at the same priority, the score already open first: never opening one PDF after another)
+      const other = (j) => (j.key.split(':').slice(1, 4).join(':') === PDOC.key ? 0 : 1);
+      JQ.list.sort((a, b) => a.pri - b.pri || other(a) - other(b) || a.at - b.at);
       const j = JQ.list.shift();
       try { j.res(await j.fn()); } catch (e) { j.rej(e); }
       PDOC.t = Date.now();
@@ -364,14 +365,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (!PS.list) return;
     PS.again = false;
     const have = await haveCopies();
-    // (a score kept here as page pictures, from before: fetched again once as its own file, when the
-    // iPad offers it, so Play is quick on it too; one the iPad cannot send that way stays as it is)
-    const upgrade = new Set();
-    if (fileLinkOk()) for (const k of (await db.keys('files').catch(() => [])).map(String).filter((k) => /^ipadcopy:[^:]+$/.test(k))) {
-      const f = await db.get('files', k).catch(() => null);
-      if (f && f.mode !== 'pdf' && !f.noSrc) upgrade.add(k.slice(9));
-    }
-    const want = PS.list.filter((s) => !PS.removed.has(s.id) && (have.get(s.id) !== s.stamp || upgrade.has(s.id)));
+    const want = PS.list.filter((s) => !PS.removed.has(s.id) && have.get(s.id) !== s.stamp);
     if (!want.length) return;
     PS.sync = { n: want.length, done: 0, failed: 0 }; sub(); nlog('iPhone: fetching ' + want.length + ' score(s) from the iPad');
     // (leaving the app for a moment does not stop it: iOS gives the newer apps some time)
@@ -560,7 +554,10 @@ export function initPhoneScores({ askIpad, toast, connected }) {
     if (opening) opening.stop = true;
     const me = opening = { stop: false };
     let copy = await db.get('files', copyId(s.id)).catch(() => null);
-    if (!copy || copy.stamp !== s.stamp) {
+    // (kept here as page pictures, from before: fetched again, once, as its own file, so Play is
+    // quick on it too; only when it is opened, one score at a time, never all at once)
+    const upgrade = copy && copy.stamp === s.stamp && copy.mode !== 'pdf' && !copy.noSrc && fileLinkOk() && directPeers() > 0;
+    if (!copy || copy.stamp !== s.stamp || upgrade) {
       const old = copy;
       $('#phsLoading').hidden = false; $('#phsLoadingText').textContent = copy ? 'Getting the latest from your iPad…' : 'Getting it from your iPad…';
       try { copy = await fetchScore(s, (k, n) => { if (!me.stop) $('#phsLoadingText').textContent = k ? `Getting page ${k} of ${n}…` : 'Getting it from your iPad…'; }, () => me.stop); } catch (e) {
@@ -572,7 +569,7 @@ export function initPhoneScores({ askIpad, toast, connected }) {
           toast(why === 'ipad:none' ? 'That score is no longer on your iPad.' : why.startsWith('ipad') ? 'Your iPad could not send this score. Try again in a moment.' : 'Your iPad was not found. Open Stand on it, on the same Wi-Fi, to get this score.');
           return;
         }
-        toast('Showing the copy on this iPhone.');
+        if (!upgrade) toast('Showing the copy on this iPhone.');
       }
       if (opening !== me) return;
       $('#phsLoading').hidden = true;
